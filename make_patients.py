@@ -20,7 +20,7 @@ for root, dirs, files in os.walk(file_store_parent_dir):
 
 pt_ids = dfs["Dem"].index
 pts_out = []
-for i, id in tqdm(enumerate(pt_ids[:10])):
+for i, id in tqdm(enumerate(pt_ids[:100])):
     pt_df = {
         k: v.loc[[id]] if id in v.index else pd.DataFrame(columns=v.columns)
         for k, v in dfs.items()
