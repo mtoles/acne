@@ -4,3 +4,6 @@ __pycache__
 stores_temp
 stores_tmp
 test.py
+rpdr_dumps
+edw_dumps
+stores

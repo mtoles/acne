@@ -7,7 +7,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import shutil
 
-data_dir = "rpdr_latest/"
+data_dir = "rpdr_latest/6/"
 store_dir = "stores/file_stores"
 acceptable_suffixes = [
     # "All",  # allergy
@@ -15,7 +15,7 @@ acceptable_suffixes = [
     # "Dia",  # diagnosis
     # "Enc",  # encounter
     # "Med",  # medications
-    "Phy",  # ?
+    # "Phy",  # ?
     # "Prc",  # procedure?
     # "Rdt",  # radiology
     # "Rfv",  # refill
@@ -51,6 +51,7 @@ def parse_pipe_delimited_file(
     suffix,
 ):
     # Read the files
+    empis = {}
     rows = []
     for filepath in tqdm(suffix_paths):
         with open(filepath, "r", encoding="utf-8") as f:
@@ -86,19 +87,21 @@ def parse_pipe_delimited_file(
     df = pd.DataFrame(rows, columns=headers)
     first_col = df.columns[0]
     df[first_col] = df[first_col].apply(lambda x: x.strip())
-    # print(df)
-    # drop rows where EMPI is ''
+
     df = df.dropna(subset=[first_col])
     df = df[df[first_col] != ""]
     df = df.set_index(first_col)
 
+    rpdr_idx = data_dir[-2]
+
+    # print unique EMPIs to a file
+    with open(f"rpdr_empis_{rpdr_idx}.txt", "w") as f:
+        for empi in df.index:
+            f.write(empi + "\n")
+
+    # print the 
+
     # Append to HDF5 store
-    # /*************  ✨ Codeium Command 🌟  *************/
-    # dfchunks = np.array_split(df, 100)
-    # for i, dfchunk in enumerate(dfchunks):
-    #     store.put(f"{suffix}/{i}", dfchunk, format="table", complib="blosc")
-    # store.put(suffix, df, format="table", complib="blosc")
-    # print(df)
     chunksize = 10**100
     # Delete the parquet dataset at the specified path
     if os.path.exists(store_path_suffix):
@@ -107,11 +110,12 @@ def parse_pipe_delimited_file(
         table = pa.Table.from_pandas(df.iloc[i : i + chunksize])
         # df_chunk = df.iloc[i : i + chunksize]
         pq.write_to_dataset(table, root_path=store_path_suffix)
-        # pq.write_table(table, store_path, compression="snappy")
-    # /******  9b6bf1e4-998f-414b-933e-e4d7f7045877  *******/
-    parquet_df = pq.read_table(f"{store_path_suffix}").to_pandas()
-    assert len(parquet_df) == len(df)
-    print(parquet_df)
+
+    ### temporarily disable for dorsa's request
+    # parquet_df = pq.read_table(f"{store_path_suffix}").to_pandas()
+    # assert len(parquet_df) == len(df)
+    # print(parquet_df)
+
     print
 
 
