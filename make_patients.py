@@ -18,7 +18,7 @@ for root, dirs, files in os.walk(file_store_parent_dir):
             suffix = dir.split("_")[-1]
             dfs[suffix] = pd.read_parquet(os.path.join(root, dir))
 
-pt_ids = dfs["Dem"].index
+pt_ids = dfs["Vis"].index
 pts_out = []
 for i, id in tqdm(enumerate(pt_ids[:100])):
     pt_df = {
@@ -28,8 +28,8 @@ for i, id in tqdm(enumerate(pt_ids[:100])):
     # for suffix, df in dfs.items():
     pt_out = {}
     for name, ft in PtFeaturesMeta.registry.items():
-        # if name in ["bmi"]:
-        if True:
+        if name in ["antibiotics"]:
+        # if True:
             pt_out[name] = ft.compute(pt_df)
         # print(df)
     pts_out.append(pt_out)

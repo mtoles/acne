@@ -1,4 +1,6 @@
 import pandas as pd
+from models import MrModel
+from utils import chunk_text
 
 ### General Functions ###
 
@@ -19,6 +21,7 @@ cancer_icd9s = [
 cancer_icd10s = ["C00", "C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10", "C11", "C12", "C13", "C14", "C15", "C16", "C17", "C18", "C19", "C20", "C21", "C22", "C23", "C24", "C25", "C26", "C30", "C31", "C32", "C33", "C34", "C35", "C36", "C37", "C38", "C39", "C40", "C41", "C43", "C44", "C45", "C46", "C47", "C48", "C49", "C50", "C51", "C52", "C53", "C54", "C55", "C56", "C57", "C58", "C60", "C61", "C62", "C63", "C64", "C65", "C66", "C67", "C68", "C69", "C70", "C71", "C72", "C73", "C74", "C75", "C76", "C77", "C78", "C79", "C80", "C7A", "C7B", "C81", "C82", "C83", "C84", "C85", "C86", "C87", "C88", "C89", "C90", "C91", "C92", "C93", "C94", "C95", "C96",]
 # fmt: on
 
+
 def get_rows_by_icd(df: pd.DataFrame, icd9_list: list, icd10_list: list):
     icd10_df = df[df["Code"].apply(lambda x: any(x.startswith(y) for y in icd9_list))]
     icd9_df = df[df["Code"].apply(lambda x: any(x.startswith(y) for y in icd10_list))]
@@ -27,6 +30,10 @@ def get_rows_by_icd(df: pd.DataFrame, icd9_list: list, icd10_list: list):
 
 
 ### Patient Features ###
+
+model = MrModel()
+
+###
 
 
 class PtFeaturesMeta(type):
@@ -844,10 +851,9 @@ class autoimmune_rheumatoid_arthritis_seropositive(PtFeatureBase):
     def compute(dfs: dict):
         df = dfs["Dia"]
         icd10s = ["M05"]
-        icd9s = ["714.0"," 714.1","714.2"]
+        icd9s = ["714.0", " 714.1", "714.2"]
         df = get_rows_by_icd(df, icd9s, icd10s)
         return not df.empty
-
 
 
 # class autoimmune_psoriasis(PtFeatureBase):
@@ -861,10 +867,30 @@ class autoimmune_type_1_diabetes(PtFeatureBase):
     def compute(dfs: dict):
         df = dfs["Dia"]
         icd10s = ["E10"]
-        icd9s = ["250.01", "250.03", "250.11", "250.13", "250.21", "250.23", "250.31", "250.33", "250.41", "250.43", "250.51", "250.53", "250.61", "250.63", "250.71", "250.73", "250.81", "250.83", "250.91", "250.93"]
+        icd9s = [
+            "250.01",
+            "250.03",
+            "250.11",
+            "250.13",
+            "250.21",
+            "250.23",
+            "250.31",
+            "250.33",
+            "250.41",
+            "250.43",
+            "250.51",
+            "250.53",
+            "250.61",
+            "250.63",
+            "250.71",
+            "250.73",
+            "250.81",
+            "250.83",
+            "250.91",
+            "250.93",
+        ]
         df = get_rows_by_icd(df, icd9s, icd10s)
         return not df.empty
-
 
 
 class autoimmune_hashimotos_thyroiditis(PtFeatureBase):
@@ -875,7 +901,6 @@ class autoimmune_hashimotos_thyroiditis(PtFeatureBase):
         icd9s = ["245.2"]
         df = get_rows_by_icd(df, icd9s, icd10s)
         return not df.empty
-
 
 
 class autoimmune_graves_disease(PtFeatureBase):
@@ -896,6 +921,7 @@ class autoimmune_multiple_sclerosis(PtFeatureBase):
         icd9s = ["340"]
         df = get_rows_by_icd(df, icd9s, icd10s)
         return not df.empty
+
 
 class autoimmune_systemic_lupus_erythematosus_sle(PtFeatureBase):
     @staticmethod
@@ -937,6 +963,7 @@ class autoimmune_sjogrens_syndrome_sicca_syndrome(PtFeatureBase):
         icd9s = ["710.2"]
         df = get_rows_by_icd(df, icd9s, icd10s)
         return not df.empty
+
 
 class autoimmune_vitiligo(PtFeatureBase):
     @staticmethod
@@ -1148,9 +1175,26 @@ class comorbid_type_2_diabetes_mellitus(PtFeatureBase):
         df = dfs["Dia"]
         icd10s = ["E11"]
         icd9s = [
-            "250.00", "250.02", "250.10", "250.12", "250.20", "250.22", "250.30", "250.32",
-            "250.40", "250.42", "250.50", "250.52", "250.60", "250.62", "250.70", "250.72",
-            "250.80", "250.82", "250.90", "250.92"
+            "250.00",
+            "250.02",
+            "250.10",
+            "250.12",
+            "250.20",
+            "250.22",
+            "250.30",
+            "250.32",
+            "250.40",
+            "250.42",
+            "250.50",
+            "250.52",
+            "250.60",
+            "250.62",
+            "250.70",
+            "250.72",
+            "250.80",
+            "250.82",
+            "250.90",
+            "250.92",
         ]
         df = get_rows_by_icd(df, icd9s, icd10s)
         return not df.empty
@@ -1247,7 +1291,9 @@ class comorbid_chronic_skin_inflammation_hidradenitis_suppurativa(PtFeatureBase)
         return not df.empty
 
 
-class comorbid_chronic_skin_inflammation_chronic_skin_ulcer_excluding_pressure_ulcer(PtFeatureBase):
+class comorbid_chronic_skin_inflammation_chronic_skin_ulcer_excluding_pressure_ulcer(
+    PtFeatureBase
+):
     @staticmethod
     def compute(dfs: dict):
         df = dfs["Dia"]
@@ -1272,7 +1318,6 @@ class comorbid_chronic_skin_inflammation_burns(PtFeatureBase):
         icd9s = ["940", "941", "942", "943", "944", "945", "946", "948"]
         df = get_rows_by_icd(df, icd9s, icd10s)
         return not df.empty
-
 
 
 class radiodermatitis(PtFeatureBase):
@@ -1324,7 +1369,15 @@ class tanning(PtFeatureBase):
 class antibiotics(PtFeatureBase):
     @staticmethod
     def compute(dfs: dict):
-        pass
+        df = dfs["Vis"]
+        query = "Does this medical record excerpt indicate that the patient took any of the following antibiotics: amoxicillin, cephalexin, azithromycin, or tmp-smx?"
+        # Apply chunking to each row and flatten the list
+        all_chunks = []
+        for chunks in df['Report_Text'].apply(chunk_text):
+            all_chunks.extend(chunks)
+        histories = model.format_chunk_qs(query, all_chunks)
+        chunk_results = model.predict(histories)
+        return any(chunk_results)
 
 
 class antibiotic_tetracyclines(PtFeatureBase):

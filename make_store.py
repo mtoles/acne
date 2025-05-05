@@ -7,15 +7,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import shutil
 
-data_dir = "rpdr_latest/"
+data_dir = "rpdr_dumps/rpdr_latest/8"
 store_dir = "stores/file_stores"
 acceptable_suffixes = [
     # "All",  # allergy
-    "Dem",  # demographics
+    # "Dem",  # demographics
     # "Dia",  # diagnosis
     # "Enc",  # encounter
     # "Med",  # medications
-    "Phy",  # ?
+    # "Phy",  # ?
     # "Prc",  # procedure?
     # "Rdt",  # radiology
     # "Rfv",  # refill
@@ -30,7 +30,7 @@ acceptable_suffixes = [
     # "Prg",  # progress
     # "Pul",  # pulmonary
     # "Rad",  # radiology
-    # "Vis",  # visit
+    "Vis",  # visit
 ]
 
 store_path = os.path.join(store_dir, "rpdr.parquet")
@@ -121,9 +121,9 @@ if __name__ == "__main__":
     if os.path.exists(store_path):
         shutil.rmtree(store_path, ignore_errors=True)
     files = list_all_files(data_dir)
+    suffix_paths = []
     for suffix in acceptable_suffixes:
         store_path_suffix = f"{store_path}_{suffix}"
-        suffix_paths = []
         for file in files:
             if file.endswith(suffix + ".txt"):
                 # if file.endswith("1_" + suffix + ".txt"):
