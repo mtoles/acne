@@ -1,5 +1,5 @@
 import pandas as pd
-from models import MrModel
+# from models import MrModel
 from utils import chunk_text
 
 ### General Functions ###
@@ -31,7 +31,7 @@ def get_rows_by_icd(df: pd.DataFrame, icd9_list: list, icd10_list: list):
 
 ### Patient Features ###
 
-model = MrModel()
+# model = MrModel()
 
 ###
 
@@ -41,7 +41,7 @@ class PtFeaturesMeta(type):
 
     def __new__(mcs, name, bases, attrs):
         cls = super().__new__(mcs, name, bases, attrs)
-        if name not in ["PtFeatureBase"]:
+        if name not in ["PtFeatureBase", "LlmFeatureBase"]:
             PtFeaturesMeta.registry[name] = cls
         return cls
 
@@ -51,6 +51,10 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
     def compute(dfs: dict):
         pass
 
+class LlmFeatureBase(metaclass=PtFeaturesMeta):
+    @staticmethod
+    def compute(dfs: dict):
+        pass
 
 class bmi(PtFeatureBase):
     @staticmethod
@@ -1366,18 +1370,19 @@ class tanning(PtFeatureBase):
         pass
 
 
-class antibiotics(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        df = dfs["Vis"]
-        query = "Does this medical record excerpt indicate that the patient took any of the following antibiotics: amoxicillin, cephalexin, azithromycin, or tmp-smx?"
-        # Apply chunking to each row and flatten the list
-        all_chunks = []
-        for chunks in df['Report_Text'].apply(chunk_text):
-            all_chunks.extend(chunks)
-        histories = model.format_chunk_qs(query, all_chunks)
-        chunk_results = model.predict(histories)
-        return any(chunk_results)
+class antibiotics(LlmFeatureBase):
+    query = "Does this medical record excerpt indicate that the patient took any of the following antibiotics: amoxicillin, cephalexin, azithromycin, or tmp-smx?"
+    # @staticmethod
+    # def compute(dfs: dict):
+    #     df = dfs["Vis"]
+    #     query = "Does this medical record excerpt indicate that the patient took any of the following antibiotics: amoxicillin, cephalexin, azithromycin, or tmp-smx?"
+    #     # Apply chunking to each row and flatten the list
+    #     all_chunks = []
+    #     for chunks in df['Report_Text'].apply(chunk_text):
+    #         all_chunks.extend(chunks)
+    #     histories = model.format_chunk_qs(query, all_chunks)
+    #     chunk_results = model.predict(histories)
+    #     return any(chunk_results)
 
 
 class antibiotic_tetracyclines(PtFeatureBase):

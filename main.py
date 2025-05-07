@@ -36,7 +36,7 @@ for name, ft in PtFeaturesMeta.registry.items():
     for empi in tqdm(empis[:2]):
         user_data = get_user_data(empi, stores)
         # TESTING
-        user_data["Vis"].iloc[0]["Report_Text"] = "This patient was proscribed 100mg of amoxicillin"
+        # user_data["Vis"].iloc[0]["Report_Text"] = "This patient was proscribed 100mg of amoxicillin"
         ds_list.append(ft.compute(user_data))
 
 
