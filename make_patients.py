@@ -26,46 +26,48 @@ pt_ids = dfs["Vis"].index
 pts_out = []
 
 
-    # @staticmethod
-    # def compute(dfs: dict):
-    #     df = dfs["Vis"]
-    #     query = "Does this medical record excerpt indicate that the patient took any of the following antibiotics: amoxicillin, cephalexin, azithromycin, or tmp-smx?"
-    #     # Apply chunking to each row and flatten the list
-    #     all_chunks = []
-    #     for chunks in df['Report_Text'].apply(chunk_text):
-    #         all_chunks.extend(chunks)
-    #     histories = model.format_chunk_qs(query, all_chunks)
-    #     chunk_results = model.predict(histories)
-    #     return any(chunk_results)
-
 pt_ids = pt_ids[:2]
 
-results_df = pd.DataFrame(index=pt_ids)
 
-histories = []
+feat_to_df = {}
+
+# loop over features
 for name, ft in PtFeaturesMeta.registry.items():
+    all_rows = []
     if name not in ["antibiotics"]:
         continue
     if LlmFeatureBase not in ft.__bases__:
         continue
 
-    # queue up and chunk all patient data
-    all_chunks = []
+
+    # loop over patients
     for i, id in tqdm(enumerate(pt_ids)):
         pt_df = {
             k: v.loc[[id]] if id in v.index else pd.DataFrame(columns=v.columns)
             for k, v in dfs.items()
-        }
-        all_chunks.extend(pt_df["Vis"]["Report_Text"].apply(chunk_text))
+        }["Vis"]
+
+        # loop over reports (visits)
+        for report in pt_df.iloc:
+            # new_chunks = report["Report_Text"].apply(chunk_text).explode() # flatten series of lists into single series
+            new_chunks = chunk_text(report["Report_Text"])
+            rows = [{"chunk": chunk, "id": id} for chunk in new_chunks]
+            # Update each row with all columns from pt_df
+            for row in rows:
+                row.update({col: report[col] for col in report.index})
+            all_rows.extend(rows)
+    df = pd.DataFrame(all_rows)
 
     # run all chunks through LLM
-    histories.extend(model.format_chunk_qs(ft.query, all_chunks))
+    df["histories"] = model.format_chunk_qs(ft.query, df["chunk"])
 
-chunk_results = model.predict(histories)
-chunk_df = pd.DataFrame(data={"chunk_results": chunk_results}, index=pt_ids)
+    df["predictions"] = model.predict(df["histories"])
+    feat_to_df[name] = df
+
+# chunk_df = pd.DataFrame(data={"chunk_results": chunk_results}, index=pt_chunks)
 # condense results per patient
 # group chunks by patient and set True if any chunk was True
-results_df[name] = chunk_df.any(axis=1)
+# results_df[name] = chunk_df.any(axis=1)
 # store results
 pass
 

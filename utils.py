@@ -1,6 +1,6 @@
 CHUNKSIZE = 500  # Maximum words per chunk
 
-def chunk_text(text):
+def chunk_text(text) -> list[str]:
     words = text.split()
     if len(words) <= CHUNKSIZE:
         return [text]
@@ -25,6 +25,6 @@ def chunk_text(text):
     if current_chunk:
         chunks.append(' '.join(current_chunk))
     
-    return chunks
+    return chunks # list of strings
 
 

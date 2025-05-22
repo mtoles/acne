@@ -3,9 +3,13 @@ from transformers import pipeline, AutoTokenizer
 from tqdm import tqdm
 import re
 import argparse
+from joblib import Memory
+
+# Set up cache directory
+memory = Memory(location="hf_cache", verbose=0)
 
 SYSTEM_PROMPT = "You are a medical assistant."
-BATCH_SIZE = 16
+BATCH_SIZE = 8
 
 class MrModel:
     def __init__(
@@ -19,6 +23,8 @@ class MrModel:
         # Initialize YES/NO token IDs
         self.yes_token_id = self.tokenizer.encode("YES")[-1]
         self.no_token_id = self.tokenizer.encode("NO")[-1]
+        # Cache the predict_batch method, ignoring 'self' in the hash
+        self._cached_predict_batch = memory.cache(ignore=["self"])(self._predict_batch)
 
     def _create_pipeline(self):
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -30,7 +36,6 @@ class MrModel:
             tokenizer=self.tokenizer,
             model_kwargs={"torch_dtype": torch.bfloat16},
             device_map=self.device_map,
-            # return_full_text=False,
             return_tensors=True,
             return_dict_in_generate=True,
         )
@@ -61,6 +66,9 @@ class MrModel:
         return all_results
 
     def predict_batch(self, histories):
+        return self._cached_predict_batch(histories)
+
+    def _predict_batch(self, histories, **kwargs):
         # Convert histories to input_ids
         chats = []
 
@@ -72,19 +80,14 @@ class MrModel:
         input_ids = encoded["input_ids"].to(self.pipe.model.device)
         attention_mask = encoded["attention_mask"].to(self.pipe.model.device)
         
-        # Stack tensors
-        # input_ids = torch.cat(input_ids, dim=0).to(self.pipe.model.device)
-        # attention_mask = torch.cat(attention_mask, dim=0).to(self.pipe.model.device)
-        
         # Get model outputs
         with torch.no_grad():
             outputs = self.pipe.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                return_dict=True
+                return_dict=True,
+                max_new_tokens=1
             )
-        # print the next token
-        # print(self.tokenizer.decode(outputs.logits[:, -1, :].argmax(dim=-1)))
         
         # Get logits for the next token
         next_token_logits = outputs.logits[:, -1, :]
@@ -96,9 +99,6 @@ class MrModel:
             no_logit = logits[self.no_token_id].item()
             
             # Return True if YES has higher probability
-            # results.append({
-            #     "answer": yes_logit > no_logit,
-            # })
             results.append(yes_logit > no_logit)
             
         return results
