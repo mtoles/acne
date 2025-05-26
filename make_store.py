@@ -5,10 +5,13 @@ import numpy as np
 from collections import defaultdict
 import pyarrow as pa
 import pyarrow.parquet as pq
+from sqlalchemy import create_engine, text
 import shutil
+from pt_features import PtFeaturesMeta, LlmFeatureBase
 
 data_dir = "rpdr_dumps/rpdr_latest/8"
 store_dir = "stores/file_stores"
+db_url = "sqlite:///stores/rpdr.db"  # Using SQLite for simplicity, can be changed to other databases
 acceptable_suffixes = [
     # "All",  # allergy
     # "Dem",  # demographics
@@ -92,27 +95,39 @@ def parse_pipe_delimited_file(
     df = df[df[first_col] != ""]
     df = df.set_index(first_col)
 
-    # Append to HDF5 store
-    # /*************  ✨ Codeium Command 🌟  *************/
-    # dfchunks = np.array_split(df, 100)
-    # for i, dfchunk in enumerate(dfchunks):
-    #     store.put(f"{suffix}/{i}", dfchunk, format="table", complib="blosc")
-    # store.put(suffix, df, format="table", complib="blosc")
-    # print(df)
-    chunksize = 10**100
-    # Delete the parquet dataset at the specified path
-    if os.path.exists(store_path_suffix):
-        shutil.rmtree(store_path_suffix, ignore_errors=True)
+    for name, cls in PtFeaturesMeta.registry.items():
+        if issubclass(cls, LlmFeatureBase):
+            df[name] = None
+
+    # Create SQL engine and write to database
+    engine = create_engine(db_url)
+    table_name = f"rpdr_{suffix.lower()}"
+    
+    # Write to database in chunks to handle large datasets
+    chunksize = 10000
     for i in tqdm(range(0, len(df), chunksize)):
-        table = pa.Table.from_pandas(df.iloc[i : i + chunksize])
-        # df_chunk = df.iloc[i : i + chunksize]
-        pq.write_to_dataset(table, root_path=store_path_suffix)
-        # pq.write_table(table, store_path, compression="snappy")
-    # /******  9b6bf1e4-998f-414b-933e-e4d7f7045877  *******/
-    parquet_df = pq.read_table(f"{store_path_suffix}").to_pandas()
-    assert len(parquet_df) == len(df)
-    print(parquet_df)
-    print
+        df_chunk = df.iloc[i:i + chunksize]
+        df_chunk.to_sql(
+            name=table_name,
+            con=engine,
+            if_exists='append' if i > 0 else 'replace',
+            index=True
+        )
+
+    # chunksize = 10**100
+    # # Delete the parquet dataset at the specified path
+    # if os.path.exists(store_path_suffix):
+    #     shutil.rmtree(store_path_suffix, ignore_errors=True)
+    # for i in tqdm(range(0, len(df), chunksize)):
+    #     table = pa.Table.from_pandas(df.iloc[i : i + chunksize])
+    #     # df_chunk = df.iloc[i : i + chunksize]
+    #     pq.write_to_dataset(table, root_path=store_path_suffix)
+    #     # pq.write_table(table, store_path, compression="snappy")
+    # # /******  9b6bf1e4-998f-414b-933e-e4d7f7045877  *******/
+    # parquet_df = pq.read_table(f"{store_path_suffix}").to_pandas()
+    # assert len(parquet_df) == len(df)
+    # print(parquet_df)
+    # print
 
 
 if __name__ == "__main__":

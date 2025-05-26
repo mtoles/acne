@@ -8,3 +8,8 @@ rpdr_dumps
 edw_dumps
 stores
 reconciliation
+
+*.csv
+*.json
+*.jsonl
+*.txt

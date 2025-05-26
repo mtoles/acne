@@ -4,27 +4,43 @@ from tqdm import tqdm
 import re
 import argparse
 from joblib import Memory
+from vllm import LLM, SamplingParams
+
 
 # Set up cache directory
 memory = Memory(location="hf_cache", verbose=0)
 
 SYSTEM_PROMPT = "You are a medical assistant."
-BATCH_SIZE = 8
+BATCH_SIZE = 64
+
+
+
+
 
 class MrModel:
     def __init__(
         self,
-        model_name="meta-llama/Llama-3.1-8b-instruct",
+        # model_name="meta-llama/Llama-3.1-8b-instruct", # IF YOU CHANGE THIS, THE CACHE WILL NOT BE VALID
+        model_name="Qwen/Qwen2.5-3B-Instruct",
         device_map="auto",
+        use_cache=True,
+        vllm=True,
     ):
         self.model_name = model_name
         self.device_map = device_map
-        self.pipe = self._create_pipeline()
+        self.vllm = vllm
+        
+        if vllm:
+            self.model = LLM(model=model_name, tensor_parallel_size=1)
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        else:
+            self.pipe = self._create_pipeline()
+            
         # Initialize YES/NO token IDs
         self.yes_token_id = self.tokenizer.encode("YES")[-1]
         self.no_token_id = self.tokenizer.encode("NO")[-1]
         # Cache the predict_batch method, ignoring 'self' in the hash
-        self._cached_predict_batch = memory.cache(ignore=["self"])(self._predict_batch)
+        self._cached_predict_batch = memory.cache(ignore=["self"])(self._predict_batch) if use_cache else self._predict_batch
 
     def _create_pipeline(self):
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -59,7 +75,7 @@ class MrModel:
 
         # Run predict_batch on each batch and combine results
         all_results = []
-        for batch in tqdm(batches):
+        for batch in tqdm(batches, desc="Batch"):
             batch_results = self.predict_batch(batch)
             all_results.extend(batch_results)
 
@@ -75,30 +91,56 @@ class MrModel:
         for history in histories:
             # Convert history to chat format
             chats.append(self.tokenizer.apply_chat_template(history, tokenize=False, add_generation_prompt=True))
-            # Tokenize
+            
+        # if self.vllm:
+        # Use VLLM for prediction
+        sampling_params = SamplingParams(max_tokens=1, temperature=0)
+        outputs = self.model.generate(chats, sampling_params)
+        
+        results = []
+        for output in outputs:
+            # Get the generated token
+            generated_token = output.outputs[0].token_ids[-1]
+            # Compare with YES/NO token IDs
+            results.append(generated_token == self.yes_token_id)
+        return results
+    
+        # end if
+            
+        # Original HuggingFace prediction logic
         encoded = self.tokenizer(chats, return_tensors="pt", padding=True)
         input_ids = encoded["input_ids"].to(self.pipe.model.device)
         attention_mask = encoded["attention_mask"].to(self.pipe.model.device)
         
-        # Get model outputs
-        with torch.no_grad():
-            outputs = self.pipe.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                return_dict=True,
-                max_new_tokens=1
-            )
+        # # Get model outputs
+        # with torch.no_grad():
+        #     outputs = self.pipe.model(
+        #         input_ids=input_ids,
+        #         attention_mask=attention_mask,
+        #         return_dict=True,
+        #         max_new_tokens=1
+        #     )
         
-        # Get logits for the next token
-        next_token_logits = outputs.logits[:, -1, :]
+        # # Get logits for the next token
+        # next_token_logits = outputs.logits[:, -1, :]
         
-        results = []
-        for logits in next_token_logits:
-            # Get logits for YES and NO
-            yes_logit = logits[self.yes_token_id].item()
-            no_logit = logits[self.no_token_id].item()
+        # results = []
+        # for logits in next_token_logits:
+        #     # Get logits for YES and NO
+        #     yes_logit = logits[self.yes_token_id].item()
+        #     no_logit = logits[self.no_token_id].item()
             
-            # Return True if YES has higher probability
-            results.append(yes_logit > no_logit)
+        #     # Return True if YES has higher probability
+        #     results.append(yes_logit > no_logit)
             
-        return results
+        # return results
+
+class DummyModel:
+    def __init__(self):
+        pass
+
+    def predict(self, examples):
+        return [True] * len(examples)
+    
+    def predict_batch(self, histories):
+        return [True] * len(histories)

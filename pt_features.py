@@ -82,6 +82,9 @@ class smoking_status(PtFeatureBase):
         smoking_status = smoking_statuses.value_counts().index[0]
         return smoking_status
 
+    query = "Does this medical record excerpt indicate that the patient currently smokes tobacco?"
+    keywords = ["smokes", "smoker", "smoking", "tobacco"]
+
 
 class smoking_amount(PtFeatureBase):
     @staticmethod
@@ -721,11 +724,11 @@ class infection_history_salmonella_typhi(PtFeatureBase):
         df = get_rows_by_icd(df, icd9s, icd10s)
         return not df.empty
 
-
-class infection_history_streptococcus_bovis_gallolyticus(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+# missing from sheet
+# class infection_history_streptococcus_bovis_gallolyticus(PtFeatureBase):
+#     @staticmethod
+#     def compute(dfs: dict):
+#         pass
 
 
 class infection_history_mycobacterium_tuberculosis(PtFeatureBase):
@@ -1307,11 +1310,11 @@ class comorbid_chronic_skin_inflammation_chronic_skin_ulcer_excluding_pressure_u
         return not df.empty
 
 
-# No ICD codes provided for 'wounds'; left as pass
-class comorbid_chronic_skin_inflammation_wounds(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+# # No ICD codes provided for 'wounds'; left as pass
+# class comorbid_chronic_skin_inflammation_wounds(PtFeatureBase):
+#     @staticmethod
+#     def compute(dfs: dict):
+#         pass
 
 
 class comorbid_chronic_skin_inflammation_burns(PtFeatureBase):
@@ -1364,25 +1367,24 @@ class exposure_to_tanning_bed_and_other_manmade_visible_or_uv_light(PtFeatureBas
         return not df.empty
 
 
-class tanning(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+# class tanning(PtFeatureBase):
+#     @staticmethod
+#     def compute(dfs: dict):
+#         pass
 
 
 class antibiotics(LlmFeatureBase):
-    query = "Does this medical record excerpt indicate that the patient took any of the following antibiotics: amoxicillin, cephalexin, azithromycin, or tmp-smx?"
-    # @staticmethod
-    # def compute(dfs: dict):
-    #     df = dfs["Vis"]
-    #     query = "Does this medical record excerpt indicate that the patient took any of the following antibiotics: amoxicillin, cephalexin, azithromycin, or tmp-smx?"
-    #     # Apply chunking to each row and flatten the list
-    #     all_chunks = []
-    #     for chunks in df['Report_Text'].apply(chunk_text):
-    #         all_chunks.extend(chunks)
-    #     histories = model.format_chunk_qs(query, all_chunks)
-    #     chunk_results = model.predict(histories)
-    #     return any(chunk_results)
+    keywords = [
+        "Tetracycline", "doxycycline", "minocycline", "Adoxa", "Adoxa Pak", "Brodspec", 
+        "Cleeravue-M", "Declomycin", "Doryx", "Dynacin", "Minocin", "Nuzyra", "Sumycin",
+        "Vibramycin Calcium", "TMP", "SMX", "TMP/SMX", "TMP-SMX", 
+        "trimethoprim sulfamethoxazole", "Bactrim", "Septra", "SMZ-TMP", "Sulfatrim",
+        "co-trimoxazole", "SXT", "TMP-Sulfa", "Amoxicot", "Amoxil", "DisperMox",
+        "Moxatag", "Moxilin", "Trimox", "Amoxicillin", "Cephalexin", "Bio-Cef",
+        "Keflex", "Panixine DisperDose", "Azithromycin", "Zithromax",
+        "Zithromax Tri-Pak", "Z-Pak", "Zmax"
+    ]
+    query = f"Does this medical record indicate that the patient took any of the following antibiotics: {', '.join(keywords)}"
 
 
 class antibiotic_tetracyclines(PtFeatureBase):
