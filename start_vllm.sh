@@ -1,0 +1,1 @@
+vllm serve Qwen/Qwen2.5-3B-Instruct --dtype auto --api-key token-abc123

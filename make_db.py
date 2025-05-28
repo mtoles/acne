@@ -7,9 +7,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from sqlalchemy import create_engine, text
 import shutil
-from pt_features import PtFeaturesMeta, LlmFeatureBase
+from pt_features import PtFeaturesMeta, PtFeatureBase
 
-data_dir = "rpdr_dumps/rpdr_latest/8"
+# data_dir = "rpdr_dumps/rpdr_latest/8"
+data_dir = "rpdr_dumps/rpdr_latest/"
 store_dir = "stores/file_stores"
 db_url = "sqlite:///stores/rpdr.db"  # Using SQLite for simplicity, can be changed to other databases
 acceptable_suffixes = [
@@ -96,7 +97,7 @@ def parse_pipe_delimited_file(
     df = df.set_index(first_col)
 
     for name, cls in PtFeaturesMeta.registry.items():
-        if issubclass(cls, LlmFeatureBase):
+        if issubclass(cls, PtFeatureBase):
             df[name] = None
 
     # Create SQL engine and write to database

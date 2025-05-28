@@ -4,8 +4,8 @@ import time  # Add time module import
 
 from tqdm import tqdm
 
-from make_store import store_dir as file_store_parent_dir
-from pt_features import PtFeaturesMeta, LlmFeatureBase
+from make_db import store_dir as file_store_parent_dir
+from pt_features import PtFeaturesMeta, PtFeatureBase
 from utils import chunk_text, has_keyword
 from models import MrModel, DummyModel
 

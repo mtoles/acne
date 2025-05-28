@@ -47,14 +47,10 @@ class PtFeaturesMeta(type):
 
 
 class PtFeatureBase(metaclass=PtFeaturesMeta):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
-class LlmFeatureBase(metaclass=PtFeaturesMeta):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+class PtFeatureBase(metaclass=PtFeaturesMeta):
+    pass
 
 class bmi(PtFeatureBase):
     @staticmethod
@@ -82,56 +78,62 @@ class smoking_status(PtFeatureBase):
         smoking_status = smoking_statuses.value_counts().index[0]
         return smoking_status
 
-    query = "Does this medical record excerpt indicate that the patient currently smokes tobacco?"
+    query = "What is the smoking status of this patient? Options are: A. Never smoked, B. Former smoker, C. Current smoker, D. Unknown"
     keywords = ["smokes", "smoker", "smoking", "tobacco"]
 
 
 class smoking_amount(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
+
+    query = "How many packs per week does this patient smoke? Options are: A. 0, B. 1-2, C. 3-5, D. 6+"
+    keywords = smoking_status.keywords
 
 
 class alcohol_status(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
+
+    query = "What is the alcohol status of this patient? Options are: A. Never drank, B. Former drinker, C. Current drinker, D. Unknown"
+    keywords = ["alcohol", "drinks"]
+
+class alcohol_amount(PtFeatureBase):
+    pass
+
+    query = "What is the drinking index of this patient? Options are: A. 0, B. 1-2, C. 3-5, D. 6+"
+    keywords = alcohol_status.keywords
 
 
 class alcohol_amount_drinking_index(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
-class alcohol_amount(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+class transplant(PtFeatureBase):
+    pass
 
+    query = "Does this medical record indicate that the patient received a transplant, including grafts and allographts? Options are: A. Yes, B. No"
+    keywords = ["transplant", "transplatation", "graft", "allograft"]
+
+class transplat_date(PtFeatureBase):
+    query = "What was the date of the patient's most recent organ transplant? Format as YYYY-MM-DD. If there was no transplant, return None"
+    keywords = transplant.keywords
+
+class immunosuppressed_disease(PtFeatureBase):
+    query = "Does this medical record indicate that the patient had an immunosuppressed disease, including leukemia, lymphoma, HIV, immune deficiency, or autoimmune disease? Options are: A. Yes, B. No"
+    keywords = ["leukemia", "lymphoma", "HIV", "immune deficiency", "autoimmune", "immunosuppressed", "immunosuppressive"]
 
 class immunosuppressed_transplant_organ_name(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class immunosuppressed_transplant_organ_date(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class immunosuppressed_medication_medication_name(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class immunosuppressed_disease_disease_name(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class sex(PtFeatureBase):
@@ -182,9 +184,7 @@ class language(PtFeatureBase):
 
 
 class insurance(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class military(PtFeatureBase):
@@ -196,204 +196,144 @@ class military(PtFeatureBase):
             return None
         mil = mil.value_counts().index[0]
         return mil
+    
+    query = "Does this medical record indicate that the patient served in the military? Options are: A. Yes, B. No"
+    keywords = ["military", "military", "veteran", "marine corps", "army", "navy", "air force", "coast guard"]
 
 
 class military_years(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    query = "How many years did this patient serve in the military? Answer with a number, or if the patient is not a veteran, return None"
+    keywords = military.keywords
 
 
 class military_retirement_date(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    query = "What was the date of the patient's military retirement? Format as YYYY-MM-DD. If the patient is not a veteran, return None"
+    keywords = military.keywords
 
 
 class military_agent_orange(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    query = "Does this medical record indicate that the patient was exposed to Agent Orange? Options are: A. Yes, B. No"
+    keywords = ["agent orange"]
 
 
 class military_oef_oif(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class military_camp_lejeune(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class pregnancy(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class pregnancy_age(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class pregnancy_count(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class early_menstruation(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class menopause(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class menopause_late(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class birth_control_copper_iud(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class birth_control_hormonal_iud(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class birth_control_implant(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class birth_control_shot(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class birth_control_patch(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class birth_control_ring(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class birth_control_pill(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_arsenic(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_asbestos(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_benzene(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_beryllium(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_cadmium(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_chromium(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_ethylene_oxide(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_nickel(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_radon(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_vinyl_chloride(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_smoke(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_gasoline(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_formaldehyde(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_hair_dyes(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class carcinogen_soot(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class cancer_cancer(PtFeatureBase):
@@ -405,9 +345,12 @@ class cancer_cancer(PtFeatureBase):
         if cancer_df.empty:
             return None
         return True
+    
+    query = "Does this medical record indicate that the patient has a history of cancer? Options are: A. Yes, B. No"
+    keywords = ["cancer", "carcinoma", "melanoma", "mesothelioma", "sarcoma", "lymphoma", "leukimia", "myeloma", "malignant", "tumor", "myelodysplastic"]
 
 
-class cancer_cancer_date_of_diagnosis(PtFeatureBase):
+class cancer_date_of_diagnosis(PtFeatureBase):
     @staticmethod
     def compute(dfs: dict):
         df = dfs["Dia"]
@@ -416,96 +359,87 @@ class cancer_cancer_date_of_diagnosis(PtFeatureBase):
             return None
         dates = pd.to_datetime(cancer_df["Date"], format="%m/%d/%Y")
         return dates.min()
+    
+    query = "What was the date of the patient's most recent cancer diagnosis? Format as YYYY-MM-DD. If the record does not specify, return None"
+    keywords = cancer_cancer.keywords
 
 
-class cancer_cancer_stage_at_diagnosis(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+class cancer_stage_at_diagnosis(PtFeatureBase):
+    query = "What was the stage of the patient's most recent cancer diagnosis? Answer with a number, or if the record does not specify, return None"
+    keywords = cancer_cancer.keywords
 
 
-class cancer_cancer_maximum_stage(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+class cancer_maximum_stage(PtFeatureBase):
+    query = "What was the maximum stage of the patient's cancer diagnosis? Answer with a number, or if the record does not specify, return None"
+    keywords = cancer_cancer.keywords
 
 
-class cancer_cancer_status_at_last_follow_up(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+class cancer_status_at_last_follow_up(PtFeatureBase):
+    query = "What was the status of the patient's cancer at their last follow-up? Options are: A. cancer free, B. Stable disease, C. Progressive disease, D. Unknown"
+    keywords = cancer_cancer.keywords
+
+class cancer_date_free(PtFeatureBase):
+    query = "What is the date the patient was declared cancer free? Format as YYYY-MM-DD. If the record does not specify, return None"
+    keywords = cancer_cancer.keywords
+
+class cancer_treatment_radiation(PtFeatureBase):
+    pass
 
 
 class cancer_treatment_radiation(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class cancer_treatment_chemo(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class cancer_treatment_other(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
+
+
+class cancer_family_any(PtFeatureBase):
+    query = "Does this medical record indicate that any member of the patient's family has a history of cancer? Options are: A. Yes, B. No"
+    keywords = cancer_cancer.keywords
+
+class cancer_family_cancer_type(PtFeatureBase):
+    pass
 
 
 class cancer_family_mother(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class cancer_family_father(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class cancer_family_brother(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class cancer_family_sister(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class cancer_family_paternal_grandparent(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class cancer_family_maternal_grandparent(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class cancer_family_cancer(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class medical_radiation_exposure_type(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class medical_radiation_exposure_date(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_li_fraumeni_syndrome(PtFeatureBase):
@@ -520,75 +454,51 @@ class hereditary_li_fraumeni_syndrome(PtFeatureBase):
 
 
 class hereditary_gastrointestinal_stromal_tumors(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_paraganglioma_pheochromocytoma_syndrome(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_gi_cancer_any(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_gi_cancer_lynch_syndrome(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_gi_cancer_polyposis_syndromes(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_gi_cancer_peutz_jeghers_syndrome(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_gi_cancer_myh_associated_polyposis(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_gi_cancer_pancreatic_cancer(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_brca1_mutation(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_brca2_mutation(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_von_hippel_lindau_disease(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hereditary_cowden_syndrome(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class infection_history_hpv_human_papillomavirus(PtFeatureBase):
@@ -830,27 +740,19 @@ class infection_history_uti_count(PtFeatureBase):
 
 
 class hrt(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hrt_type(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hrt_duration(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class hrt_pre_post_menopause(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class autoimmune_rheumatoid_arthritis_seropositive(PtFeatureBase):
@@ -1373,45 +1275,39 @@ class exposure_to_tanning_bed_and_other_manmade_visible_or_uv_light(PtFeatureBas
 #         pass
 
 
-class antibiotics(LlmFeatureBase):
+class antibiotics(PtFeatureBase):
     keywords = [
-        "Tetracycline", "doxycycline", "minocycline", "Adoxa", "Adoxa Pak", "Brodspec", 
-        "Cleeravue-M", "Declomycin", "Doryx", "Dynacin", "Minocin", "Nuzyra", "Sumycin",
-        "Vibramycin Calcium", "TMP", "SMX", "TMP/SMX", "TMP-SMX", 
-        "trimethoprim sulfamethoxazole", "Bactrim", "Septra", "SMZ-TMP", "Sulfatrim",
-        "co-trimoxazole", "SXT", "TMP-Sulfa", "Amoxicot", "Amoxil", "DisperMox",
-        "Moxatag", "Moxilin", "Trimox", "Amoxicillin", "Cephalexin", "Bio-Cef",
-        "Keflex", "Panixine DisperDose", "Azithromycin", "Zithromax",
-        "Zithromax Tri-Pak", "Z-Pak", "Zmax"
+        "tetracycline", "doxycycline", "minocycline", "adoxa", "adoxa pak", "brodspec",
+        "cleeravue-m", "declomycin", "doryx", "dynacin", "minocin", "nuzyra", "sumycin", 
+        "vibramycin calcium", "tmp", "smx", "tmp/smx", "tmp-smx",
+        "trimethoprim sulfamethoxazole", "bactrim", "septra", "smz-tmp", "sulfatrim",
+        "co-trimoxazole", "sxt", "tmp-sulfa", "amoxicot", "amoxil", "dispermox",
+        "moxatag", "moxilin", "trimox", "amoxicillin", "cephalexin", "bio-cef",
+        "keflex", "panixine disperdose", "azithromycin", "zithromax",
+        "zithromax tri-pak", "z-pak", "zmax"
     ]
     query = f"Does this medical record indicate that the patient took any of the following antibiotics: {', '.join(keywords)}"
 
+class antibiotic_duration(PtFeatureBase):
+    query = "How long did the patient take antibiotics, in days? Answer with a number. If the medical record does not specify, return None"
+    keywords = antibiotics.keywords
+
 
 class antibiotic_tetracyclines(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class antibiotic_tmp_smx(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class antibiotic_amoxicillin(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class antibiotic_cephalexin(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
 
 
 class antibiotic_azithromycin(PtFeatureBase):
-    @staticmethod
-    def compute(dfs: dict):
-        pass
+    pass
