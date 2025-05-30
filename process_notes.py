@@ -20,22 +20,16 @@ from make_db import db_url
 tqdm.pandas()  # Enable tqdm for pandas operations
 
 
-DOWNSAMPLE_SIZE = 10
-API_KEY = "token-abc123"
-MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
+DOWNSAMPLE_SIZE = 100
 
 # Initialize model
-model = MrModel(
-    model_name=MODEL_ID,
-    base_url="http://localhost:8000/v1",
-    api_key=API_KEY
-)
+model = MrModel()
 
 # Test the model with a single example
-test_question = "Does this patient have a fever?"
+test_question = "Does this patient have a fever? A. Yes, B. No"
 test_chunk = "Patient presents with temperature of 101.2°F and chills."
-test_history = model.format_chunk_qs(test_question, [test_chunk])[0]
-result = model.predict_single(test_history)
+test_history = model.format_chunk_qs(test_question, [test_chunk], options=["A", "B"])
+result = model.predict_single(test_history, output_choices=set(["A", "B"]))
 print(f"\nTest prediction result: {result}")
 
 # get all null values from the db that are LlmFeatureBase
@@ -46,7 +40,6 @@ db = create_engine(db_url)
 
 # Query for null values in each column
 
-target_ft = "antibiotics"
 
 def get_null_samples(column_name):
     print(f"\nChecking null values in column {column_name}:")
@@ -66,20 +59,37 @@ def get_null_samples(column_name):
         df = pd.DataFrame(sample_result.fetchall(), columns=sample_result.keys())
         return df
 
-# Call the function with the target column
-df = get_null_samples(target_ft)
+target_fts = ["antibiotics"]
 
-# Create a new list to store chunked rows
-all_rows = []
+for target_ft in target_fts:
+    target_cls = PtFeaturesMeta.registry[target_ft]
+    # Call the function with the target column
+    df = get_null_samples(target_ft)
 
-# apply chunk_text to each Report_Text, producing a list of chunks
-df = df.assign(chunk=df['Report_Text'].progress_apply(chunk_text))
+    # Create a new list to store chunked rows
+    all_rows = []
 
-# explode that list so each chunk becomes its own row
-chunk_df = df.explode('chunk').reset_index(drop=True)
+    # apply chunk_text to each Report_Text, producing a list of chunks
+    df = df.assign(chunk=df['Report_Text'].progress_apply(chunk_text))
 
+    # explode that list so each chunk becomes its own row
+    chunk_df = df.explode('chunk').reset_index(drop=True)
 
+    chunk_df["has_kw"] = chunk_df["chunk"].progress_apply(has_keyword, keywords=target_cls.keywords)
 
+    percent_has_kw = len(chunk_df[chunk_df["has_kw"]]) / len(chunk_df)
+    print(f"{target_ft} has {percent_has_kw*100:.2f}% of null samples with keywords")
+
+    # apply the model to the chunks
+    preds = []
+    for chunk in chunk_df[chunk_df["has_kw"]]["chunk"]:
+        history = model.format_chunk_qs(q=target_cls.query, chunk=chunk, options=target_cls.options)
+        pred = model.predict_single(history, output_choices=set(target_cls.options))
+        preds.append(pred)
+    chunk_df["chunk_pred"] = "NO_KW"
+    chunk_df.loc[chunk_df["has_kw"], "chunk_pred"] = preds
+
+    print(f"{target_ft} has {chunk_df['chunk_pred'].value_counts()[True]/len(chunk_df[chunk_df['has_kw']])*100:.2f}% of null samples with keywords that are predicted true")
 
 
 
@@ -145,7 +155,7 @@ if False:
         chunk_df.loc[kw_df.index, "chunk_has_kw"] = True
 
         # run all chunks through LLM
-        kw_df["histories"] = model.format_chunk_qs(ft.query, kw_df["chunk"])
+        kw_df["histories"] = model.format_chunk_qs(ft.query, kw_df["chunk"], options=ft.options)
 
         # Calculate statistics for patient MRNs and record numbers
         pts = len(chunk_df["id"].unique())

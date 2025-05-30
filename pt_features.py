@@ -47,10 +47,7 @@ class PtFeaturesMeta(type):
 
 
 class PtFeatureBase(metaclass=PtFeaturesMeta):
-    pass
-
-class PtFeatureBase(metaclass=PtFeaturesMeta):
-    pass
+    val_var = False # whether the variable is checked in the validation study
 
 class bmi(PtFeatureBase):
     @staticmethod
@@ -79,27 +76,31 @@ class smoking_status(PtFeatureBase):
         return smoking_status
 
     query = "What is the smoking status of this patient? Options are: A. Never smoked, B. Former smoker, C. Current smoker, D. Unknown"
+    options = ["A", "B", "C", "D"]
     keywords = ["smokes", "smoker", "smoking", "tobacco"]
+    val_var = True
 
 
 class smoking_amount(PtFeatureBase):
-    pass
-
     query = "How many packs per week does this patient smoke? Options are: A. 0, B. 1-2, C. 3-5, D. 6+"
+    options = ["A", "B", "C", "D"]
     keywords = smoking_status.keywords
+    val_var = True
 
 
 class alcohol_status(PtFeatureBase):
     pass
 
     query = "What is the alcohol status of this patient? Options are: A. Never drank, B. Former drinker, C. Current drinker, D. Unknown"
+    options = ["A", "B", "C", "D"]
     keywords = ["alcohol", "drinks"]
+    val_var = True
 
 class alcohol_amount(PtFeatureBase):
-    pass
-
-    query = "What is the drinking index of this patient? Options are: A. 0, B. 1-2, C. 3-5, D. 6+"
+    query = "How many drinks per week does this patient drink? Options are: A. 0, B. 1-2, C. 3-5, D. 6+"
+    options = ["A", "B", "C", "D"]
     keywords = alcohol_status.keywords
+    val_var = True
 
 
 class alcohol_amount_drinking_index(PtFeatureBase):
@@ -107,18 +108,22 @@ class alcohol_amount_drinking_index(PtFeatureBase):
 
 
 class transplant(PtFeatureBase):
-    pass
-
     query = "Does this medical record indicate that the patient received a transplant, including grafts and allographts? Options are: A. Yes, B. No"
+    options = ["A", "B"]
     keywords = ["transplant", "transplatation", "graft", "allograft"]
+    val_var = True
 
 class transplat_date(PtFeatureBase):
-    query = "What was the date of the patient's most recent organ transplant? Format as YYYY-MM-DD. If there was no transplant, return None"
+    query = "What was the date of the patient's most recent organ transplant? Format as YYYY-MM-DD. If there was no transplant, return NA"
+    options = None  # Date format doesn't need letter options
     keywords = transplant.keywords
+    val_var = True
 
 class immunosuppressed_disease(PtFeatureBase):
     query = "Does this medical record indicate that the patient had an immunosuppressed disease, including leukemia, lymphoma, HIV, immune deficiency, or autoimmune disease? Options are: A. Yes, B. No"
+    options = ["A", "B"]
     keywords = ["leukemia", "lymphoma", "HIV", "immune deficiency", "autoimmune", "immunosuppressed", "immunosuppressive"]
+    val_var = True
 
 class immunosuppressed_transplant_organ_name(PtFeatureBase):
     pass
@@ -199,21 +204,26 @@ class military(PtFeatureBase):
     
     query = "Does this medical record indicate that the patient served in the military? Options are: A. Yes, B. No"
     keywords = ["military", "military", "veteran", "marine corps", "army", "navy", "air force", "coast guard"]
+    val_var = True
 
 
 class military_years(PtFeatureBase):
-    query = "How many years did this patient serve in the military? Answer with a number, or if the patient is not a veteran, return None"
+    query = "How many years did this patient serve in the military? Answer with a number, or if the patient is not a veteran, return NA"
     keywords = military.keywords
+    val_var = True
 
 
 class military_retirement_date(PtFeatureBase):
-    query = "What was the date of the patient's military retirement? Format as YYYY-MM-DD. If the patient is not a veteran, return None"
+    query = "What was the date of the patient's military retirement? Format as YYYY-MM-DD. If the patient is not a veteran, return NA"
     keywords = military.keywords
+    val_var = True
 
 
 class military_agent_orange(PtFeatureBase):
     query = "Does this medical record indicate that the patient was exposed to Agent Orange? Options are: A. Yes, B. No"
+    options = ["A", "B"]
     keywords = ["agent orange"]
+    val_var = True
 
 
 class military_oef_oif(PtFeatureBase):
@@ -347,7 +357,9 @@ class cancer_cancer(PtFeatureBase):
         return True
     
     query = "Does this medical record indicate that the patient has a history of cancer? Options are: A. Yes, B. No"
-    keywords = ["cancer", "carcinoma", "melanoma", "mesothelioma", "sarcoma", "lymphoma", "leukimia", "myeloma", "malignant", "tumor", "myelodysplastic"]
+    options = ["A", "B"]
+    keywords = ["cancer", "carcinoma", "melanoma", "mesothelioma", "sarcoma", "lymphoma", "leukemia", "myeloma", "malignant", "tumor", "myelodysplastic"]
+    val_var = True
 
 
 class cancer_date_of_diagnosis(PtFeatureBase):
@@ -360,27 +372,37 @@ class cancer_date_of_diagnosis(PtFeatureBase):
         dates = pd.to_datetime(cancer_df["Date"], format="%m/%d/%Y")
         return dates.min()
     
-    query = "What was the date of the patient's most recent cancer diagnosis? Format as YYYY-MM-DD. If the record does not specify, return None"
+    query = "What was the date of the patient's most recent cancer diagnosis? Format as YYYY-MM-DD. If the record does not specify, return NA"
+    options = None  # Date format doesn't need letter options
     keywords = cancer_cancer.keywords
+    val_var = True
 
 
 class cancer_stage_at_diagnosis(PtFeatureBase):
-    query = "What was the stage of the patient's most recent cancer diagnosis? Answer with a number, or if the record does not specify, return None"
+    query = "What was the stage of the patient's most recent cancer diagnosis? Options are: A. Stage 0, B. Stage I, C. Stage II, D. Stage III, E. Stage IV, F. Unknown"
+    options = ["A", "B", "C", "D", "E", "F"]
     keywords = cancer_cancer.keywords
+    val_var = True
 
 
 class cancer_maximum_stage(PtFeatureBase):
-    query = "What was the maximum stage of the patient's cancer diagnosis? Answer with a number, or if the record does not specify, return None"
+    query = "What was the maximum stage of the patient's cancer diagnosis? Options are: A. Stage 0, B. Stage I, C. Stage II, D. Stage III, E. Stage IV, F. Unknown"
+    options = ["A", "B", "C", "D", "E", "F"]
     keywords = cancer_cancer.keywords
+    val_var = True
 
 
 class cancer_status_at_last_follow_up(PtFeatureBase):
     query = "What was the status of the patient's cancer at their last follow-up? Options are: A. cancer free, B. Stable disease, C. Progressive disease, D. Unknown"
+    options = ["A", "B", "C", "D"]
     keywords = cancer_cancer.keywords
+    val_var = True
 
 class cancer_date_free(PtFeatureBase):
-    query = "What is the date the patient was declared cancer free? Format as YYYY-MM-DD. If the record does not specify, return None"
+    query = "What is the date the patient was declared cancer free? Format as YYYY-MM-DD. If the record does not specify, return NA"
+    options = None  # Date format doesn't need letter options
     keywords = cancer_cancer.keywords
+    val_var = True
 
 class cancer_treatment_radiation(PtFeatureBase):
     pass
@@ -400,7 +422,9 @@ class cancer_treatment_other(PtFeatureBase):
 
 class cancer_family_any(PtFeatureBase):
     query = "Does this medical record indicate that any member of the patient's family has a history of cancer? Options are: A. Yes, B. No"
+    options = ["A", "B"]
     keywords = cancer_cancer.keywords
+    val_var = True
 
 class cancer_family_cancer_type(PtFeatureBase):
     pass
@@ -520,7 +544,6 @@ class infection_history_hpv_human_papillomavirus(PtFeatureBase):
         ]
         df = get_rows_by_icd(df, icd9s, icd10s)
         return not df.empty
-        pass
 
 
 class infection_history_ebv_epstein_barr_virus(PtFeatureBase):
@@ -1286,11 +1309,15 @@ class antibiotics(PtFeatureBase):
         "keflex", "panixine disperdose", "azithromycin", "zithromax",
         "zithromax tri-pak", "z-pak", "zmax"
     ]
-    query = f"Does this medical record indicate that the patient took any of the following antibiotics: {', '.join(keywords)}"
+    query = f"Does this medical record indicate that the patient took any of the following antibiotics: {', '.join(keywords)}? Options are: A. Yes, B. No"
+    options = ["A", "B"]
+    val_var = True
 
 class antibiotic_duration(PtFeatureBase):
-    query = "How long did the patient take antibiotics, in days? Answer with a number. If the medical record does not specify, return None"
+    query = f"How long in days did the patient take antibiotics, in days? The following are applicable antibiotics: {', '.join(antibiotics.keywords)}. Options are: A. Never, B. <30, C. 30-90, D. 91-180, E. >180, F. Unknown"
+    options = ["A", "B", "C", "D", "E", "F"] 
     keywords = antibiotics.keywords
+    val_var = True
 
 
 class antibiotic_tetracyclines(PtFeatureBase):
