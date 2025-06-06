@@ -17,14 +17,14 @@ MAX_DS_SIZE = 100
 for cls in PtFeaturesMeta.registry.values():
     if not cls.val_var:
         continue
+    # check each record if it has the keywords
+    print(f"Checking {cls.__name__} for keywords...")
 
     with db.connect() as conn:
-        query = text(f"SELECT * FROM rpdr_vis")
+        query = text(f"SELECT * FROM vis ORDER BY RANDOM() LIMIT 10000")
         result = conn.execute(query)
         df = pd.DataFrame(result.fetchall(), columns=result.keys()).sample(frac=1)
 
-    # check each record if it has the keywords
-    print(f"Checking {cls.__name__} for keywords...")
 
     dfs = []
     for start in tqdm(range(0, len(df), BATCH_SIZE)):

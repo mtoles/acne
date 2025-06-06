@@ -46,7 +46,7 @@ def get_null_samples(column_name):
     
     with db.connect() as conn:
         # Count null values in the column
-        query = text(f"SELECT COUNT(*) FROM rpdr_vis WHERE {column_name} IS NULL")
+        query = text(f"SELECT COUNT(*) FROM vis WHERE {column_name} IS NULL")
         result = conn.execute(query)
         null_count = result.scalar()
         
@@ -54,7 +54,7 @@ def get_null_samples(column_name):
         print(f"Found {null_count} null values")
         
         # Get sample of rows with null values, limited to DOWNSAMPLE_SIZE
-        sample_query = text(f"SELECT * FROM rpdr_vis WHERE {column_name} IS NULL LIMIT {DOWNSAMPLE_SIZE}")
+        sample_query = text(f"SELECT * FROM vis WHERE {column_name} IS NULL LIMIT {DOWNSAMPLE_SIZE}")
         sample_result = conn.execute(sample_query)
         df = pd.DataFrame(sample_result.fetchall(), columns=sample_result.keys())
         return df
