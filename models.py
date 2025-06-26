@@ -9,7 +9,8 @@ import os
 
 SYSTEM_PROMPT = "You are a medical assistant."
 BATCH_SIZE = 64
-MODEL_ID = "RedHatAI/Qwen2.5-3B-Instruct-quantized.w8a16"
+# MODEL_ID = "RedHatAI/Qwen2.5-3B-Instruct-quantized.w8a16"
+MODEL_ID = "RedHatAI/Llama-4-Scout-17B-16E-Instruct-quantized.w4a16"
 # assert MODEL_ID is not None, "MODEL_ID is not set"
 
 class MrModel:
@@ -28,7 +29,7 @@ class MrModel:
 
 
     def format_chunk_qs(self, q: str, chunk: str, options: list[str]):
-        prompt= f"Medical Record Excerpt: {chunk}\n\nQuestion: {q}\n\nAnswer only with one of: {options}"
+        prompt= f"Medical Record Excerpt: {chunk}\n\nQuestion: {q}\n\nDO NOT think out loud. Answer only with one of: {options}"
         return [{"role": "user", "content": prompt}]
 
 
@@ -43,7 +44,7 @@ class MrModel:
             messages=history,
             logprobs=True,
             top_logprobs=20,
-            max_tokens=1,
+            max_tokens=1, # should be 1 for multiple choice, testing
             extra_body={"chat_template_kwargs": {"enable_thinking": False}}
         )
         print(f"response text: {response.choices[0].message.content}")

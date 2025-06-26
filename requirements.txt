@@ -10,3 +10,4 @@ sqlalchemy
 pyarrow
 flashtext
 langchain
+openpyxl

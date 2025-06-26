@@ -3,13 +3,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # from textsplit.tools import split_single
 
 
-CHUNKSIZE = 100  # Maximum words per chunk
+CHUNKSIZE = 200  # Maximum words per chunk
 
 
 def chunk_text(text) -> list[str]:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNKSIZE,
-        chunk_overlap=0,
+        chunk_overlap=20,
         length_function=lambda x: len(x.split()),
         separators=["\n\n", "\n", " ", ""]
     )

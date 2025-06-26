@@ -34,7 +34,8 @@ def get_rows_by_icd(df: pd.DataFrame, icd9_list: list, icd10_list: list):
 # model = MrModel()
 
 ###
-
+NOT_CANCER_STR = "Pre-cancer, atypia, dysplasia, pre-malignant, non-malignant, or benign conditions are not considered cancer."
+FAMILY_HISTORY_STR = "Ignore family history of cancer (e.g. mother, father, sister, brother, etc.)."
 
 class PtFeaturesMeta(type):
     registry = {}
@@ -48,6 +49,21 @@ class PtFeaturesMeta(type):
 
 class PtFeatureBase(metaclass=PtFeaturesMeta):
     val_var = False # whether the variable is checked in the validation study
+
+class PtDateFeatureBase(PtFeatureBase):
+    def pooling_fn_latest(preds: list):
+        # return the most recent date
+        dates = [pd.to_datetime(pred) for pred in preds if pred != "X"]
+        if not dates:
+            return "X"
+        return dates.max().strftime("%Y-%m-%d")
+    def pooling_fn_earliest(preds: list):
+        # return the earliest date
+        dates = [pd.to_datetime(pred) for pred in preds if pred != "X"]
+        if not dates:
+            return "X"
+        return dates.min().strftime("%Y-%m-%d")
+    options = None
 
 class bmi(PtFeatureBase):
     @staticmethod
@@ -81,40 +97,47 @@ class smoking_status(PtFeatureBase):
     val_var = True
     def pooling_fn(preds: list):
         # return the most common smoking status
+        preds = [x for x in preds if x in ["A", "B", "C", "D"]] # drop NO_KW
         counts = Counter(preds)
         return counts.most_common(1)[0][0]
 
 
 class smoking_amount(PtFeatureBase):
-    query = "How many packs per week does this patient smoke? If a range is given, take the upper bound.Options are: A. 0, B. 1-2, C. 3-5, D. 6+"
-    options = ["A", "B", "C", "D"]
+    query = "How many packs per week does this patient smoke? If a range is given, take the upper bound. Options are: A. 0 (does not smoke), B. 1-2, C. 3-5, D. 6+, E. Smoker but unknown quantity, F. No indication of smoking status"
+    options = ["A", "B", "C", "D", "E", "F"]
     keywords = smoking_status.keywords
     val_var = True
     def pooling_fn(preds: list):
-        # return the most common pack amount
-        counts = Counter(preds)
-        return counts.most_common(1)[0][0]
+        # Get counts of A-D options
+        abcd_counts = Counter([p for p in preds if p in ["A", "B", "C", "D"]])
+        if abcd_counts:
+            return abcd_counts.most_common(1)[0][0]
+        # If no A-D, check for E
+        elif "E" in preds:
+            return "E"
+        # Otherwise return F
+        else:
+            return "F"
 
 
 class alcohol_status(PtFeatureBase):
     pass
 
-    query = "What is the alcohol status of this patient? Options are: A. Never drank, B. Former drinker, C. Current drinker, D. Unknown"
+    query = "What is the alcohol status of this patient? (Note: ETOH is the abbreviation for ethanol.) Options are: A. Never drank, B. Former drinker, C. Current drinker, D. No indication of alcohol status"
     options = ["A", "B", "C", "D"]
-    keywords = ["alcohol", "drinks"]
+    keywords = ["alcohol", "drinks", "etoh"]
     val_var = True
     def pooling_fn(preds: list):
-        if not preds or all(p == "D" for p in preds):
-            return "D"
-        filtered_preds = [p for p in preds if p in ["A", "B", "C"]]
-        if not filtered_preds:
-            return "D"
-        from collections import Counter
-        return Counter(filtered_preds).most_common(1)[0][0]
+        # return the most common alcohol status among A, B, C
+        abc_counts = Counter([p for p in preds if p in ["A", "B", "C"]])
+        if abc_counts:
+            return abc_counts.most_common(1)[0][0]
+        # If no A-C, return D
+        return "D"
 
 class alcohol_amount(PtFeatureBase):
-    query = "How many drinks per week does this patient drink? Options are: A. 0, B. 1-2, C. 3-5, D. 6+"
-    options = ["A", "B", "C", "D"]
+    query = "How many drinks per week does this patient drink? Options are: A. 0 (sober or does not drink), B. 1-2, C. 3-5, D. 6+, E. Drinker but unknown quantity, F. No indication of alcohol status"
+    options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
     val_var = True
     def pooling_fn(preds: list):
@@ -124,8 +147,12 @@ class alcohol_amount(PtFeatureBase):
             return "C"
         elif "B" in preds:
             return "B"
-        else:
+        elif "A" in preds:
             return "A"
+        elif "E" in preds:
+            return "E"
+        else:
+            return "F"
 
 
 class alcohol_amount_drinking_index(PtFeatureBase):
@@ -142,17 +169,11 @@ class transplant(PtFeatureBase):
             return "A"
         return "B"
 
-class transplant_date(PtFeatureBase):
-    query = "What was the date of the patient's most recent organ transplant? Format as YYYY-MM-DD. If there was no transplant, return NA"
-    options = None  # Date format doesn't need letter options
+class transplant_date(PtDateFeatureBase):
+    query = "What was the date of the patient's most recent organ transplant? Format as YYYY-MM-DD. If there was no transplant, return U. If the record gives no indication of transplant, return X"
     keywords = transplant.keywords
     val_var = True
-    def pooling_fn(preds: list):
-        # return the most recent date
-        dates = [pd.to_datetime(pred) for pred in preds if pred != "NA"]
-        if not dates:
-            return "NA"
-        return dates.max().strftime("%Y-%m-%d")
+    pooling_fn = PtDateFeatureBase.pooling_fn_latest
 
 class immunosuppressed_disease(PtFeatureBase):
     query = "Does this medical record indicate that the patient had an immunosuppressed disease, including leukemia, lymphoma, HIV, AIDS, or immune deficiency? Options are: A. Yes, B. No"
@@ -168,8 +189,8 @@ class immunosuppressed_transplant_organ_name(PtFeatureBase):
     pass
 
 
-class immunosuppressed_transplant_organ_date(PtFeatureBase):
-    pass
+class immunosuppressed_transplant_organ_date(PtDateFeatureBase):
+    pooling_fn = PtDateFeatureBase.pooling_fn_latest
 
 
 class immunosuppressed_medication_medication_name(PtFeatureBase):
@@ -247,15 +268,15 @@ class military(PtFeatureBase):
 
 
 class military_years(PtFeatureBase):
-    query = "How many years did this patient serve in the military? Answer with a number, or if the patient is not a veteran, return NA"
+    query = "How many years did this patient serve in the military? Answer with a number, or if the patient is not a veteran, return X"
     keywords = military.keywords
     # val_var = True
 
 
-class military_retirement_date(PtFeatureBase):
-    query = "What was the date of the patient's military retirement? Format as YYYY-MM-DD. If the patient is not a veteran, return NA"
+class military_retirement_date(PtDateFeatureBase):
+    query = "What was the date of the patient's military retirement? Format as YYYY-MM-DD. If the patient is not a veteran, return X"
     keywords = military.keywords
-    # val_var = True
+    pooling_fn = PtDateFeatureBase.pooling_fn_latest
 
 
 class military_agent_orange(PtFeatureBase):
@@ -402,7 +423,7 @@ class cancer_cancer(PtFeatureBase):
             return None
         return True
     
-    query = "Does this medical record indicate that the patient has a history of cancer? Options are: A. Yes, B. No"
+    query = f"Does this medical record indicate that the patient has a history of cancer? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Yes, B. No"
     options = ["A", "B"]
     keywords = ["cancer", "carcinoma", "melanoma", "mesothelioma", "sarcoma", "lymphoma", "leukemia", "myeloma", "malignant", "tumor", "myelodysplastic"]
     val_var = True
@@ -412,7 +433,7 @@ class cancer_cancer(PtFeatureBase):
         return "B"
 
 
-class cancer_date_of_diagnosis(PtFeatureBase):
+class cancer_date_of_diagnosis(PtDateFeatureBase):
     @staticmethod
     def compute(dfs: dict):
         df = dfs["Dia"]
@@ -422,21 +443,15 @@ class cancer_date_of_diagnosis(PtFeatureBase):
         dates = pd.to_datetime(cancer_df["Date"], format="%m/%d/%Y")
         return dates.min()
     
-    query = "What was the date of the patient's most recent cancer diagnosis? Format as YYYY-MM-DD. If the record does not specify, return NA"
-    options = None  # Date format doesn't need letter options
+    query = "What was the date of the patient's most recent cancer diagnosis? Format as YYYY-MM-DD. If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X"
     keywords = cancer_cancer.keywords
     val_var = True
-    def pooling_fn(preds: list):
-        # return earliest date
-        dates = [pd.to_datetime(pred) for pred in preds if pred != "NA"]
-        if not dates:
-            return "NA"
-        return dates.min().strftime("%Y-%m-%d")
+    pooling_fn = PtDateFeatureBase.pooling_fn_earliest
 
 
 class cancer_stage_at_diagnosis(PtFeatureBase):
-    query = "What was the stage of the patient's most recent cancer diagnosis? Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown"
-    options = ["A", "B", "C", "D", "E", ]
+    query = f"What was the stage of the patient's most recent cancer diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown, F. Patient does not have cancer."
+    options = ["A", "B", "C", "D", "E", "F"]
     keywords = cancer_cancer.keywords
     val_var = True
     def pooling_fn(preds: list):
@@ -449,12 +464,14 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
             return "B"
         if "A" in preds:
             return "A"
+        if "F" in preds:
+            return "F"
         return "E"
 
 
 class cancer_maximum_stage(PtFeatureBase):
-    query = "What was the maximum stage of the patient's most recent cancer diagnosis? Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown"
-    options = ["A", "B", "C", "D", "E"]
+    query = f"What was the maximum stage of the patient's most recent cancer diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Cancer present but maximum stage unknown, F. Patient does not have cancer"
+    options = ["A", "B", "C", "D", "E", "F"]
     keywords = cancer_cancer.keywords
     val_var = True  
     def pooling_fn(preds: list):
@@ -467,12 +484,14 @@ class cancer_maximum_stage(PtFeatureBase):
             return "B"
         if "A" in preds:
             return "A"
+        if "F" in preds:
+            return "F"
         return "E"
 
 
 class cancer_status_at_last_follow_up(PtFeatureBase):
-    query = "What was the status of the patient's cancer at their last follow-up? Options are: A. cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Unknown"
-    options = ["A", "B", "C", "D"]
+    query = f"What was the status of the patient's cancer at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer"
+    options = ["A", "B", "C", "D", "E", "F"]
     keywords = cancer_cancer.keywords
     val_var = True
     def pooling_fn(preds: list):
@@ -483,19 +502,17 @@ class cancer_status_at_last_follow_up(PtFeatureBase):
             return "B"
         if "A" in preds:
             return "A"
-        return "D"
+        if "D" in preds:
+            return "D"
+        if "F" in preds:
+            return "F"
+        return "E"
 
-class cancer_date_free(PtFeatureBase):
-    query = "What is the date the patient was declared cancer free? Cancer free can be defined as: cancer free, in remission, complete response, no evidence of disease, or disease free. Format as YYYY-MM-DD. If the record does not specify, return NA"
-    options = None  # Date format doesn't need letter options
+class cancer_date_free(PtDateFeatureBase):
+    query = f"What is the date the patient was declared cancer free? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Cancer free can be defined as: cancer free, in remission, complete response, no evidence of disease, or disease free. Format as YYYY-MM-DD. If the patient had cancer but no cancer free date is specified, return U. If the record gives no indication of cancer, return X"
     keywords = cancer_cancer.keywords
     val_var = True
-    def pooling_fn(preds: list):
-        # return latest date
-        dates = [pd.to_datetime(pred) for pred in preds if pred != "NA"]
-        if not dates:
-            return "NA"
-        return dates.max().strftime("%Y-%m-%d")
+    pooling_fn = PtDateFeatureBase.pooling_fn_latest
 
 class cancer_treatment_radiation(PtFeatureBase):
     pass
@@ -514,7 +531,7 @@ class cancer_treatment_other(PtFeatureBase):
 
 
 class cancer_family_any(PtFeatureBase):
-    query = "Does this medical record indicate that any member of the patient's family has a history of cancer? Options are: A. Yes, B. No"
+    query = f"Does this medical record indicate that any member of the patient's family has a history of cancer? {NOT_CANCER_STR} Options are: A. Yes, B. No"
     options = ["A", "B"]
     keywords = cancer_cancer.keywords
     val_var = True
@@ -1403,7 +1420,7 @@ class antibiotics(PtFeatureBase):
         "keflex", "panixine disperdose", "azithromycin", "zithromax",
         "zithromax tri-pak", "z-pak", "zmax"
     ]
-    query = f"Does this medical record indicate that the patient took any of the following antibiotics: {', '.join(keywords)}? Options are: A. Yes, B. No"
+    query = f"Does this medical record indicate that the patient took any of the following antibiotics, ignoring those mentioned as allergic reactions: {', '.join(keywords)}? Options are: A. Yes, B. No"
     options = ["A", "B"]
     val_var = True
     def pooling_fn(preds: list):
@@ -1412,8 +1429,8 @@ class antibiotics(PtFeatureBase):
         return "B"
 
 class antibiotic_duration(PtFeatureBase):
-    query = f"How long in days did the patient take antibiotics, in days? The following are applicable antibiotics: {', '.join(antibiotics.keywords)}. Options are: A. Never, B. <30, C. 30-90, D. 91-180, E. >180, F. Unknown"
-    options = ["A", "B", "C", "D", "E", "F"] 
+    query = f"How long in days did the patient take antibiotics, in days? Do not assume the patient takes one pill per day. The following are applicable antibiotics: {', '.join(antibiotics.keywords)}. Options are: A. Never, B. <30, C. 30-90, D. 91-180, E. >180, F. Antibiotic but unknown duration, G. No indication of antibiotic use"
+    options = ["A", "B", "C", "D", "E", "F", "G"] 
     keywords = antibiotics.keywords
     val_var = True
     def pooling_fn(preds: list):
@@ -1428,7 +1445,9 @@ class antibiotic_duration(PtFeatureBase):
             return "B"
         if "A" in preds:
             return "A"
-        return "F"
+        if "F" in preds:
+            return "F"
+        return "G"
 
 
 class antibiotic_tetracyclines(PtFeatureBase):
