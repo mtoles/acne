@@ -49,21 +49,23 @@ class PtFeaturesMeta(type):
 
 class PtFeatureBase(metaclass=PtFeaturesMeta):
     val_var = False # whether the variable is checked in the validation study
+    max_tokens = 1  # default max tokens for model prediction
 
 class PtDateFeatureBase(PtFeatureBase):
     def pooling_fn_latest(preds: list):
         # return the most recent date
-        dates = [pd.to_datetime(pred) for pred in preds if pred != "X"]
+        dates = [pd.to_datetime(pred, format="%Y%m%d") for pred in preds if pred != "X"]
         if not dates:
             return "X"
         return dates.max().strftime("%Y-%m-%d")
     def pooling_fn_earliest(preds: list):
         # return the earliest date
-        dates = [pd.to_datetime(pred) for pred in preds if pred != "X"]
+        dates = [pd.to_datetime(pred, format="%Y%m%d") for pred in preds if pred != "X"]
         if not dates:
             return "X"
         return dates.min().strftime("%Y-%m-%d")
     options = None
+    max_tokens = 8
 
 class bmi(PtFeatureBase):
     @staticmethod
@@ -170,7 +172,7 @@ class transplant(PtFeatureBase):
         return "B"
 
 class transplant_date(PtDateFeatureBase):
-    query = "What was the date of the patient's most recent organ transplant? Format as YYYY-MM-DD. If there was no transplant, return U. If the record gives no indication of transplant, return X"
+    query = "What was the date of the patient's most recent organ transplant? Format as YYYYMMDD. If there was no transplant, return U. If the record gives no indication of transplant, return X"
     keywords = transplant.keywords
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
@@ -443,7 +445,7 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
         dates = pd.to_datetime(cancer_df["Date"], format="%m/%d/%Y")
         return dates.min()
     
-    query = "What was the date of the patient's most recent cancer diagnosis? Format as YYYY-MM-DD. If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X"
+    query = "What was the date of the patient's most recent cancer diagnosis? Format as YYYYMMDD. If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X"
     keywords = cancer_cancer.keywords
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_earliest
@@ -509,7 +511,7 @@ class cancer_status_at_last_follow_up(PtFeatureBase):
         return "E"
 
 class cancer_date_free(PtDateFeatureBase):
-    query = f"What is the date the patient was declared cancer free? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Cancer free can be defined as: cancer free, in remission, complete response, no evidence of disease, or disease free. Format as YYYY-MM-DD. If the patient had cancer but no cancer free date is specified, return U. If the record gives no indication of cancer, return X"
+    query = f"What is the date the patient was declared cancer free? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Cancer free can be defined as: cancer free, in remission, complete response, no evidence of disease, or disease free. Format as YYYYMMDD. If the patient had cancer but no cancer free date is specified, return U. If the record gives no indication of cancer, return X"
     keywords = cancer_cancer.keywords
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
@@ -1429,7 +1431,7 @@ class antibiotics(PtFeatureBase):
         return "B"
 
 class antibiotic_duration(PtFeatureBase):
-    query = f"How long in days did the patient take antibiotics, in days? Do not assume the patient takes one pill per day. The following are applicable antibiotics: {', '.join(antibiotics.keywords)}. Options are: A. Never, B. <30, C. 30-90, D. 91-180, E. >180, F. Antibiotic but unknown duration, G. No indication of antibiotic use"
+    query = f"How long in days did the patient take antibiotics, in days? Do not assume the patient takes one pill per day. The following are applicable antibiotics: {', '.join(antibiotics.keywordsclaude)}. Options are: A. Never, B. <30, C. 30-90, D. 91-180, E. >180, F. Antibiotic but unknown duration, G. No indication of antibiotic use"
     options = ["A", "B", "C", "D", "E", "F", "G"] 
     keywords = antibiotics.keywords
     val_var = True

@@ -29,7 +29,7 @@ model = MrModel()
 test_question = "Does this patient have a fever? A. Yes, B. No"
 test_chunk = "Patient presents with temperature of 101.2°F and chills."
 test_history = model.format_chunk_qs(test_question, [test_chunk], options=["A", "B"])
-result = model.predict_single(test_history, output_choices=set(["A", "B"]))
+result = model.predict_single_with_logit_trick(test_history, output_choices=set(["A", "B"]))
 print(f"\nTest prediction result: {result}")
 
 # get all null values from the db that are LlmFeatureBase
@@ -84,7 +84,7 @@ for target_ft in target_fts:
     preds = []
     for chunk in chunk_df[chunk_df["has_kw"]]["chunk"]:
         history = model.format_chunk_qs(q=target_cls.query, chunk=chunk, options=target_cls.options)
-        pred = model.predict_single(history, output_choices=set(target_cls.options))
+        pred = model.predict_single_with_logit_trick(history, output_choices=set(target_cls.options))
         preds.append(pred)
     chunk_df["chunk_pred"] = "NO_KW"
     chunk_df.loc[chunk_df["has_kw"], "chunk_pred"] = preds

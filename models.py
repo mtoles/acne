@@ -33,7 +33,7 @@ class MrModel:
         return [{"role": "user", "content": prompt}]
 
 
-    def predict_single(self, history: list[dict], output_choices: set[str]):
+    def predict_single_with_logit_trick(self, history: list[dict], output_choices: set[str]):
         assert isinstance(history, list)
         assert len(history) == 1
         assert "role" in history[0] and "content" in history[0]
@@ -44,7 +44,7 @@ class MrModel:
             messages=history,
             logprobs=True,
             top_logprobs=20,
-            max_tokens=1, # should be 1 for multiple choice, testing
+            max_tokens=1, 
             extra_body={"chat_template_kwargs": {"enable_thinking": False}}
         )
         print(f"response text: {response.choices[0].message.content}")
@@ -59,6 +59,15 @@ class MrModel:
             print("Warning: No valid output choices found in logprobs")
             return "NA"
         return max(top_logprobs, key=lambda x: x.logprob).token
+    
+    def predict_single(self, history: list[dict], max_tokens: int):
+        # TODO: test on dates
+        response = self.client.chat.completions.create(
+            model=self.model_id,
+            messages=history,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content
 
 class DummyModel:
     def __init__(self):
