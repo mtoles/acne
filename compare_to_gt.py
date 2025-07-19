@@ -16,12 +16,12 @@ tqdm.pandas()  # Enable tqdm for pandas operations
 # Initialize model
 model = MrModel()
 
-# Test the model with a single example
-test_question = "Does this patient have a fever? A. Yes, B. No"
-test_chunk = "Patient presents with temperature of 101.2°F and chills."
-test_history = model.format_chunk_qs(test_question, [test_chunk], options=["A", "B"])
-result = model.predict_single_with_logit_trick(test_history, output_choices=set(["A", "B"]))
-print(f"\nTest prediction result: {result}")
+# # Test the model with a single example
+# test_question = "Does this patient have a fever? A. Yes, B. No"
+# test_chunk = "Patient presents with temperature of 101.2°F and chills."
+# test_history = model.format_chunk_qs(test_question, [test_chunk], options=["A", "B"])
+# result = model.predict_single_with_logit_trick(test_history, output_choices=set(["A", "B"]))
+# print(f"\nTest prediction result: {result}")
 
 # get all null values from the db that are LlmFeatureBase
 classes = [
@@ -30,7 +30,7 @@ classes = [
 db = create_engine(db_url)
 
 
-def get_samples(column_name, annot_report_numbers, downsample_size=None):
+def get_samples(column_name, annot_report_numbers, downsample_size=100):
     print(f"\nGetting samples for column {column_name}:")
 
     with db.connect() as conn:
@@ -67,7 +67,7 @@ def process_file(file_path):
     if len(annot_df) == 0:
         print(f"skipping {file_path} because it has no samples with validation data")
         return
-    annot_report_numbers = annot_df["Report_Number"].unique()
+    annot_report_numbers = annot_df["Report_Number"].unique()[:10] # TESTING DOWNSAMPLE
 
     target_cls = PtFeaturesMeta.registry[feature_name]
     # if issubclass(target_cls, PtDateFeatureBase):
@@ -83,32 +83,46 @@ def process_file(file_path):
     # Process chunks
     df = df.assign(chunk=df["Report_Text"].progress_apply(chunk_text))
     chunk_df = df.explode("chunk")
-    chunk_df["has_kw"] = chunk_df["chunk"].progress_apply(
+    chunk_df["found_keywords"] = chunk_df["chunk"].progress_apply(
         has_keyword, keywords=target_cls.keywords
     )
+    chunk_df["has_kw"] = chunk_df["found_keywords"].apply(lambda x: len(x) > 0)
 
     percent_has_kw = len(chunk_df[chunk_df["has_kw"]]) / len(chunk_df)
+    # chunk_df = chunk_df[chunk_df["has_kw"]]
 
     # Apply model to chunks
     preds = []
-    for chunk in chunk_df[chunk_df["has_kw"]]["chunk"]:
-        history = model.format_chunk_qs(
-            q=target_cls.query, chunk=chunk, options=target_cls.options
-        )
-        if issubclass(target_cls, PtFeatureBase):
-            pred = model.predict_single_with_logit_trick(
-                history,
-                output_choices=set(target_cls.options) if target_cls.options else None,
+    queries = []
+    for chunk, found_keywords in tqdm(zip(chunk_df[chunk_df["has_kw"]]["chunk"], chunk_df[chunk_df["has_kw"]]["found_keywords"])):
+        preds_for_chunk = {}
+        queries_for_chunk = []
+        for found_keyword in found_keywords:
+            # All queries are now callable functions - pass found keywords instead of all keywords
+            query = target_cls.query(chunk=chunk, keywords=found_keyword)
+            queries_for_chunk.append(query)
+            
+            history = model.format_chunk_qs(
+                q=query, chunk=chunk, options=target_cls.options
             )
-        else:
-            pred = model.predict_single(
-                history,
-                max_tokens=target_cls.max_tokens
-            )
-        preds.append(pred)
+            if issubclass(target_cls, PtFeatureBase):
+                pred = model.predict_single_with_logit_trick(
+                    history,
+                    output_choices=set(target_cls.options) if target_cls.options else None,
+                )
+            else:
+                pred = model.predict_single(
+                    history,
+                    max_tokens=target_cls.max_tokens
+                )
+            preds_for_chunk[found_keyword] = pred
+        preds.append(preds_for_chunk)
+        queries.append(queries_for_chunk)
 
     chunk_df["chunk_pred"] = "NO_KW"
+    chunk_df["chunk_query"] = ""
     chunk_df.loc[chunk_df["has_kw"], "chunk_pred"] = preds
+    chunk_df.loc[chunk_df["has_kw"], "chunk_query"] = pd.Series(queries, dtype=object, index=chunk_df.index[chunk_df["has_kw"]]) # avoid error from list of lists
 
     # Group predictions
     df["pooled_answers"] = chunk_df.groupby(chunk_df.index)["chunk_pred"].agg(list)
@@ -171,20 +185,25 @@ def process_file(file_path):
             f.write(f"Report Text: {row['Report_Text']}\n")
             f.write(f"Prediction: {row['report_no_pred']}\n")
             f.write(f"Ground Truth: {row['val_unified']}\n\n")
-            f.write(f"Query: {target_cls.query}\n")
+            # Get the first query used for this report (they should all be similar for the same report)
+            report_chunks = chunk_df[chunk_df.index == index]
+            assert len(report_chunks) > 0
+            # if not report_chunks.empty and len(report_chunks[report_chunks["has_kw"]]) > 0:
+            first_query = report_chunks[report_chunks["has_kw"]]["chunk_query"].iloc[0]
+            f.write(f"Query: {first_query}\n")
+            # else:
+            #     f.write(f"Query Function: {target_cls.query.__name__}\n")
 
         # Save individual chunks
         chunks_from_this_report = incorrect_chunks[incorrect_chunks.index == index]
         for i, chunk_row in enumerate(chunks_from_this_report.itertuples()):
-            all_keywords = [word for kw in target_cls.keywords for word in kw.split(" ")]
-            found_keywords = [kw for kw in target_cls.keywords if kw in chunk_row.chunk]
             chunk_file_path = report_dir / f"chunk_{i+1}.txt"
             with open(chunk_file_path, "w") as f:
-                f.write(f"Query: {target_cls.query}\n")
+                f.write(f"Query: {chunk_row.chunk_query}\n")
                 f.write(f"Ground Truth: {row['val_unified']}\n")
                 f.write(f"Prediction: {chunk_row.chunk_pred}\n")
                 f.write(f"Keywords: {', '.join(target_cls.keywords)}\n")
-                f.write(f"Found keywords: {', '.join(found_keywords)}\n\n")
+                f.write(f"Found keywords: {', '.join(chunk_row.found_keywords)}\n\n")
                 f.write(f"Chunk:\n{chunk_row.chunk}\n")
 
     # Save predictions to new Excel file within feature directory

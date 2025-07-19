@@ -81,10 +81,10 @@ for name, ft in PtFeaturesMeta.registry.items():
     chunk_df = pd.DataFrame(all_rows)
 
     # Filter by keyword
-    chunk_df["chunk_has_kw"] = False  # Initialize all to False
+    chunk_df["found_keywords"] = chunk_df["chunk"].progress_apply(has_keyword, keywords=ft.keywords)
+    chunk_df["chunk_has_kw"] = chunk_df["found_keywords"].apply(lambda x: len(x) > 0)
     print("Filtering by keyword")
-    kw_df = chunk_df[chunk_df["chunk"].progress_apply(has_keyword, keywords=ft.keywords)]
-    chunk_df.loc[kw_df.index, "chunk_has_kw"] = True
+    kw_df = chunk_df[chunk_df["chunk_has_kw"]]
 
     # run all chunks through LLM
     kw_df["histories"] = model.format_chunk_qs(ft.query, kw_df["chunk"])

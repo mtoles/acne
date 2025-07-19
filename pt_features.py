@@ -93,7 +93,10 @@ class smoking_status(PtFeatureBase):
         smoking_status = smoking_statuses.value_counts().index[0]
         return smoking_status
 
-    query = "What is the smoking status of this patient? Options are: A. Never smoked, B. Former smoker, C. Current smoker, D. Unknown"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for smoking status."""
+        return "What is the smoking status of this patient? Options are: A. Never smoked, B. Former smoker, C. Current smoker, D. Unknown"
     options = ["A", "B", "C", "D"]
     keywords = ["smokes", "smoker", "smoking", "tobacco"]
     val_var = True
@@ -105,7 +108,10 @@ class smoking_status(PtFeatureBase):
 
 
 class smoking_amount(PtFeatureBase):
-    query = "How many packs per week does this patient smoke? If a range is given, take the upper bound. Options are: A. 0 (does not smoke), B. 1-2, C. 3-5, D. 6+, E. Smoker but unknown quantity, F. No indication of smoking status"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for smoking amount."""
+        return "How many packs per week does this patient smoke? If a range is given, take the upper bound. Options are: A. 0 (does not smoke), B. 1-2, C. 3-5, D. 6+, E. Smoker but unknown quantity, F. No indication of smoking status"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = smoking_status.keywords
     val_var = True
@@ -125,7 +131,10 @@ class smoking_amount(PtFeatureBase):
 class alcohol_status(PtFeatureBase):
     pass
 
-    query = "What is the alcohol status of this patient? (Note: ETOH is the abbreviation for ethanol.) Options are: A. Never drank, B. Former drinker, C. Current drinker, D. No indication of alcohol status"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for alcohol status."""
+        return "What is the alcohol status of this patient? (Note: ETOH is the abbreviation for ethanol.) Options are: A. Never drank, B. Former drinker, C. Current drinker, D. No indication of alcohol status"
     options = ["A", "B", "C", "D"]
     keywords = ["alcohol", "drinks", "etoh"]
     val_var = True
@@ -138,7 +147,10 @@ class alcohol_status(PtFeatureBase):
         return "D"
 
 class alcohol_amount(PtFeatureBase):
-    query = "How many drinks per week does this patient drink? Options are: A. 0 (sober or does not drink), B. 1-2, C. 3-5, D. 6+, E. Drinker but unknown quantity, F. No indication of alcohol status"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for alcohol amount."""
+        return "How many drinks per week does this patient drink? Options are: A. 0 (sober or does not drink), B. 1-2, C. 3-5, D. 6+, E. Drinker but unknown quantity, F. No indication of alcohol status"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
     val_var = True
@@ -162,7 +174,10 @@ class alcohol_amount_drinking_index(PtFeatureBase):
 
 
 class transplant(PtFeatureBase):
-    query = "Does this medical record indicate that the patient received a transplant, solid organ transplant, stem cell transplant, or bone marrow transplant? Options are: A. Yes, B. No"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for transplant status."""
+        return "Does this medical record indicate that the patient received a transplant, solid organ transplant, stem cell transplant, or bone marrow transplant? Options are: A. Yes, B. No"
     options = ["A", "B"]
     keywords = ["transplant", "transplantation",]
     val_var = True
@@ -172,13 +187,19 @@ class transplant(PtFeatureBase):
         return "B"
 
 class transplant_date(PtDateFeatureBase):
-    query = "What was the date of the patient's most recent organ transplant? Format as YYYYMMDD. If there was no transplant, return U. If the record gives no indication of transplant, return X"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for transplant date."""
+        return "What was the date of the patient's most recent organ transplant? Format as YYYYMMDD. If there was no transplant, return U. If the record gives no indication of transplant, return X"
     keywords = transplant.keywords
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
 
 class immunosuppressed_disease(PtFeatureBase):
-    query = "Does this medical record indicate that the patient had an immunosuppressed disease, including leukemia, lymphoma, HIV, AIDS, or immune deficiency? Options are: A. Yes, B. No"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for immunosuppressed disease status."""
+        return "Does this medical record indicate that the patient had an immunosuppressed disease, including leukemia, lymphoma, HIV, AIDS, or immune deficiency? Options are: A. Yes, B. No"
     options = ["A", "B"]
     keywords = ["leukemia", "lymphoma", "HIV", "immune deficiency", "immunodeficiency", "immunosuppressed", "immunocompromised", "AIDS"]
     val_var = True
@@ -264,25 +285,37 @@ class military(PtFeatureBase):
         mil = mil.value_counts().index[0]
         return mil
     
-    query = "Does this medical record indicate that the patient served in the military? Options are: A. Yes, B. No"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for military service status."""
+        return "Does this medical record indicate that the patient served in the military? Options are: A. Yes, B. No"
     keywords = ["military", "military", "veteran", "marine corps", "army", "navy", "air force", "coast guard"]
     # val_var = True
 
 
 class military_years(PtFeatureBase):
-    query = "How many years did this patient serve in the military? Answer with a number, or if the patient is not a veteran, return X"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for military years of service."""
+        return "How many years did this patient serve in the military? Answer with a number, or if the patient is not a veteran, return X"
     keywords = military.keywords
     # val_var = True
 
 
 class military_retirement_date(PtDateFeatureBase):
-    query = "What was the date of the patient's military retirement? Format as YYYY-MM-DD. If the patient is not a veteran, return X"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for military retirement date."""
+        return "What was the date of the patient's military retirement? Format as YYYY-MM-DD. If the patient is not a veteran, return X"
     keywords = military.keywords
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
 
 
 class military_agent_orange(PtFeatureBase):
-    query = "Does this medical record indicate that the patient was exposed to Agent Orange? Options are: A. Yes, B. No"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for Agent Orange exposure."""
+        return "Does this medical record indicate that the patient was exposed to Agent Orange? Options are: A. Yes, B. No"
     options = ["A", "B"]
     keywords = ["agent orange"]
     # val_var = True
@@ -425,7 +458,10 @@ class cancer_cancer(PtFeatureBase):
             return None
         return True
     
-    query = f"Does this medical record indicate that the patient has a history of cancer? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Yes, B. No"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for cancer history."""
+        return f"Does this medical record indicate that the patient has a history of cancer? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Yes, B. No"
     options = ["A", "B"]
     keywords = ["cancer", "carcinoma", "melanoma", "mesothelioma", "sarcoma", "lymphoma", "leukemia", "myeloma", "malignant", "tumor", "myelodysplastic"]
     val_var = True
@@ -445,14 +481,20 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
         dates = pd.to_datetime(cancer_df["Date"], format="%m/%d/%Y")
         return dates.min()
     
-    query = "What was the date of the patient's most recent cancer diagnosis? Format as YYYYMMDD. If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for cancer diagnosis date."""
+        return "What was the date of the patient's most recent cancer diagnosis? Format as YYYYMMDD. If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X"
     keywords = cancer_cancer.keywords
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_earliest
 
 
 class cancer_stage_at_diagnosis(PtFeatureBase):
-    query = f"What was the stage of the patient's most recent cancer diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown, F. Patient does not have cancer."
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for cancer stage at diagnosis."""
+        return f"What was the stage of the patient's most recent cancer diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown, F. Patient does not have cancer."
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = cancer_cancer.keywords
     val_var = True
@@ -472,7 +514,10 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
 
 
 class cancer_maximum_stage(PtFeatureBase):
-    query = f"What was the maximum stage of the patient's most recent cancer diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Cancer present but maximum stage unknown, F. Patient does not have cancer"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for cancer maximum stage."""
+        return f"What was the maximum stage of the patient's most recent cancer diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Cancer present but maximum stage unknown, F. Patient does not have cancer"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = cancer_cancer.keywords
     val_var = True  
@@ -492,7 +537,10 @@ class cancer_maximum_stage(PtFeatureBase):
 
 
 class cancer_status_at_last_follow_up(PtFeatureBase):
-    query = f"What was the status of the patient's cancer at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for cancer status at last follow-up."""
+        return f"What was the status of the patient's cancer at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = cancer_cancer.keywords
     val_var = True
@@ -511,7 +559,10 @@ class cancer_status_at_last_follow_up(PtFeatureBase):
         return "E"
 
 class cancer_date_free(PtDateFeatureBase):
-    query = f"What is the date the patient was declared cancer free? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Cancer free can be defined as: cancer free, in remission, complete response, no evidence of disease, or disease free. Format as YYYYMMDD. If the patient had cancer but no cancer free date is specified, return U. If the record gives no indication of cancer, return X"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for cancer free date."""
+        return f"What is the date the patient was declared cancer free? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Cancer free can be defined as: cancer free, in remission, complete response, no evidence of disease, or disease free. Format as YYYYMMDD. If the patient had cancer but no cancer free date is specified, return U. If the record gives no indication of cancer, return X"
     keywords = cancer_cancer.keywords
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
@@ -533,7 +584,10 @@ class cancer_treatment_other(PtFeatureBase):
 
 
 class cancer_family_any(PtFeatureBase):
-    query = f"Does this medical record indicate that any member of the patient's family has a history of cancer? {NOT_CANCER_STR} Options are: A. Yes, B. No"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for family cancer history."""
+        return f"Does this medical record indicate that any member of the patient's family has a history of cancer? {NOT_CANCER_STR} Options are: A. Yes, B. No"
     options = ["A", "B"]
     keywords = cancer_cancer.keywords
     val_var = True
@@ -1422,7 +1476,10 @@ class antibiotics(PtFeatureBase):
         "keflex", "panixine disperdose", "azithromycin", "zithromax",
         "zithromax tri-pak", "z-pak", "zmax"
     ]
-    query = f"Does this medical record indicate that the patient took any of the following antibiotics, ignoring those mentioned as allergic reactions: {', '.join(keywords)}? Options are: A. Yes, B. No"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for antibiotics usage."""
+        return f"Does this medical record indicate that the patient took any of the following antibiotics, ignoring those mentioned as allergic reactions: {', '.join(cls.keywords)}? Options are: A. Yes, B. No"
     options = ["A", "B"]
     val_var = True
     def pooling_fn(preds: list):
@@ -1431,7 +1488,19 @@ class antibiotics(PtFeatureBase):
         return "B"
 
 class antibiotic_duration(PtFeatureBase):
-    query = f"How long in days did the patient take antibiotics, in days? Do not assume the patient takes one pill per day. The following are applicable antibiotics: {', '.join(antibiotics.keywordsclaude)}. Options are: A. Never, B. <30, C. 30-90, D. 91-180, E. >180, F. Antibiotic but unknown duration, G. No indication of antibiotic use"
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for antibiotic duration."""
+        base_query = "How long in days did the patient take antibiotics? Do not assume the patient takes one pill per day. If the antibiotic is listed as an allergy, consider as 'no indication of antibiotic use'."
+        options = "Options are: A. Never, B. <30, C. 30-90, D. 91-180, E. >180, F. Antibiotic but unknown duration, G. No indication of antibiotic use"
+        
+        keywords = kwargs.get('keywords', [])
+        if not keywords:
+            # If no keywords found in chunk, use generic query
+            return f"{base_query} {options}"
+        
+        return f"{base_query} The following are applicable antibiotics: {', '.join(keywords)}. {options}"
+    
     options = ["A", "B", "C", "D", "E", "F", "G"] 
     keywords = antibiotics.keywords
     val_var = True

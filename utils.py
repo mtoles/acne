@@ -17,7 +17,17 @@ def chunk_text(text) -> list[str]:
 
 
 def has_keyword(text, keywords):
+    """
+    Check if any keywords are found in the text and return the list of found keywords.
+    
+    Args:
+        text (str): The text to search in
+        keywords (list): List of keywords to search for
+        
+    Returns:
+        list: List of keywords found in the text (empty list if none found)
+    """
     kp = KeywordProcessor()
     kp.add_keywords_from_list(keywords)
     extracted = kp.extract_keywords(text)
-    return any(extracted)
+    return list(set(extracted))  # Remove duplicates and return as list

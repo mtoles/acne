@@ -38,9 +38,10 @@ for cls in PtFeaturesMeta.registry.values():
     dfs = []
     for start in tqdm(range(0, len(df), BATCH_SIZE)):
         batch = df.iloc[start:start+BATCH_SIZE].copy()
-        batch["has_kw"] = batch["Report_Text"].progress_apply(has_keyword, keywords=cls.keywords)
+        batch["found_keywords"] = batch["Report_Text"].progress_apply(has_keyword, keywords=cls.keywords)
+        batch["has_kw"] = batch["found_keywords"].apply(lambda x: len(x) > 0)
         batch = batch[batch["has_kw"]]
-        batch["included_kw"] = batch["Report_Text"].apply(lambda x: [kw for kw in cls.keywords if kw.lower() in x.lower()])
+        batch["included_kw"] = batch["found_keywords"]  # Use the found keywords directly
         dfs.append(batch)
 
         total_len = sum([len(x) for x in dfs])
@@ -60,7 +61,8 @@ for cls in PtFeaturesMeta.registry.values():
     with open(f"val_ds/{cls.__name__}.md", "w") as f:
         f.write(f"# {cls.__name__}\n")
         f.write(f"## Query\n")
-        f.write(f"{cls.query}\n")
+        f.write(f"Query function: {cls.query.__name__}\n")
+        f.write(f"Example query: {cls.query(chunk='', keywords=cls.keywords)}\n")
         f.write(f"## Keywords\n")
         f.write(f"{cls.keywords}\n")
         # f.write(f"## Number of records with keyword: {len(df[df['included_kw'].notna()])}\n")
