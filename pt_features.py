@@ -51,6 +51,46 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
     val_var = False # whether the variable is checked in the validation study
     max_tokens = 1  # default max tokens for model prediction
 
+    @classmethod
+    def forward(cls, chunk: str, keyword: str, model, **kwargs):
+        """
+        Forward pass through the model for a given chunk and keyword.
+        This method encapsulates the boilerplate logic for query generation,
+        history formatting, and prediction.
+        
+        Args:
+            chunk: The text chunk to process
+            keyword: The keyword that was found in the chunk
+            model: The model instance to use for prediction
+            **kwargs: Additional arguments to pass to the query method
+            
+        Returns:
+            str: The model prediction
+        """
+        # Generate query using the class's query method
+        query = cls.query(chunk=chunk, keywords=keyword, **kwargs)
+        
+        # Format the query and chunk for the model
+        history = model.format_chunk_qs(
+            q=query, chunk=chunk, options=cls.options
+        )
+        
+        # Make prediction based on feature type
+        if hasattr(cls, 'options') and cls.options:
+            # Use logit trick for multiple choice questions
+            pred = model.predict_single_with_logit_trick(
+                history,
+                output_choices=set(cls.options)
+            )
+        else:
+            # Use standard prediction for free-form text
+            pred = model.predict_single(
+                history,
+                max_tokens=cls.max_tokens
+            )
+        
+        return {cls.__name__: pred}
+
 class PtDateFeatureBase(PtFeatureBase):
     def pooling_fn_latest(preds: list):
         # return the most recent date

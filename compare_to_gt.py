@@ -98,24 +98,13 @@ def process_file(file_path):
         preds_for_chunk = {}
         queries_for_chunk = []
         for found_keyword in found_keywords:
-            # All queries are now callable functions - pass found keywords instead of all keywords
+            # Use the forward method to handle the boilerplate logic
+            pred = target_cls.forward(chunk=chunk, keyword=found_keyword, model=model)[target_cls.__name__]
+            preds_for_chunk[found_keyword] = pred
+            
+            # Get the query for logging purposes
             query = target_cls.query(chunk=chunk, keywords=found_keyword)
             queries_for_chunk.append(query)
-            
-            history = model.format_chunk_qs(
-                q=query, chunk=chunk, options=target_cls.options
-            )
-            if issubclass(target_cls, PtFeatureBase):
-                pred = model.predict_single_with_logit_trick(
-                    history,
-                    output_choices=set(target_cls.options) if target_cls.options else None,
-                )
-            else:
-                pred = model.predict_single(
-                    history,
-                    max_tokens=target_cls.max_tokens
-                )
-            preds_for_chunk[found_keyword] = pred
         preds.append(preds_for_chunk)
         queries.append(queries_for_chunk)
 

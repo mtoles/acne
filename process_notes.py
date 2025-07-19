@@ -83,8 +83,9 @@ for target_ft in target_fts:
     # apply the model to the chunks
     preds = []
     for chunk in chunk_df[chunk_df["has_kw"]]["chunk"]:
-        history = model.format_chunk_qs(q=target_cls.query, chunk=chunk, options=target_cls.options)
-        pred = model.predict_single_with_logit_trick(history, output_choices=set(target_cls.options))
+        # Use the forward method to handle the boilerplate logic
+        # For process_notes.py, we don't have specific found keywords, so pass empty string
+        pred = target_cls.forward(chunk=chunk, keyword="", model=model)
         preds.append(pred)
     chunk_df["chunk_pred"] = "NO_KW"
     chunk_df.loc[chunk_df["has_kw"], "chunk_pred"] = preds
