@@ -11,8 +11,39 @@ SYSTEM_PROMPT = "You are a medical assistant."
 # BATCH_SIZE = 64
 # MODEL_ID = "RedHatAI/Qwen2.5-3B-Instruct-quantized.w8a16"
 # MODEL_ID = "RedHatAI/Llama-4-Scout-17B-16E-Instruct-quantized.w4a16"
-MODEL_ID = "meta-llama/Llama-3.3-70B-Instruct"
+# MODEL_ID = "meta-llama/Llama-3.3-70B-Instruct"
+MODEL_ID = "unsloth/Llama-3.3-70B-Instruct-bnb-4bit"
 # assert MODEL_ID is not None, "MODEL_ID is not set"
+def retry_with_validation(model, history, validation_func, max_retries=20):
+    """
+    Generic retry logic with custom validation function.
+    
+    Args:
+        model: Model instance to use for prediction
+        history: The formatted history to pass to the prediction function
+        validation_func: Function that takes prediction string and returns (is_valid, parsed_result)
+                        where is_valid is a boolean and parsed_result is the parsed value or None
+        max_retries: Maximum number of retry attempts (default: 10)
+        
+    Returns:
+        tuple: (parsed_result, prediction_string) or (None, prediction_string) if validation failed
+        
+    Raises:
+        ValueError: If no valid result is found after max_retries
+    """
+    for attempt in range(max_retries):
+        pred = model.predict_single(history, max_tokens=10, sample=True)
+        
+        is_valid, parsed_result = validation_func(pred)
+        if is_valid:
+            return parsed_result, pred
+            
+        if attempt == max_retries - 1:  # Last attempt
+            # raise ValueError(f"Failed to get a valid result after {max_retries} attempts")
+            print(f"Warning: Failed to get a valid result after {max_retries} attempts")
+            return None, "MAX_RETRIES_ERROR"
+        # Continue to next attempt
+
 
 class MrModel:
     def __init__(
@@ -26,10 +57,9 @@ class MrModel:
             base_url=base_url,
             api_key=api_key,
         )
-        
 
-
-    def format_chunk_qs(self, q: str, chunk: str, options: list[str]):
+    @classmethod
+    def format_chunk_qs(cls, q: str, chunk: str, options: list[str]):
         prompt= f"Medical Record Excerpt: {chunk}\n\nQuestion: {q}\n\nDO NOT think out loud. Answer only with one of: {options}. Answer: "
         return [{"role": "user", "content": prompt}]
 
@@ -62,12 +92,14 @@ class MrModel:
             return "NA"
         return max(top_logprobs, key=lambda x: x.logprob).token
     
-    def predict_single(self, history: list[dict], max_tokens: int):
+    def predict_single(self, history: list[dict], max_tokens: int, sample=False):
         # TODO: test on dates
         response = self.client.chat.completions.create(
             model=self.model_id,
             messages=history,
             max_tokens=max_tokens,
+            temperature=1.0 if sample else 0.0,
+            top_p=1.0
         )
         return response.choices[0].message.content
 

@@ -1,5 +1,6 @@
-from flashtext import KeywordProcessor
+import re
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from datetime import datetime
 # from textsplit.tools import split_single
 
 
@@ -19,6 +20,7 @@ def chunk_text(text) -> list[str]:
 def has_keyword(text, keywords):
     """
     Check if any keywords are found in the text and return the list of found keywords.
+    Uses exact word matching (not substring matching).
     
     Args:
         text (str): The text to search in
@@ -27,7 +29,14 @@ def has_keyword(text, keywords):
     Returns:
         list: List of keywords found in the text (empty list if none found)
     """
-    kp = KeywordProcessor()
-    kp.add_keywords_from_list(keywords)
-    extracted = kp.extract_keywords(text)
-    return list(set(extracted))  # Remove duplicates and return as list
+    
+    found_keywords = []
+    for keyword in keywords:
+        # Create a regex pattern with word boundaries for exact matching
+        pattern = r'\b' + re.escape(keyword) + r'\b'
+        if re.search(pattern, text, re.IGNORECASE):
+            found_keywords.append(keyword)
+    
+    return list(set(found_keywords))  # Remove duplicates and return as list
+
+

@@ -2,6 +2,9 @@ import pandas as pd
 # from models import MrModel
 from utils import chunk_text
 from collections import Counter
+from datetime import datetime
+from models import MrModel, retry_with_validation
+from datetime import timedelta
 ### General Functions ###
 
 cancer_icd9s = [
@@ -1528,22 +1531,130 @@ class antibiotics(PtFeatureBase):
         return "B"
 
 class antibiotic_duration(PtFeatureBase):
-    @classmethod
-    def query(cls, **kwargs):
-        """Return the query for antibiotic duration."""
-        base_query = "How long in days did the patient take antibiotics? Do not assume the patient takes one pill per day. If the antibiotic is listed as an allergy, consider as 'no indication of antibiotic use'."
-        options = "Options are: A. Never, B. <30, C. 30-90, D. 91-180, E. >180, F. Antibiotic but unknown duration, G. No indication of antibiotic use"
-        
-        keywords = kwargs.get('keywords', [])
-        if not keywords:
-            # If no keywords found in chunk, use generic query
-            return f"{base_query} {options}"
-        
-        return f"{base_query} The following are applicable antibiotics: {', '.join(keywords)}. {options}"
-    
-    options = ["A", "B", "C", "D", "E", "F", "G"] 
+    """
+    Prompt for humans:
+        How long did the patient take the {abx}? A. 0 days (no indication of antibiotic use), B. 1-15 days, C. 16-45 days, D. 46-135 days, E. 136+ days, F. Taken but start date unknown G. Start date known but end date unknown
+    """
     keywords = antibiotics.keywords
     val_var = True
+    @classmethod
+    def forward(cls, model: MrModel, chunk: str, keyword: str, **kwargs):
+        took_q = f"Did the patient take {keyword}? If the antibiotic is listed as an allergy, consider as 'no indication of antibiotic use'. Options are A. yes, B. no"
+        options = ["A", "B"]
+        took_history = model.format_chunk_qs(
+            q=took_q,
+            chunk=chunk,
+            options=options
+        )
+        took_pred = model.predict_single_with_logit_trick(took_history, output_choices=["A", "B"]) == "A"
+        if not took_pred:
+            pred = "A" # no indication of antibiotic use
+        
+        # get all instances of a date in the MR
+        start_date_q = f"When did the patient begin taking {keyword}? If no start date is mentioned, answer 'NA'. If only the month and year are given, assume it was given on the 15th of the month. If only the year is given, assume it was given on the 15th of June. Answer in the format MM/DD/YYYY, including leading zeros."
+        start_date_history = model.format_chunk_qs(
+            q=start_date_q,
+            chunk=chunk,
+            options=["MM/DD/YYYY", "NA"]
+        )
+        # Define date validation function
+        def _date_validation(pred):
+            if pred == "NA":
+                return True, None  # Valid response, but no date
+            try:
+                parsed_date = datetime.strptime(pred, "%m/%d/%Y")
+                return True, parsed_date
+            except ValueError:
+                return False, None  # Invalid date format
+
+        # Use retry logic for start date parsing
+        start_date_date, start_date_str = retry_with_validation(
+            model,
+            start_date_history, 
+            _date_validation
+        )
+        if start_date_str == "NA" or start_date_str == "MAX_RETRIES_ERROR":  # start_date_pred == "NA"
+            pred = "F" # start date unknown
+            # If start date is unknown, we can't calculate duration, so return early
+            out = {
+                "start_date": start_date_date,
+                "end_date": None,
+                "took": took_pred,
+                "pred": pred,
+            }
+            return out
+
+        end_date_q = f"When did the patient stop taking {keyword}? If no end date is mentioned, answer 'NA'. If only the month and year are given, assume it was given on the 15th of the month. If only the year is given, assume it was given on the 15th of June. Answer in the format MM/DD/YYYY, including leading zeros. DO NOT try to infer the end date from the number of pills prescribed."
+        end_date_history = model.format_chunk_qs(
+            q=end_date_q,
+            chunk=chunk,
+            options=["MM/DD/YYYY", "NA"]
+        )
+        
+        # Use retry logic for end date parsing
+        end_date_date, end_date_str = retry_with_validation(
+            model,
+            end_date_history, 
+            _date_validation
+        )
+        if end_date_str == "NA" or end_date_str == "MAX_RETRIES_ERROR":  # end_date_pred == "NA"
+            count_doses_q = f"How long was the patient on {keyword}? If you need to, infer the duration on the number of pills prescribed, the number of refills, and the frequency of the dose. DO NOT assume the patient takes one pill per day. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day, the patient took the medication for 5 days. Note that 'refills' are in addition to the initial presciption, so 2 refills of 10 pills means the patient received 30 pills total. When calculating duration, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer 'NA'. Assume 30 days per month. Answer with a number (of days)."
+            count_doses_history = model.format_chunk_qs(
+                q=count_doses_q,
+                chunk=chunk,
+                options=["number", "NA"]
+            )
+            def count_doses_validation(pred):
+                if pred == "NA":
+                    return True, None  # Valid response, but no count
+                try:
+                    count = int(pred)
+                    return True, count
+                except ValueError:
+                    return False, None  # Invalid count format
+            days_on_abx, days_on_abx_str = retry_with_validation(
+                model,
+                count_doses_history, 
+                count_doses_validation
+            )
+            if start_date_date is None or end_date_date is None:
+                end_date_date = None
+            else:
+                end_date_date = start_date_date + timedelta(days=days_on_abx)
+        else:
+            days_on_abx = (end_date_date - start_date_date).days
+        
+        if days_on_abx is None or days_on_abx < 0 or days_on_abx > 1000000:
+            if days_on_abx is not None:
+                print(f"Warning: days_on_abx is {days_on_abx}")
+            if start_date_date is not None:
+                pred = "G"
+            else:
+                pred = "F"
+
+        else:
+            # assert days_on_abx is None or days_on_abx >= 0, f"Days on abx is negative: {days_on_abx}"
+            # assert days_on_abx is None or days_on_abx < 1000000, f"Days on abx is too large: {days_on_abx}"
+            if days_on_abx <= 15:
+                pred = "B"
+            elif days_on_abx <= 45:
+                pred = "C"
+            elif days_on_abx <= 135:
+                pred = "D"
+            else: # days_on_abx > 135
+                pred = "E"
+        out = {
+            "start_date": start_date_date,
+            "end_date": end_date_date,
+            "days_on_abx": days_on_abx,
+            "took": took_pred,
+            "pred": pred,
+        }
+        return out
+
+
+
+
     def pooling_fn(preds: list):
         # Get the highest duration listed
         if "E" in preds:
