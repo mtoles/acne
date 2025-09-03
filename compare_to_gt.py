@@ -53,13 +53,13 @@ def process_file(file_path):
     # Read the validation file
     annot_df = pd.read_excel(file_path)
     annot_df["Report_Number"] = annot_df["Report_Number"].astype(str)
-    annot_df = annot_df.dropna(subset=["Report_Number", "val_unified"])
+    # annot_df = annot_df.dropna(subset=["Report_Number", "val_unified"])
     annot_report_numbers = annot_df["Report_Number"].unique() # downsample here if you want
 
     target_cls = PtFeaturesMeta.registry[feature_name]
 
     # Read the chunks.xlsx file from val_ds directory
-    val_ds_chunks_path = Path("val_ds") / feature_name / "chunks.xlsx"
+    val_ds_chunks_path = Path("val_ds") / feature_name / f"{feature_name}_chunks.xlsx"
     chunk_df = pd.read_excel(val_ds_chunks_path, index_col=[0, 1])
     
     # The Excel file has a MultiIndex with found_keywords as the second level
@@ -68,12 +68,12 @@ def process_file(file_path):
     chunk_df = chunk_df.rename(columns={'level_1': 'found_keywords'})
     
     # Filter chunk_df to only include rows with Report_Number in annot_report_numbers
-    chunk_df = chunk_df[chunk_df['Report_Number'].astype(str).isin(annot_report_numbers)]
+    # chunk_df = chunk_df[chunk_df['Report_Number'].astype(str).isin(annot_report_numbers)]
     
     # Ensure a column exists to store the raw dict of predictions per row
     chunk_df['preds'] = None
         
-    for i, (chunk, found_kw) in enumerate(tqdm(zip(chunk_df["chunk"], chunk_df["found_keywords"]))):
+    for i, (chunk, found_kw) in enumerate(tqdm(zip(chunk_df["chunk"], chunk_df["included_kw"]))):
         preds_for_chunk = {}
         
         # Use the forward method to handle the boilerplate logic

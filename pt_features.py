@@ -154,7 +154,7 @@ class smoking_amount(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for smoking amount."""
-        return "How many packs per week does this patient smoke? If a range is given, take the upper bound. Options are: A. 0 (does not smoke), B. 1-2, C. 3-5, D. 6+, E. Smoker but unknown quantity, F. No indication of smoking status"
+        return "How many packs per week does this patient smoke? If a range is given, take the upper bound. Round all values up to the nearest integer (i.e. 0.1 -> 1).Options are: A. 0 (does not smoke), B. 1-2, C. 3-5, D. 6+, E. Smoker but unknown quantity, F. No indication of smoking status"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = smoking_status.keywords
     val_var = True
@@ -177,23 +177,23 @@ class alcohol_status(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for alcohol status."""
-        return "What is the alcohol status of this patient? (Note: ETOH is the abbreviation for ethanol.) Options are: A. Never drank, B. Former drinker, C. Current drinker, D. No indication of alcohol status"
-    options = ["A", "B", "C", "D"]
+        return "What is the alcohol status of this patient? (Note: ETOH is the abbreviation for ethanol.) Options are: A. Currently Drinks, B. Does not currently drink, C. No indication of alcohol status"
+    options = ["A", "B", "C"]
     keywords = ["alcohol", "drinks", "etoh"]
     val_var = True
     def pooling_fn(preds: list):
         # return the most common alcohol status among A, B, C
-        abc_counts = Counter([p for p in preds if p in ["A", "B", "C"]])
+        abc_counts = Counter([p for p in preds if p in ["A", "B"]])
         if abc_counts:
             return abc_counts.most_common(1)[0][0]
         # If no A-C, return D
-        return "D"
+        return "C"
 
 class alcohol_amount(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for alcohol amount."""
-        return "How many drinks per week does this patient drink? Options are: A. 0 (sober or does not drink), B. 1-2, C. 3-5, D. 6+, E. Drinker but unknown quantity, F. No indication of alcohol status"
+        return "How many drinks per week does this patient drink? Round all values up to the nearest integer (i.e. 0.1 -> 1). Options are: A. 0 (sober or does not drink), B. 1-2, C. 3-5, D. 6+, E. Drinker but unknown quantity, F. No indication of alcohol status"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
     val_var = True
@@ -1533,7 +1533,7 @@ class antibiotics(PtFeatureBase):
 class antibiotic_duration(PtFeatureBase):
     """
     Prompt for humans:
-        How long did the patient take the {abx}? A. 0 days (no indication of antibiotic use), B. 1-15 days, C. 16-45 days, D. 46-135 days, E. 136+ days, F. Taken but start date unknown G. Start date known but end date unknown
+        How long did the patient take the {abx}? Round all values up to the nearest integer (i.e. 0.1 -> 1). A. 0 days (no indication of antibiotic use), B. 1-15 days, C. 16-45 days, D. 46-135 days, E. 136+ days, F. Taken but date unknown 
     """
     keywords = antibiotics.keywords
     val_var = True
@@ -1573,16 +1573,6 @@ class antibiotic_duration(PtFeatureBase):
             start_date_history, 
             _date_validation
         )
-        if start_date_str == "NA" or start_date_str == "MAX_RETRIES_ERROR":  # start_date_pred == "NA"
-            pred = "F" # start date unknown
-            # If start date is unknown, we can't calculate duration, so return early
-            out = {
-                "start_date": start_date_date,
-                "end_date": None,
-                "took": took_pred,
-                "pred": pred,
-            }
-            return out
 
         end_date_q = f"When did the patient stop taking {keyword}? If no end date is mentioned, answer 'NA'. If only the month and year are given, assume it was given on the 15th of the month. If only the year is given, assume it was given on the 15th of June. Answer in the format MM/DD/YYYY, including leading zeros. DO NOT try to infer the end date from the number of pills prescribed."
         end_date_history = model.format_chunk_qs(
@@ -1597,52 +1587,63 @@ class antibiotic_duration(PtFeatureBase):
             end_date_history, 
             _date_validation
         )
-        if end_date_str == "NA" or end_date_str == "MAX_RETRIES_ERROR":  # end_date_pred == "NA"
-            count_doses_q = f"How long was the patient on {keyword}? If you need to, infer the duration on the number of pills prescribed, the number of refills, and the frequency of the dose. DO NOT assume the patient takes one pill per day. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day, the patient took the medication for 5 days. Note that 'refills' are in addition to the initial presciption, so 2 refills of 10 pills means the patient received 30 pills total. When calculating duration, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer 'NA'. Assume 30 days per month. Answer with a number (of days)."
-            count_doses_history = model.format_chunk_qs(
-                q=count_doses_q,
-                chunk=chunk,
-                options=["number", "NA"]
-            )
-            def count_doses_validation(pred):
-                if pred == "NA":
-                    return True, None  # Valid response, but no count
-                try:
-                    count = int(pred)
-                    return True, count
-                except ValueError:
-                    return False, None  # Invalid count format
-            days_on_abx, days_on_abx_str = retry_with_validation(
-                model,
-                count_doses_history, 
-                count_doses_validation
-            )
-            if start_date_date is None or end_date_date is None:
-                end_date_date = None
-            else:
-                end_date_date = start_date_date + timedelta(days=days_on_abx)
-        else:
-            days_on_abx = (end_date_date - start_date_date).days
-        
-        if days_on_abx is None or days_on_abx < 0 or days_on_abx > 1000000:
-            if days_on_abx is not None:
-                print(f"Warning: days_on_abx is {days_on_abx}")
-            if start_date_date is not None:
-                pred = "G"
-            else:
-                pred = "F"
 
-        else:
-            # assert days_on_abx is None or days_on_abx >= 0, f"Days on abx is negative: {days_on_abx}"
-            # assert days_on_abx is None or days_on_abx < 1000000, f"Days on abx is too large: {days_on_abx}"
-            if days_on_abx <= 15:
-                pred = "B"
-            elif days_on_abx <= 45:
-                pred = "C"
-            elif days_on_abx <= 135:
-                pred = "D"
-            else: # days_on_abx > 135
-                pred = "E"
+        if start_date_date is None and end_date_date is None:
+            # days_on_abx = (end_date_date - start_date_date).days
+            out = {
+                "start_date": start_date_date,
+                "end_date": end_date_date,
+                "days_on_abx": None,
+                "took": took_pred,
+                "pred": "F",
+            }
+            return out
+
+        # if end_date_str == "NA" or end_date_str == "MAX_RETRIES_ERROR":  # end_date_pred == "NA"
+        count_doses_q = f"How long was the patient on {keyword}? If you need to, infer the duration on the number of pills prescribed, the number of refills, and the frequency of the dose. DO NOT assume the patient takes one pill per day. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day, the patient took the medication for 5 days. Note that 'refills' are in addition to the initial presciption, so 2 refills of 10 pills means the patient received 30 pills total. When calculating duration, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer 'NA'. Assume 30 days per month. Answer with a number (of days)."
+        count_doses_history = model.format_chunk_qs(
+            q=count_doses_q,
+            chunk=chunk,
+            options=["number", "NA"]
+        )
+        def count_doses_validation(pred):
+            if pred == "NA":
+                return True, None  # Valid response, but no count
+            try:
+                count = int(pred)
+                return True, count
+            except ValueError:
+                return False, None  # Invalid count format
+        days_on_abx, days_on_abx_str = retry_with_validation(
+            model,
+            count_doses_history, 
+            count_doses_validation
+        )
+        if days_on_abx is None or days_on_abx < 0 or days_on_abx > 1000000:
+            print(f"Warning: days_on_abx is {days_on_abx}")
+            pred = "F"
+            out = {
+                "start_date": start_date_date,
+                "end_date": end_date_date,
+                "days_on_abx": days_on_abx,
+                "took": took_pred,
+                "pred": pred,
+            }
+            return out
+        if start_date_date is None:
+            # end_date_date = start_date_date + timedelta(days=days_on_abx)
+            start_date_date = end_date_date - timedelta(days=days_on_abx)
+        if end_date_date is None:
+            end_date_date = start_date_date + timedelta(days=days_on_abx)
+        
+        if days_on_abx <= 15:
+            pred = "B"
+        elif days_on_abx <= 45:
+            pred = "C"
+        elif days_on_abx <= 135:
+            pred = "D"
+        else: # days_on_abx > 135
+            pred = "E"
         out = {
             "start_date": start_date_date,
             "end_date": end_date_date,

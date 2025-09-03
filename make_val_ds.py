@@ -9,11 +9,12 @@ import pandas as pd
 from tqdm import tqdm
 import os
 from pathlib import Path
+from random import randint
 tqdm.pandas()
 
 db = create_engine(db_url)
 BATCH_SIZE = 1000
-MAX_DS_SIZE = 100
+MAX_DS_SIZE = 200
 
 
 
@@ -22,9 +23,9 @@ for cls in PtFeaturesMeta.registry.values():
         # continue
     if not cls.val_var:
         continue
-    if not cls.__name__ == "antibiotic_duration":
-        print(f"Skipping {cls.__name__}")
-        continue
+    # if not cls.__name__ == "antibiotic_duration":
+    #     print(f"Skipping {cls.__name__}")
+    #     continue
     # check each record if it has the keywords
     print(f"Checking {cls.__name__} for keywords...")
 
@@ -44,7 +45,8 @@ for cls in PtFeaturesMeta.registry.values():
         batch["found_keywords"] = batch["Report_Text"].progress_apply(has_keyword, keywords=cls.keywords)
         batch["has_kw"] = batch["found_keywords"].apply(lambda x: len(x) > 0)
         batch = batch[batch["has_kw"]]
-        batch["included_kw"] = batch["found_keywords"]  # Use the found keywords directly
+        batch["included_kw"] = batch["found_keywords"].apply(lambda x: x[randint(0, len(x)-1)])  # Use the found keywords directly
+        batch["all_kw"] = batch["found_keywords"]
         dfs.append(batch)
 
         total_len = sum([len(x) for x in dfs])
@@ -52,7 +54,6 @@ for cls in PtFeaturesMeta.registry.values():
             break
 
     df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame(columns=df.columns)
-    df = df.iloc[:MAX_DS_SIZE]
 
     # Process chunks similar to compare_to_gt.py
     print(f"Processing chunks for {cls.__name__}...")
@@ -66,6 +67,14 @@ for cls in PtFeaturesMeta.registry.values():
     # Create MultiIndex from current index and found_keywords
     chunk_df = chunk_df.explode('found_keywords')
     chunk_df = chunk_df.set_index('found_keywords', append=True)
+    
+    # Downsample to ensure exactly one chunk per unique ID, up to MAX_DS_SIZE total chunks
+    # First, sample one chunk per unique ID
+    chunk_df = chunk_df.groupby('EMPI').sample(n=1, random_state=42).reset_index(drop=True)
+    
+    # If we have more unique IDs than MAX_DS_SIZE, randomly sample MAX_DS_SIZE of them
+    if len(chunk_df) > MAX_DS_SIZE:
+        chunk_df = chunk_df.sample(n=MAX_DS_SIZE, random_state=42).sort_index()
 
     # Clean the DataFrame to remove illegal characters for CSV
     def clean_text_for_csv(text):
@@ -86,7 +95,7 @@ for cls in PtFeaturesMeta.registry.values():
     # include cols: EMPI,EPIC_PMRN,MRN,Report_Number,Report_Date_Time,chunk,found_keywords
     output_cols = ["EMPI", "EPIC_PMRN", "MRN", "Report_Number", "Report_Date_Time", "chunk", "found_keywords"]
     available_cols = [col for col in output_cols if col in chunk_df.columns]
-    chunk_df[available_cols].to_csv(feature_dir / "chunks.csv", index=False)
+    # chunk_df[available_cols].to_csv(feature_dir / "chunks.csv", index=False)
     chunk_df["val_unified"] = ""
 
     # save the df to a csv file
