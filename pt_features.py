@@ -5,6 +5,7 @@ from collections import Counter
 from datetime import datetime
 from models import MrModel, retry_with_validation
 from datetime import timedelta
+import math
 ### General Functions ###
 
 cancer_icd9s = [
@@ -139,7 +140,7 @@ class smoking_status(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for smoking status."""
-        return "What is the smoking status of this patient? Options are: A. Never smoked, B. Former smoker, C. Current smoker, D. Unknown"
+        return "What is the smoking status of this patient? If it just says 'smoker: no', consider it as 'never smoked'. Options are: A. Never smoked, B. Former smoker, C. Current smoker, D. Unknown"
     options = ["A", "B", "C", "D"]
     keywords = ["smokes", "smoker", "smoking", "tobacco"]
     val_var = True
@@ -504,7 +505,7 @@ class cancer_cancer(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer history."""
-        return f"Does this medical record indicate that the patient has a history of cancer? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Yes, B. No"
+        return f"Does this medical record indicate that the patient has a history of cancer? Only consider tumors as cancer if they are malignant. {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Yes, B. No"
     options = ["A", "B"]
     keywords = ["cancer", "carcinoma", "melanoma", "mesothelioma", "sarcoma", "lymphoma", "leukemia", "myeloma", "malignant", "tumor", "myelodysplastic"]
     val_var = True
@@ -1600,7 +1601,7 @@ class antibiotic_duration(PtFeatureBase):
             return out
 
         # if end_date_str == "NA" or end_date_str == "MAX_RETRIES_ERROR":  # end_date_pred == "NA"
-        count_doses_q = f"How long was the patient on {keyword}? If you need to, infer the duration on the number of pills prescribed, the number of refills, and the frequency of the dose. DO NOT assume the patient takes one pill per day. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day, the patient took the medication for 5 days. Note that 'refills' are in addition to the initial presciption, so 2 refills of 10 pills means the patient received 30 pills total. When calculating duration, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer 'NA'. Assume 30 days per month. Answer with a number (of days)."
+        count_doses_q = f"How many days was the patient on {keyword}? If you need to, infer the duration on the number of pills prescribed, the number of refills, and the frequency of the dose. DO NOT assume the patient takes one pill per day. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day, the patient took the medication for 5 days. Note that 'refills' are in addition to the initial presciption, so 2 refills of 10 pills means the patient received 30 pills total. When calculating duration, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer 'NA'. Assume 30 days per month. Answer with a number (of days)."
         count_doses_history = model.format_chunk_qs(
             q=count_doses_q,
             chunk=chunk,
@@ -1620,21 +1621,45 @@ class antibiotic_duration(PtFeatureBase):
             count_doses_validation
         )
         if days_on_abx is None or days_on_abx < 0 or days_on_abx > 1000000:
-            print(f"Warning: days_on_abx is {days_on_abx}")
-            pred = "F"
-            out = {
-                "start_date": start_date_date,
-                "end_date": end_date_date,
-                "days_on_abx": days_on_abx,
-                "took": took_pred,
-                "pred": pred,
-            }
-            return out
-        if start_date_date is None:
-            # end_date_date = start_date_date + timedelta(days=days_on_abx)
-            start_date_date = end_date_date - timedelta(days=days_on_abx)
-        if end_date_date is None:
-            end_date_date = start_date_date + timedelta(days=days_on_abx)
+            # try to compute from dates
+            if not (start_date_date is None and end_date_date is None):
+                print(f"Warning: days_on_abx is {days_on_abx}")
+                pred = "F"
+                out = {
+                    "start_date": start_date_date,
+                    "end_date": end_date_date,
+                    "days_on_abx": days_on_abx,
+                    "took": took_pred,
+                    "pred": pred,
+                }
+                return out
+            else:
+                dose_frequency_q = f"How many days per week did the patient take {keyword}?s)."
+                dose_frequency_history = model.format_chunk_qs(
+                    q=dose_frequency_q,
+                    chunk=chunk,
+                    options=["number", "NA"]
+                )
+                dose_frequency, dose_frequency_str = retry_with_validation(
+                    model,
+                    dose_frequency_history,
+                    count_doses_validation
+                )
+                if dose_frequency is not None:
+                    days_on_abx = math.round((end_date_date - start_date_date) / 7 * dose_frequency)
+                    out = {
+                        "start_date": start_date_date,
+                        "end_date": end_date_date,
+                        "days_on_abx": days_on_abx,
+                        "took": took_pred,
+                        "pred": "F",
+                    }
+                    return out
+        # if start_date_date is None:
+        #     # end_date_date = start_date_date + timedelta(days=days_on_abx)
+        #     start_date_date = end_date_date - timedelta(days=days_on_abx)
+        # if end_date_date is None:
+        #     end_date_date = start_date_date + timedelta(days=days_on_abx)
         
         if days_on_abx <= 15:
             pred = "B"

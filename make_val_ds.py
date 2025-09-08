@@ -19,14 +19,13 @@ MAX_DS_SIZE = 200
 
 
 for cls in PtFeaturesMeta.registry.values():
+    if cls.__name__ != "antibiotic_duration":
+        continue
     # if not issubclass(cls, PtDateFeatureBase): # temp, to fill in date features we didn't do yet
         # continue
     if not cls.val_var:
         continue
-    # if not cls.__name__ == "antibiotic_duration":
-    #     print(f"Skipping {cls.__name__}")
-    #     continue
-    # check each record if it has the keywords
+
     print(f"Checking {cls.__name__} for keywords...")
 
     # Create feature directory structure within val_ds
@@ -35,7 +34,7 @@ for cls in PtFeaturesMeta.registry.values():
     feature_dir.mkdir(parents=True, exist_ok=True)
 
     with db.connect() as conn:
-        query = text(f"SELECT * FROM vis ORDER BY RANDOM() LIMIT 10000")
+        query = text(f"SELECT * FROM vis ORDER BY SUBSTR(EMPI, -5) LIMIT 10000") # order by last 5 digits of EMPI for pseudorandomization
         result = conn.execute(query)
         df = pd.DataFrame(result.fetchall(), columns=result.keys()).sample(frac=1)
 
@@ -43,10 +42,6 @@ for cls in PtFeaturesMeta.registry.values():
     for start in tqdm(range(0, len(df), BATCH_SIZE)):
         batch = df.iloc[start:start+BATCH_SIZE].copy()
         batch["found_keywords"] = batch["Report_Text"].progress_apply(has_keyword, keywords=cls.keywords)
-        batch["has_kw"] = batch["found_keywords"].apply(lambda x: len(x) > 0)
-        batch = batch[batch["has_kw"]]
-        batch["included_kw"] = batch["found_keywords"].apply(lambda x: x[randint(0, len(x)-1)])  # Use the found keywords directly
-        batch["all_kw"] = batch["found_keywords"]
         dfs.append(batch)
 
         total_len = sum([len(x) for x in dfs])
@@ -67,10 +62,11 @@ for cls in PtFeaturesMeta.registry.values():
     # Create MultiIndex from current index and found_keywords
     chunk_df = chunk_df.explode('found_keywords')
     chunk_df = chunk_df.set_index('found_keywords', append=True)
-    
+    # Rename 'found_keywords' to 'kw' throughout the relevant DataFrame
+    chunk_df = chunk_df.rename(columns={'found_keywords': 'kw'})
     # Downsample to ensure exactly one chunk per unique ID, up to MAX_DS_SIZE total chunks
     # First, sample one chunk per unique ID
-    chunk_df = chunk_df.groupby('EMPI').sample(n=1, random_state=42).reset_index(drop=True)
+    chunk_df = chunk_df.groupby('EMPI').sample(n=1, random_state=42).reset_index(drop=False)
     
     # If we have more unique IDs than MAX_DS_SIZE, randomly sample MAX_DS_SIZE of them
     if len(chunk_df) > MAX_DS_SIZE:
@@ -100,7 +96,7 @@ for cls in PtFeaturesMeta.registry.values():
 
     # save the df to a csv file
     # include cols: EMPI,EPIC_PMRN,MRN,Report_Number,Report_Date_Time
-    df = df[["EMPI", "EPIC_PMRN", "MRN", "Report_Number", "Report_Date_Time", "included_kw"]]
+    df = df[["EMPI", "EPIC_PMRN", "MRN", "Report_Number", "Report_Date_Time"]]
     chunk_df.to_excel(feature_dir / f"{cls.__name__}_chunks.xlsx")
 
     # print metadata to a md file
@@ -111,6 +107,6 @@ for cls in PtFeaturesMeta.registry.values():
         f.write(f"Example query: {cls.query(chunk='', keywords=cls.keywords)}\n" if hasattr(cls, "query") else "Example query: None\n")
         f.write(f"## Keywords\n")
         f.write(f"{cls.keywords}\n")
-        f.write(f"## Number of records with keyword: {len(df[df['included_kw'].notna()])}\n")
-        f.write(f"## Number of records: {len(df)}\n")
-        f.write(f"## Number of chunks: {len(chunk_df)}\n")
+        # f.write(f"## Number of records with keyword: {len(df[df['included_kw'].notna()])}\n")
+        # f.write(f"## Number of records: {len(df)}\n")
+        # f.write(f"## Number of chunks: {len(chunk_df)}\n")

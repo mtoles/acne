@@ -73,7 +73,7 @@ def process_file(file_path):
     # Ensure a column exists to store the raw dict of predictions per row
     chunk_df['preds'] = None
         
-    for i, (chunk, found_kw) in enumerate(tqdm(zip(chunk_df["chunk"], chunk_df["included_kw"]))):
+    for i, (chunk, found_kw) in enumerate(tqdm(zip(chunk_df["chunk"], chunk_df["found_keywords"]))):
         preds_for_chunk = {}
         
         # Use the forward method to handle the boilerplate logic
