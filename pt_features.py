@@ -528,7 +528,7 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer diagnosis date."""
-        return "What was the date of the patient's most recent cancer diagnosis? Format as YYYYMMDD. If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X"
+        return f"What was the date of the patient's most recent {kwargs['keyword']} diagnosis? Format as YYYYMMDD. If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X"
     keywords = cancer_cancer.keywords
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_earliest
@@ -538,7 +538,7 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer stage at diagnosis."""
-        return f"What was the stage of the patient's most recent cancer diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown, F. Patient does not have cancer."
+        return f"What was the stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown, F. Patient does not have cancer."
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = cancer_cancer.keywords
     val_var = True
@@ -561,7 +561,7 @@ class cancer_maximum_stage(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer maximum stage."""
-        return f"What was the maximum stage of the patient's most recent cancer diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Cancer present but maximum stage unknown, F. Patient does not have cancer"
+        return f"What was the maximum stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, precancerous, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Cancer present but maximum stage unknown, F. Patient does not have cancer"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = cancer_cancer.keywords
     val_var = True  
@@ -584,7 +584,7 @@ class cancer_status_at_last_follow_up(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer status at last follow-up."""
-        return f"What was the status of the patient's cancer at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer"
+        return f"What was the status of the patient's {kwargs['keyword']} at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = cancer_cancer.keywords
     val_var = True
