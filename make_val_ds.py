@@ -19,7 +19,7 @@ MAX_DS_SIZE = 200
 
 
 for cls in PtFeaturesMeta.registry.values():
-    if cls.__name__ != "antibiotic_duration":
+    if cls.__name__ not in ["cancer_date_of_diagnosis", "cancer_maximum_stage", "cancer_status_at_last_follow_up", "cancer_stage_at_diagnosis"]:
         continue
     # if not issubclass(cls, PtDateFeatureBase): # temp, to fill in date features we didn't do yet
         # continue
@@ -33,22 +33,51 @@ for cls in PtFeaturesMeta.registry.values():
     feature_dir = val_ds_dir / cls.__name__
     feature_dir.mkdir(parents=True, exist_ok=True)
 
-    with db.connect() as conn:
-        query = text(f"SELECT * FROM vis ORDER BY SUBSTR(EMPI, -5) LIMIT 10000") # order by last 5 digits of EMPI for pseudorandomization
-        result = conn.execute(query)
-        df = pd.DataFrame(result.fetchall(), columns=result.keys()).sample(frac=1)
-
     dfs = []
-    for start in tqdm(range(0, len(df), BATCH_SIZE)):
-        batch = df.iloc[start:start+BATCH_SIZE].copy()
-        batch["found_keywords"] = batch["Report_Text"].progress_apply(has_keyword, keywords=cls.keywords)
-        dfs.append(batch)
-
-        total_len = sum([len(x) for x in dfs])
-        if total_len >= MAX_DS_SIZE:
+    offset = 0
+    batch_size = 10000  # Initial batch size for querying
+    total_processed = 0
+    seen_empis = set()  # Track unique EMPIs
+    
+    while len(seen_empis) < MAX_DS_SIZE:
+        with db.connect() as conn:
+            query = text(f"SELECT * FROM vis ORDER BY SUBSTR(EMPI, -5) LIMIT {batch_size} OFFSET {offset}")
+            result = conn.execute(query)
+            df_batch = pd.DataFrame(result.fetchall(), columns=result.keys())
+            
+            # If no more records, break
+            if len(df_batch) == 0:
+                break
+                
+            # Shuffle the batch for pseudorandomization
+            df_batch = df_batch.sample(frac=1)
+        
+        # Process this batch in smaller chunks
+        for start in tqdm(range(0, len(df_batch), BATCH_SIZE), desc=f"Processing batch at offset {offset}"):
+            batch = df_batch.iloc[start:start+BATCH_SIZE].copy()
+            batch["found_keywords"] = batch["Report_Text"].progress_apply(has_keyword, keywords=cls.keywords)
+            filtered_batch = batch[batch["found_keywords"].apply(lambda x: len(x) > 0)]
+            
+            if len(filtered_batch) > 0:
+                # Add new EMPIs to our tracking set
+                new_empis = set(filtered_batch["EMPI"].unique())
+                seen_empis.update(new_empis)
+                dfs.append(filtered_batch)
+                
+                print(f"Found {len(new_empis)} new unique EMPIs. Total unique EMPIs: {len(seen_empis)}")
+            
+            if len(seen_empis) >= MAX_DS_SIZE:
+                break
+        
+        # Update offset for next query
+        offset += batch_size
+        
+        # If we got fewer records than requested, we've reached the end
+        if len(df_batch) < batch_size:
             break
 
-    df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame(columns=df.columns)
+    df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+    print(f"Final count: {len(seen_empis)} unique EMPIs processed")
 
     # Process chunks similar to compare_to_gt.py
     print(f"Processing chunks for {cls.__name__}...")
@@ -104,7 +133,7 @@ for cls in PtFeaturesMeta.registry.values():
         f.write(f"# {cls.__name__}\n")
         f.write(f"## Query\n")
         f.write(f"Query function: {cls.query.__name__}\n" if hasattr(cls, "query") else "Query function: None\n")
-        f.write(f"Example query: {cls.query(chunk='', keywords=cls.keywords)}\n" if hasattr(cls, "query") else "Example query: None\n")
+        f.write(f"Example query: {cls.query(chunk='', keyword='{keyword}')}\n" if hasattr(cls, "query") else "Example query: None\n")
         f.write(f"## Keywords\n")
         f.write(f"{cls.keywords}\n")
         # f.write(f"## Number of records with keyword: {len(df[df['included_kw'].notna()])}\n")
