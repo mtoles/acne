@@ -26,6 +26,8 @@ cancer_icd10s = ["C00", "C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", 
 
 SPECIFIC_CANCERS = ["Oropharyngeal cancer", "Nasopharyngeal cancer", "Hypopharyngeal cancer", "Esophageal cancer", "Stomach cancer", "Small intestine cancer", "Colorectal cancer", "Anal cancer", "Liver cancer", "Intrahepatic bile duct cancer", "Gallbladder cancer", "Extrahepatic biliary tract cancer", "Pancreatic cancer", "Splenic cancer", "Other intestinal tract cancer", "Retroperitoneal cancer", "Peritoneal cancer", "Nasal cavity and paranasal sinus cancer", "Middle ear cancer", "Laryngeal cancer", "Tracheal cancer", "Bronchial cancer", "Lung cancer", "Thymic cancer", "Heart cancer", "Mediastinal cancer", "Pleural cancer", "Bone cancer", "Melanoma", "Non-melanoma skin cancer", "Merkel cell carcinoma", "Mesothelioma", "Kaposi sarcoma", "Ewing sarcoma", "Rhabdomyosarcoma", "Osteosarcoma", "Chondrosarcoma", "Fibrosarcoma", "Soft tissue sarcoma", "Angiosarcoma", "Liposarcoma", "Breast cancer", "Vulvar cancer", "Vaginal cancer", "Cervical cancer", "Uterine cancer", "Ovarian cancer", "Placental cancer", "Penile cancer", "Prostate cancer", "Testicular cancer", "Kidney cancer", "Urethral cancer", "Ureteral cancer", "Bladder cancer", "Eye cancer", "Brain cancer", "Spinal cord cancer", "Meningeal cancer", "Cranial nerve cancer", "Thyroid cancer", "Adrenal cancer", "Carcinoid tumor", "Neuroendocrine tumor", "Parathyroid cancer", "Pituitary cancer", "Hodgkin lymphoma", "Non-Hodgkin lymphoma", "Leukemia", "Multiple myeloma", "Malignant mast cell tumor", "Malignant histiocytosis", "Myelodysplastic syndrome", "Choriocarcinoma", "Polycythemia vera", "Essential thrombocythemia", "Myelofibrosis", "Plasmacytoma", "Salivary gland cancer", "Appendiceal cancer", "Gliomas", "Glioblastoma", "Astrocytoma", "Oligodendroglioma", "Leiomyosarcoma", "Synovial sarcoma"]
 
+EXCLUDED_TRANSPLANTS = ["corneal", "skin graft", "hair", "osteochondral", "cartilage", "bone", "valve", "autograft", "hip", "shoulder", "tendon", "fecal", "skin" ]
+
 # fmt: on
 
 def get_rows_by_icd(df: pd.DataFrame, icd9_list: list, icd10_list: list):
@@ -158,7 +160,7 @@ class smoking_amount(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for smoking amount."""
-        return "How many packs per week does this patient smoke? If a range is given, take the upper bound. Round all values up to the nearest integer (i.e. 0.1 -> 1).Options are: A. 0 (does not smoke), B. 1-2, C. 3-5, D. 6+, E. Smoker but unknown quantity, F. No indication of smoking status"
+        return "How many packs per week does this patient smoke? If a range is given, take the upper bound. Ignore results from questionaires. Round all values up to the nearest integer (i.e. 0.1 -> 1). Options are: A. 0 (does not smoke), B. 1-2, C. 3-5, D. 6+, E. Smoker but unknown quantity, F. No indication of smoking status"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = smoking_status.keywords
     val_var = True
@@ -224,7 +226,7 @@ class transplant(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for transplant status."""
-        return "Does this medical record indicate that the patient received a transplant, solid organ transplant, stem cell transplant, or bone marrow transplant? Do not include osteochondral allograft, hair, osteochondrla, cartilage, corneal, fecal, hip, knee, and shoulder transplants. Options are: A. Yes, B. No"
+        return f"Does this medical record indicate that the patient received a transplant, solid organ transplant, stem cell transplant, or bone marrow transplant? Do not include transplant types: {', '.join(EXCLUDED_TRANSPLANTS)}. Options are: A. Yes, B. No"
     options = ["A", "B"]
     keywords = ["transplant", "transplantation",]
     val_var = True
@@ -237,7 +239,7 @@ class transplant_date(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for transplant date."""
-        return "What was the date of the patient's most recent organ transplant? If the patient received a transplant but no date is specified, return U. If the record gives no indication of transplant, return X {DATE_INTERPOLATION_STR}"
+        return "What was the date of the patient's most recent organ transplant? Do not include transplant types: {', '.join(EXCLUDED_TRANSPLANTS)}. If the patient received a transplant but no date is specified, return U. If the record gives no indication of transplant, return X {DATE_INTERPOLATION_STR}"
     keywords = transplant.keywords
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
@@ -541,7 +543,7 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer stage at diagnosis."""
-        return f"What was the stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown, F. Patient does not have cancer."
+        return f"What was the stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. In-situ or non-invasive melanoma are stage 0. <=2mm melanoma are stage I. >2mm melanoma are stage II or III. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown, F. Patient does not have cancer."
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
     val_var = True
@@ -587,7 +589,7 @@ class cancer_status_at_last_follow_up(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer status at last follow-up."""
-        return f"What was the status of the patient's {kwargs['keyword']} at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer"
+        return f"What was the status of the patient's {kwargs['keyword']} at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
     val_var = True
@@ -1535,6 +1537,7 @@ class antibiotics(PtFeatureBase):
         return "B"
 
 class antibiotic_duration(PtFeatureBase):
+    @classmethod
     def query(cls, **kwargs):
         return """
     # antibiotic_duration
