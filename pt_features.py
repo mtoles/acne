@@ -27,7 +27,22 @@ cancer_icd10s = ["C00", "C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", 
 SPECIFIC_CANCERS = ["Oropharyngeal cancer", "Nasopharyngeal cancer", "Hypopharyngeal cancer", "Esophageal cancer", "Stomach cancer", "Small intestine cancer", "Colorectal cancer", "Anal cancer", "Liver cancer", "Intrahepatic bile duct cancer", "Gallbladder cancer", "Extrahepatic biliary tract cancer", "Pancreatic cancer", "Splenic cancer", "Other intestinal tract cancer", "Retroperitoneal cancer", "Peritoneal cancer", "Nasal cavity and paranasal sinus cancer", "Middle ear cancer", "Laryngeal cancer", "Tracheal cancer", "Bronchial cancer", "Lung cancer", "Thymic cancer", "Heart cancer", "Mediastinal cancer", "Pleural cancer", "Bone cancer", "Melanoma", "Non-melanoma skin cancer", "Merkel cell carcinoma", "Mesothelioma", "Kaposi sarcoma", "Ewing sarcoma", "Rhabdomyosarcoma", "Osteosarcoma", "Chondrosarcoma", "Fibrosarcoma", "Soft tissue sarcoma", "Angiosarcoma", "Liposarcoma", "Breast cancer", "Vulvar cancer", "Vaginal cancer", "Cervical cancer", "Uterine cancer", "Ovarian cancer", "Placental cancer", "Penile cancer", "Prostate cancer", "Testicular cancer", "Kidney cancer", "Urethral cancer", "Ureteral cancer", "Bladder cancer", "Eye cancer", "Brain cancer", "Spinal cord cancer", "Meningeal cancer", "Cranial nerve cancer", "Thyroid cancer", "Adrenal cancer", "Carcinoid tumor", "Neuroendocrine tumor", "Parathyroid cancer", "Pituitary cancer", "Hodgkin lymphoma", "Non-Hodgkin lymphoma", "Leukemia", "Multiple myeloma", "Malignant mast cell tumor", "Malignant histiocytosis", "Myelodysplastic syndrome", "Choriocarcinoma", "Polycythemia vera", "Essential thrombocythemia", "Myelofibrosis", "Plasmacytoma", "Salivary gland cancer", "Appendiceal cancer", "Gliomas", "Glioblastoma", "Astrocytoma", "Oligodendroglioma", "Leiomyosarcoma", "Synovial sarcoma"]
 
 EXCLUDED_TRANSPLANTS = ["corneal", "skin graft", "hair", "osteochondral", "cartilage", "bone", "valve", "autograft", "hip", "shoulder", "tendon", "fecal", "skin" ]
-
+INCLUDED_TRANSPLANTS = ["liver", "kidney", "pancreas", "heart", "lung", "intestine", "cornea", "middle ear", "skin", "bone", "bone marrow", "heart valve", "connective tissue", "vascular composite allograft"]
+CANCER_STAGE_SYNTHETIC_KEYWORDS = [
+        "in situ",
+        "non-invasive",
+        "non invasive",
+        "stage 0",
+        "stage 1",
+        "stage 2",
+        "stage 3",
+        "stage 4",
+        "stage I",
+        "stage II",
+        "stage III",
+        "stage IV",
+        "metastatic",
+    ]
 # fmt: on
 
 def get_rows_by_icd(df: pd.DataFrame, icd9_list: list, icd10_list: list):
@@ -241,6 +256,9 @@ class transplant_date(PtDateFeatureBase):
         """Return the query for transplant date."""
         return "What was the date of the patient's most recent organ transplant? Do not include transplant types: {', '.join(EXCLUDED_TRANSPLANTS)}. If the patient received a transplant but no date is specified, return U. If the record gives no indication of transplant, return X {DATE_INTERPOLATION_STR}"
     keywords = transplant.keywords
+    synthetic_keywords = [
+        # "transplant on",
+    ] + [f"status post {x} transplant" for x in INCLUDED_TRANSPLANTS] + [f"s/p {x} transplant" for x in INCLUDED_TRANSPLANTS]
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
 
@@ -251,6 +269,10 @@ class immunosuppressed_disease(PtFeatureBase):
         return "Does this medical record indicate that the patient had an immunosuppressed disease, including leukemia, lymphoma, HIV, AIDS, or immune deficiency? Options are: A. Yes, B. No"
     options = ["A", "B"]
     keywords = ["leukemia", "lymphoma", "HIV", "immune deficiency", "immunodeficiency", "immunosuppressed", "immunocompromised", "AIDS"]
+    synthetic_keywords = [
+        "he is immunosupressed",
+        "she is immunosupressed",
+    ]
     val_var = True
     def pooling_fn(preds: list):
         if "A" in preds:
@@ -535,6 +557,7 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
         """Return the query for cancer diagnosis date."""
         return f"What was the date of the patient's most recent {kwargs['keyword']} diagnosis? If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X {DATE_INTERPOLATION_STR}"
     keywords = SPECIFIC_CANCERS
+    synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_earliest
 
@@ -546,6 +569,8 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
         return f"What was the stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. In-situ or non-invasive melanoma are stage 0. <=2mm melanoma are stage I. >2mm melanoma are stage II or III. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown, F. Patient does not have cancer."
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
+    synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
+        
     val_var = True
     def pooling_fn(preds: list):
         # return latest stage
@@ -569,6 +594,7 @@ class cancer_maximum_stage(PtFeatureBase):
         return f"What was the maximum stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Cancer present but maximum stage unknown, F. Patient does not have cancer"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
+    synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
     val_var = True  
     def pooling_fn(preds: list):
         # return latest stage
@@ -592,6 +618,15 @@ class cancer_status_at_last_follow_up(PtFeatureBase):
         return f"What was the status of the patient's {kwargs['keyword']} at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer"
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
+    synthetic_keywords = [
+        "cancer free",
+        "in remission",
+        "no evidence of disease",
+        "metastasis",
+        "stable disease",
+        "progressive disease",
+        "no spread"
+    ]
     val_var = True
     def pooling_fn(preds: list):
         # return the highest status seen
@@ -613,6 +648,11 @@ class cancer_date_free(PtDateFeatureBase):
         """Return the query for cancer free date."""
         return f"What is the date the patient was declared cancer free? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Cancer free can be defined as: cancer free, in remission, complete response, no evidence of disease, or disease free. If the patient had cancer but no cancer free date is specified, return U. If the record gives no indication of cancer, return X {DATE_INTERPOLATION_STR}"
     keywords = cancer_cancer.keywords
+    synthetic_keywords = [
+        "cancer free",
+        "in remission",
+        "no evidence of disease",
+    ]
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
 
@@ -1631,26 +1671,10 @@ Example query: None
     val_var = True
     @classmethod
     def forward(cls, model: MrModel, chunk: str, keyword: str, **kwargs):
-        raise NotImplementedError("You need to make this logic follow the instructions in the docstring")
-        # took_q = f"Did the patient take {keyword}? If the antibiotic is listed as an allergy, consider as 'no indication of antibiotic use'. Options are A. yes, B. no"
-        # options = ["A", "B"]
-        # took_history = model.format_chunk_qs(
-        #     q=took_q,
-        #     chunk=chunk,
-        #     options=options
-        # )
-        # took_pred = model.predict_single_with_logit_trick(took_history, output_choices=["A", "B"]) == "A"
-        # if not took_pred:
-        #     pred = "A" # no indication of antibiotic use
+        ANSWER_OPTIONS_STR = "A. 0 days (no indication of antibiotic use), B. 1-15 days, C. 16-45 days, D. 46-135 days, E. 136+ days, F. Taken but dates unknown"
+        # raise NotImplementedError("You need to make this logic follow the instructions in the docstring")
         
-        # # get all instances of a date in the MR
-        # start_date_q = f"When did the patient begin taking {keyword}? If no start date is mentioned, answer 'NA'. If only the month and year are given, assume the date was the 15th. If only the year is given, assume the date was July 1. Answer in the format MM/DD/YYYY, including leading zeros."
-        # start_date_history = model.format_chunk_qs(
-        #     q=start_date_q,
-        #     chunk=chunk,
-        #     options=["MM/DD/YYYY", "NA"]
-        # )
-        # # Define date validation function
+        # Define validation functions
         # def _date_validation(pred):
         #     if pred == "NA":
         #         return True, None  # Valid response, but no date
@@ -1659,47 +1683,8 @@ Example query: None
         #         return True, parsed_date
         #     except ValueError:
         #         return False, None  # Invalid date format
-
-        # # Use retry logic for start date parsing
-        # start_date_date, start_date_str = retry_with_validation(
-        #     model,
-        #     start_date_history, 
-        #     _date_validation
-        # )
-
-        # end_date_q = f"When did the patient stop taking {keyword}? If no end date is mentioned, answer 'NA'. If only the month and year are given, assume the date was the 15th. If only the year is given, assume the date was July 1. Answer in the format MM/DD/YYYY, including leading zeros. DO NOT try to infer the end date from the number of pills prescribed."
-        # end_date_history = model.format_chunk_qs(
-        #     q=end_date_q,
-        #     chunk=chunk,
-        #     options=["MM/DD/YYYY", "NA"]
-        # )
         
-        # # Use retry logic for end date parsing
-        # end_date_date, end_date_str = retry_with_validation(
-        #     model,
-        #     end_date_history, 
-        #     _date_validation
-        # )
-
-        # if start_date_date is None and end_date_date is None:
-        #     # days_on_abx = (end_date_date - start_date_date).days
-        #     out = {
-        #         "start_date": start_date_date,
-        #         "end_date": end_date_date,
-        #         "days_on_abx": None,
-        #         "took": took_pred,
-        #         "pred": "F",
-        #     }
-        #     return out
-
-        # # if end_date_str == "NA" or end_date_str == "MAX_RETRIES_ERROR":  # end_date_pred == "NA"
-        # count_doses_q = f"How many days was the patient on {keyword}? If the duration is explicitly mentioned, use that. Otherwise infer the duration on the number of pills prescribed, the number of refills, and the frequency of the dose. DO NOT assume the patient takes one pill per day. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day, the patient took the medication for 5 days. Note that 'refills' are in addition to the initial presciption, so 2 refills of 10 pills means the patient received 30 pills total. When calculating duration, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer 'NA'. Assume 30 days per month. Answer with a number (of days)."
-        # count_doses_history = model.format_chunk_qs(
-        #     q=count_doses_q,
-        #     chunk=chunk,
-        #     options=["number", "NA"]
-        # )
-        # def count_doses_validation(pred):
+        # def _count_validation(pred):
         #     if pred == "NA":
         #         return True, None  # Valid response, but no count
         #     try:
@@ -1707,63 +1692,90 @@ Example query: None
         #         return True, count
         #     except ValueError:
         #         return False, None  # Invalid count format
-        # days_on_abx, days_on_abx_str = retry_with_validation(
-        #     model,
-        #     count_doses_history, 
-        #     count_doses_validation
-        # )
-        # if days_on_abx is None or days_on_abx < 0 or days_on_abx > 1000000:
-        #     # try to compute from dates
-        #     if not (start_date_date is None and end_date_date is None):
-        #         print(f"Warning: days_on_abx is {days_on_abx}")
-        #         pred = "F"
-        #         out = {
-        #             "start_date": start_date_date,
-        #             "end_date": end_date_date,
-        #             "days_on_abx": days_on_abx,
-        #             "took": took_pred,
-        #             "pred": pred,
-        #         }
-        #         return out
-        #     else:
-        #         dose_frequency_q = f"How many days per week did the patient take {keyword}?s)."
-        #         dose_frequency_history = model.format_chunk_qs(
-        #             q=dose_frequency_q,
-        #             chunk=chunk,
-        #             options=["number", "NA"]
-        #         )
-        #         dose_frequency, dose_frequency_str = retry_with_validation(
-        #             model,
-        #             dose_frequency_history,
-        #             count_doses_validation
-        #         )
-        #         if dose_frequency is not None:
-        #             days_on_abx = math.round((end_date_date - start_date_date) / 7 * dose_frequency)
-        #             out = {
-        #                 "start_date": start_date_date,
-        #                 "end_date": end_date_date,
-        #                 "days_on_abx": days_on_abx,
-        #                 "took": took_pred,
-        #                 "pred": "F",
-        #             }
-        #             return out
         
-        # if days_on_abx <= 15:
-        #     pred = "B"
-        # elif days_on_abx <= 45:
-        #     pred = "C"
-        # elif days_on_abx <= 135:
-        #     pred = "D"
-        # else: # days_on_abx > 135
-        #     pred = "E"
-        # out = {
-        #     "start_date": start_date_date,
-        #     "end_date": end_date_date,
-        #     "days_on_abx": days_on_abx,
-        #     "took": took_pred,
-        #     "pred": pred,
-        # }
-        # return out
+        # Define modular question functions
+        def _ask_took():
+            """Ask if the patient took the antibiotic."""
+            took_q = f"Did the patient take {keyword}? If the antibiotic is listed as an allergy, consider as 'no indication of antibiotic use'. Options are A. yes, B. no"
+            options = ["A", "B"]
+            took_history = model.format_chunk_qs(
+                q=took_q,
+                chunk=chunk,
+                options=options
+            )
+            return model.predict_single_with_logit_trick(took_history, output_choices=["A", "B"]) == "A"
+        
+        # def _ask_start_date():
+        #     """Ask when the patient began taking the antibiotic."""
+        #     start_date_q = f"When did the patient begin taking {keyword}? If no start date is mentioned, answer 'NA'. If only the month and year are given, assume the date was the 15th. If only the year is given, assume the date was July 1. Answer in the format MM/DD/YYYY, including leading zeros."
+        #     start_date_history = model.format_chunk_qs(
+        #         q=start_date_q,
+        #         chunk=chunk,
+        #         options=["MM/DD/YYYY", "NA"]
+        #     )
+        #     return retry_with_validation(model, start_date_history, _date_validation)
+        
+        # def _ask_end_date():
+        #     """Ask when the patient stopped taking the antibiotic."""
+        #     end_date_q = f"When did the patient stop taking {keyword}? If no end date is mentioned, answer 'NA'. If only the month and year are given, assume the date was the 15th. If only the year is given, assume the date was July 1. Answer in the format MM/DD/YYYY, including leading zeros. DO NOT try to infer the end date from the number of pills prescribed."
+        #     end_date_history = model.format_chunk_qs(
+        #         q=end_date_q,
+        #         chunk=chunk,
+        #         options=["MM/DD/YYYY", "NA"]
+        #     )
+        #     return retry_with_validation(model, end_date_history, _date_validation)
+        
+        def _ask_days_on_explicit_duration():
+            """Ask how many days the patient was on the antibiotic based on the total duration explicitly written in the note."""
+            count_doses_q = f"""How many days total did the patient take {keyword}? Answer according to the total duration explicitly written in the note (i.e. 5 days, 7 days, 1 week, 1 month). For example, "patient took {keyword} for 5 days" = 5 total days or "1 week course of {keyword}" = 7 total days or "1 month course of {keyword}" = 30 days.If it states that the patient took the pill as needed, PRN, or is prescribed to be taken under hypothetical future scenarios (i.e. IF the patient experiences traveler's diarrhea), then answer 'F' (patient took antibiotic but duration unknown). Assume 30 days per month. Answer one of: {ANSWER_OPTIONS_STR}, stating only the letter of the answer. """
+            count_doses_history = model.format_chunk_qs(
+                q=count_doses_q,
+                chunk=chunk,
+                options=["A", "B", "C", "D", "E", "F"]
+            )
+            return model.predict_single_with_logit_trick(count_doses_history, output_choices=["A", "B", "C", "D", "E", "F"])
+            # return retry_with_validation(model, count_doses_history, _count_validation)
+        def _ask_based_on_pill_count():
+            """Ask how many days the patient was on the antibiotic based on the number of pills prescribed, number of refills, and the frequency of the dose."""
+            count_doses_q = f"""How many days total did the patient take {keyword}? Calculate the duration based on the number of pills prescribed, the number of refills, and the frequency of the dose. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day (aka BID), the total days of medication taken by the patient are 5 days. As another example, if the patient was prescribed 20 pills, had 2 refills, and took 3 pills per day, the total days of medication taken by the patient are 20 days. If no pill count is given, assume one pill was taken each day. Note that 'refills' are in addition to the initial prescription. For example, 2 refills of 10 pills = 30 pills total. When calculating total days, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer `F`. Assume 30 days per month. Answer one of: {ANSWER_OPTIONS_STR}, stating only the letter of the answer. """
+            count_doses_history = model.format_chunk_qs(
+                q=count_doses_q,
+                chunk=chunk,
+                options=["A", "B", "C", "D", "E", "F"]
+            )
+            return model.predict_single_with_logit_trick(count_doses_history, output_choices=["A", "B", "C", "D", "E", "F"])
+
+        took_pred = _ask_took()
+        if took_pred == "B":
+            return {
+                "took": took_pred,
+                "pred": "A",
+                "days_on_explicit_duration": None,
+                "days_on_pill_count": None,
+            }
+        days_on_explicit_duration_pred = _ask_days_on_explicit_duration()
+        if days_on_explicit_duration_pred != "F":
+            return {
+                "took": took_pred,
+                "pred": days_on_explicit_duration_pred,
+                "days_on_explicit_duration": days_on_explicit_duration_pred,
+                "days_on_pill_count": None,
+            }
+        days_on_pill_count_pred = _ask_based_on_pill_count()
+        if days_on_pill_count_pred != "F":
+            return {
+                "took": took_pred,
+                "pred": days_on_pill_count_pred,
+                "days_on_explicit_duration": days_on_explicit_duration_pred,
+                "days_on_pill_count": days_on_pill_count_pred,
+            }
+        return {
+            "took": took_pred,
+            "pred": "F",
+            "days_on_explicit_duration": days_on_explicit_duration_pred,
+            "days_on_pill_count": days_on_pill_count_pred,
+        }
+
 
 
 

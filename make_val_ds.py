@@ -17,6 +17,8 @@ tqdm.pandas()
 parser = argparse.ArgumentParser(description='Generate validation dataset for patient features')
 parser.add_argument('--data_source', type=str, default='mimic', 
                     help='Data source table name (default: vis)')
+parser.add_argument('--synthetic_keywords', action='store_true', default=False,
+                    help='Whether to use synthetic keywords')
 args = parser.parse_args()
 
 assert args.data_source in ["mgb", "mimic"], "Invalid data source"
@@ -36,12 +38,15 @@ for cls in PtFeaturesMeta.registry.values():
         # continue
     if not cls.val_var:
         continue
+    if args.synthetic_keywords and not hasattr(cls, "synthetic_keywords"):
+        continue
 
     print(f"Checking {cls.__name__} for keywords...")
 
     # Create feature directory structure within val_ds
     val_ds_dir = Path("val_ds")
-    feature_dir = val_ds_dir / args.data_source / cls.__name__
+    data_source_dir = f"{args.data_source}_synth" if args.synthetic_keywords else args.data_source
+    feature_dir = val_ds_dir / data_source_dir / cls.__name__
     feature_dir.mkdir(parents=True, exist_ok=True)
 
     dfs = []
@@ -67,7 +72,7 @@ for cls in PtFeaturesMeta.registry.values():
             # Process this batch in smaller chunks
             for start in tqdm(range(0, len(df_batch), BATCH_SIZE), desc=f"Processing batch at offset {offset}"):
                 batch = df_batch.iloc[start:start+BATCH_SIZE].copy()
-                batch["found_keywords"] = batch["Report_Text"].progress_apply(has_keyword, keywords=cls.keywords)
+                batch["found_keywords"] = batch["Report_Text"].progress_apply(has_keyword, keywords=cls.keywords if not args.synthetic_keywords else cls.synthetic_keywords)
                 filtered_batch = batch[batch["found_keywords"].apply(lambda x: len(x) > 0)]
                 
                 if len(filtered_batch) > 0:
@@ -197,7 +202,7 @@ for cls in PtFeaturesMeta.registry.values():
         f.write(f"Query function: {cls.query.__name__}\n" if hasattr(cls, "query") else "Query function: None\n")
         f.write(f"Example query: {cls.query(chunk='', keyword='{keyword}')}\n" if hasattr(cls, "query") else "Example query: None\n")
         f.write(f"## Keywords\n")
-        f.write(f"{cls.keywords}\n")
+        f.write(f"{cls.keywords if not args.synthetic_keywords else cls.synthetic_keywords}\n")
         # f.write(f"## Number of records with keyword: {len(df[df['included_kw'].notna()])}\n")
         # f.write(f"## Number of records: {len(df)}\n")
         # f.write(f"## Number of chunks: {len(chunk_df)}\n")
