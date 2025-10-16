@@ -6,6 +6,7 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import yaml
+from datetime import datetime
 
 from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase
 from models import MrModel, DummyModel
@@ -27,6 +28,9 @@ def load_model_id():
 model_id = load_model_id()
 model = MrModel(model_id=model_id)
 
+# Generate timestamp for this run
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
 def process_single_chunk(args):
     """Process a single chunk and return the result with index"""
     i, chunk, found_kw, target_cls = args
@@ -42,9 +46,11 @@ def process_file(file_path):
     print(f"\nProcessing {file_path}")
     feature_name = file_path.stem.replace("_chunks", "")
 
-    # Create feature directory structure within preds
+    # Create feature directory structure: preds/model_id/timestamp/feature_name
     preds_dir = Path("preds")
-    feature_dir = preds_dir / feature_name
+    model_dir = preds_dir / model_id.replace("/", "_")  # Replace / with _ for valid directory names
+    timestamp_dir = model_dir / timestamp
+    feature_dir = timestamp_dir / feature_name
     feature_dir.mkdir(parents=True, exist_ok=True)
 
     # Read the validation file directly from val_ds_annotated
@@ -72,7 +78,7 @@ def process_file(file_path):
                    for i, (chunk, found_kw) in enumerate(zip(chunk_df["chunk"], chunk_df["found_keywords"]))]
     
     # Process chunks concurrently with progress bar
-    with ThreadPoolExecutor(max_workers=1) as executor:
+    with ThreadPoolExecutor(max_workers=100) as executor:
         # Submit all tasks
         future_to_index = {executor.submit(process_single_chunk, args): args[0] 
                           for args in chunk_args}
@@ -134,8 +140,12 @@ def process_file(file_path):
 
 def main():
     labeled_data_dir = Path("labeled_data/val_ds_annotated")
-    output_dir = Path("preds")
-    output_dir.mkdir(exist_ok=True)  # Create preds directory if it doesn't exist
+    
+    # Create the main preds directory structure: preds/model_id/timestamp
+    preds_dir = Path("preds")
+    model_dir = preds_dir / model_id.replace("/", "_")  # Replace / with _ for valid directory names
+    timestamp_dir = model_dir / timestamp
+    timestamp_dir.mkdir(parents=True, exist_ok=True)
 
     # Get all xlsx files from subdirectories in val_ds_annotated
     excel_files = []
@@ -155,7 +165,7 @@ def main():
 
     # Print and write overall summary
     print("\nOverall Summary:")
-    summary_path = Path("preds") / "overall_summary.txt"
+    summary_path = timestamp_dir / "overall_summary.txt"
     with open(summary_path, "w") as f:
         f.write("Overall Summary:\n")
         f.write(f"Model ID: {model_id}\n")
