@@ -25,7 +25,7 @@ assert args.data_source in ["mgb", "mimic"], "Invalid data source"
 
 db = create_engine(db_url)
 BATCH_SIZE = 1000
-MAX_DS_SIZE = 200
+MAX_DS_SIZE = 20 if args.synthetic_keywords else 200
 
 
 
@@ -122,7 +122,7 @@ for cls in PtFeaturesMeta.registry.values():
             batch_df = df.iloc[start:start+batch_size].copy()
             
             # Check for keywords in this batch
-            batch_df["found_keywords"] = batch_df["Report_Text"].progress_apply(has_keyword, keywords=cls.keywords)
+            batch_df["found_keywords"] = batch_df["Report_Text"].progress_apply(has_keyword, keywords=cls.keywords if not args.synthetic_keywords else cls.synthetic_keywords)
             filtered_batch = batch_df[batch_df["found_keywords"].apply(lambda x: len(x) > 0)]
             
             if len(filtered_batch) > 0:
@@ -151,7 +151,7 @@ for cls in PtFeaturesMeta.registry.values():
     df = df.assign(chunk=df["Report_Text"].progress_apply(chunk_text))
     chunk_df = df.explode("chunk")
     chunk_df["found_keywords"] = chunk_df["chunk"].progress_apply(
-        has_keyword, keywords=cls.keywords
+        has_keyword, keywords=cls.keywords if not args.synthetic_keywords else cls.synthetic_keywords
     )
     # Drop rows where found_keywords is empty
     chunk_df = chunk_df[chunk_df["found_keywords"].apply(lambda x: len(x) > 0)]

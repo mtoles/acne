@@ -5,15 +5,23 @@ import re
 import argparse
 from vllm import LLM, SamplingParams
 import os
+import yaml
 
 
 SYSTEM_PROMPT = "You are a medical assistant."
-# BATCH_SIZE = 64
-# MODEL_ID = "RedHatAI/Qwen2.5-3B-Instruct-quantized.w8a16"
-# MODEL_ID = "RedHatAI/Llama-4-Scout-17B-16E-Instruct-quantized.w4a16"
-# MODEL_ID = "meta-llama/Llama-3.3-70B-Instruct"
-MODEL_ID = "unsloth/Llama-3.3-70B-Instruct-bnb-4bit"
-# assert MODEL_ID is not None, "MODEL_ID is not set"
+
+# Load MODEL_ID from config.yml
+def load_model_id():
+    try:
+        with open('config.yml', 'r') as file:
+            config = yaml.safe_load(file)
+            return config['model']['id']
+    except (FileNotFoundError, KeyError, yaml.YAMLError) as e:
+        print(f"Error loading config.yml: {e}")
+        # Fallback to default model
+        return "unsloth/Llama-3.3-70B-Instruct-bnb-4bit"
+
+MODEL_ID = load_model_id()
 def retry_with_validation(model, history, validation_func, max_retries=20):
     """
     Generic retry logic with custom validation function.
@@ -48,7 +56,7 @@ def retry_with_validation(model, history, validation_func, max_retries=20):
 class MrModel:
     def __init__(
         self,
-        model_id=MODEL_ID,
+        model_id,
         base_url="http://localhost:8000/v1", 
         api_key="token-abc123",
     ):
@@ -84,8 +92,8 @@ class MrModel:
         # print(response.choices[0].logprobs.content[0].top_logprobs)
         all_top_logprobs = response.choices[0].logprobs.content[0].top_logprobs
         top_logprobs = [logprob for logprob in all_top_logprobs if logprob.token in output_choices]
-        if len(top_logprobs) != len(output_choices):
-            print(f"Warning: {len(top_logprobs)} logprobs found for {len(output_choices)} output choices")
+        # if len(top_logprobs) != len(output_choices):
+            # print(f"Warning: {len(top_logprobs)} logprobs found for {len(output_choices)} output choices")
         # Return the token with the highest logprob
         if not top_logprobs:
             print("Warning: No valid output choices found in logprobs")

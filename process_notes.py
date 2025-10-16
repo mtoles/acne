@@ -6,6 +6,7 @@
 import pandas as pd
 import os
 import time  # Add time module import
+import yaml
 
 from tqdm import tqdm
 
@@ -19,11 +20,21 @@ from make_db import db_url
 
 tqdm.pandas()  # Enable tqdm for pandas operations
 
+# Load MODEL_ID from config.yml
+def load_model_id():
+    try:
+        with open('config.yml', 'r') as file:
+            config = yaml.safe_load(file)
+            return config['model']['id']
+    except (FileNotFoundError, KeyError, yaml.YAMLError) as e:
+        print(f"Error loading config.yml: {e}")
+        raise ValueError("Could not load model ID from config.yml")
 
 DOWNSAMPLE_SIZE = 100
 
-# Initialize model
-model = MrModel()
+# Load model ID and initialize model
+model_id = load_model_id()
+model = MrModel(model_id=model_id)
 
 # Test the model with a single example
 test_question = "Does this patient have a fever? A. Yes, B. No"

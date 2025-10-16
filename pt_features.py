@@ -198,7 +198,7 @@ class alcohol_status(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for alcohol status."""
-        return "What is the alcohol status of this patient? (Note: ETOH is the abbreviation for ethanol.) Options are: A. Currently Drinks, B. Does not currently drink, C. No indication of alcohol status"
+        return "What is the alcohol status of this patient? (Note: ETOH is the abbreviation for ethanol/drinking/alcohol use.) If no information is given, return C. Options are: A. Currently Drinks, B. Does not currently drink, C. No indication of alcohol status"
     options = ["A", "B", "C"]
     keywords = ["alcohol", "drinks", "etoh"]
     val_var = True
@@ -270,8 +270,10 @@ class immunosuppressed_disease(PtFeatureBase):
     options = ["A", "B"]
     keywords = ["leukemia", "lymphoma", "HIV", "immune deficiency", "immunodeficiency", "immunosuppressed", "immunocompromised", "AIDS"]
     synthetic_keywords = [
-        "he is immunosupressed",
-        "she is immunosupressed",
+        # "he is immunosupressed",
+        # "she is immunosupressed",
+        "is immunosupressed",
+        "was immunosupressed",
     ]
     val_var = True
     def pooling_fn(preds: list):
@@ -1775,10 +1777,6 @@ Example query: None
             "days_on_explicit_duration": days_on_explicit_duration_pred,
             "days_on_pill_count": days_on_pill_count_pred,
         }
-
-
-
-
 
     def pooling_fn(preds: list):
         # Get the highest duration listed
