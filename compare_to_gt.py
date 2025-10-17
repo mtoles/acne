@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import yaml
 from datetime import datetime
+import argparse
 
 from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase
 from models import MrModel, DummyModel
@@ -24,6 +25,15 @@ def load_model_id():
         print(f"Error loading config.yml: {e}")
         raise ValueError("Could not load model ID from config.yml")
 
+# Parse command line arguments
+def parse_args():
+    parser = argparse.ArgumentParser(description='Compare predictions to ground truth')
+    parser.add_argument('--inference_type', 
+                       choices=['logit', 'cot'], 
+                       default='logit',
+                       help='Type of inference to use: logit (default) or cot (chain of thought)')
+    return parser.parse_args()
+
 # Load model ID and initialize model
 model_id = load_model_id()
 model = MrModel(model_id=model_id)
@@ -33,16 +43,16 @@ timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 def process_single_chunk(args):
     """Process a single chunk and return the result with index"""
-    i, chunk, found_kw, target_cls = args
+    i, chunk, found_kw, target_cls, inference_type = args
     preds_for_chunk = {}
     
     # Use the forward method to handle the boilerplate logic
-    pred_dict = target_cls.forward(model=model, chunk=chunk, keyword=found_kw)
+    pred_dict = target_cls.forward(model=model, chunk=chunk, keyword=found_kw, inference_type=inference_type)
     preds_for_chunk.update({k: v for k, v in pred_dict.items()})
     
     return i, preds_for_chunk
 
-def process_file(file_path):
+def process_file(file_path, inference_type):
     print(f"\nProcessing {file_path}")
     feature_name = file_path.stem.replace("_chunks", "")
 
@@ -74,7 +84,7 @@ def process_file(file_path):
     chunk_df['preds'] = None
     
     # Prepare arguments for concurrent processing
-    chunk_args = [(i, chunk, found_kw, target_cls) 
+    chunk_args = [(i, chunk, found_kw, target_cls, inference_type) 
                    for i, (chunk, found_kw) in enumerate(zip(chunk_df["chunk"], chunk_df["found_keywords"]))]
     
     # Process chunks concurrently with progress bar
@@ -139,6 +149,12 @@ def process_file(file_path):
 
 
 def main():
+    # Parse command line arguments
+    args = parse_args()
+    inference_type = args.inference_type
+    
+    print(f"Using inference type: {inference_type}")
+    
     labeled_data_dir = Path("labeled_data/val_ds_annotated")
     
     # Create the main preds directory structure: preds/model_id/timestamp
@@ -160,7 +176,7 @@ def main():
     
     for file_path in excel_files:
         print(f"\nProcessing {file_path.name}...")
-        results = process_file(file_path)
+        results = process_file(file_path, inference_type)
         all_results[file_path.stem.replace("_chunks", "")] = results
 
     # Print and write overall summary
@@ -169,7 +185,9 @@ def main():
     with open(summary_path, "w") as f:
         f.write("Overall Summary:\n")
         f.write(f"Model ID: {model_id}\n")
+        f.write(f"Inference Type: {inference_type}\n")
         print(f"Model ID: {model_id}")
+        print(f"Inference Type: {inference_type}")
         for feature, results in all_results.items():
             summary_line = f"\n{feature}:\nProcessed chunks: {results['processed_chunks']}"
             print(summary_line)

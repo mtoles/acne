@@ -6,7 +6,7 @@ import argparse
 from vllm import LLM, SamplingParams
 import os
 import yaml
-
+from Levenshtein import distance
 
 SYSTEM_PROMPT = "You are a medical assistant."
 
@@ -110,6 +110,30 @@ class MrModel:
             top_p=1.0
         )
         return response.choices[0].message.content
+
+    def predict_with_cot(self, history: list[dict], options: list[str], max_tokens: int, sample=False):
+        clean_response = None
+        attempts = 0
+        while clean_response is None:
+            cot_prompt = "Think step by step, then answer the question."
+            original_prompt = history[-1]["content"]
+            history[-1]["content"] = cot_prompt + " " + original_prompt
+            cot_response = self.predict_single(history, max_tokens, sample)
+            clean_prompt = f"question: {original_prompt}\n\nanswer: {cot_response}\n\nDo not think out loud. Answer only with one of: {options}. Report your answer inside ``, as in `A`. Answer: "
+            clean_history = [{"role": "user", "content": clean_prompt}]
+            answer_response = self.predict_single(clean_history, max_tokens, sample)
+            if answer_response in options:
+                return answer_response
+
+            try:
+                clean_response = re.search(r'`(.*?)`', answer_response).group(1)
+            except AttributeError:
+                attempts += 1
+                if attempts >= 3:
+                    # return the answer closest to the options
+                    closest_option = min(options, key=lambda x: distance(x, answer_response))
+                    return closest_option
+        return clean_response
 
 class DummyModel:
     def __init__(self):

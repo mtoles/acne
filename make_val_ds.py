@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from random import randint
 import argparse
+import time
 tqdm.pandas()
 
 # Parse command line arguments
@@ -25,7 +26,7 @@ assert args.data_source in ["mgb", "mimic"], "Invalid data source"
 
 db = create_engine(db_url)
 BATCH_SIZE = 1000
-MAX_DS_SIZE = 20 if args.synthetic_keywords else 200
+MAX_DS_SIZE = 100 if args.synthetic_keywords else 200
 
 
 
@@ -41,6 +42,9 @@ for cls in PtFeaturesMeta.registry.values():
     if args.synthetic_keywords and not hasattr(cls, "synthetic_keywords"):
         continue
 
+    if cls.__name__ in ["immunosuppressed_disease"]:
+        continue
+    
     print(f"Checking {cls.__name__} for keywords...")
 
     # Create feature directory structure within val_ds
@@ -58,9 +62,21 @@ for cls in PtFeaturesMeta.registry.values():
     if args.data_source == "mgb":
         while len(seen_empis) < MAX_DS_SIZE:
             with db.connect() as conn:
-                query = text(f"SELECT * FROM vis ORDER BY SUBSTR(EMPI, -5) LIMIT {batch_size} OFFSET {offset}")
+                if args.synthetic_keywords:
+                    # order randomly
+                    query = text(f"SELECT * FROM vis ORDER BY RANDOM() LIMIT {batch_size}")
+                    # query = text(f"SELECT * FROM vis ORDER BY SUBSTR(EMPI, -5) LIMIT {batch_size} OFFSET {offset}")
+                else:
+                    query = text(f"SELECT * FROM vis ORDER BY SUBSTR(EMPI, -5) LIMIT {batch_size} OFFSET {offset}")
+                
+                # Time the query execution
+                start_time = time.time()
                 result = conn.execute(query)
                 df_batch = pd.DataFrame(result.fetchall(), columns=result.keys())
+                end_time = time.time()
+                
+                query_time = end_time - start_time
+                print(f"Query executed in {query_time:.2f} seconds (batch size: {batch_size}, offset: {offset})")
                 
                 # If no more records, break
                 if len(df_batch) == 0:

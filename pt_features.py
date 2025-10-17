@@ -76,7 +76,7 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
     max_tokens = 1  # default max tokens for model prediction
 
     @classmethod
-    def forward(cls, chunk: str, keyword: str, model, **kwargs):
+    def forward(cls, chunk: str, keyword: str, model, inference_type='logit', **kwargs):
         """
         Forward pass through the model for a given chunk and keyword from the query.
         This method encapsulates the boilerplate logic for query generation,
@@ -86,6 +86,7 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
             chunk: The text chunk to process
             keyword: The keyword that was found in the chunk
             model: The model instance to use for prediction
+            inference_type: Type of inference to use ('logit' or 'cot')
             **kwargs: Additional arguments to pass to the query method
             
         Returns:
@@ -99,13 +100,22 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
             q=query, chunk=chunk, options=cls.options
         )
         
-        # Make prediction based on feature type
+        # Make prediction based on feature type and inference type
         if hasattr(cls, 'options') and cls.options:
-            # Use logit trick for multiple choice questions
-            pred = model.predict_single_with_logit_trick(
-                history,
-                output_choices=set(cls.options)
-            )
+            if inference_type == 'cot':
+                # Use chain of thought for multiple choice questions
+                pred = model.predict_with_cot(
+                    history,
+                    options=cls.options,
+                    max_tokens=cls.max_tokens,
+                    sample=True
+                )
+            else:
+                # Use logit trick for multiple choice questions (default)
+                pred = model.predict_single_with_logit_trick(
+                    history,
+                    output_choices=set(cls.options)
+                )
         else:
             # Use standard prediction for free-form text
             pred = model.predict_single(
