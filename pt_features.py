@@ -1,11 +1,14 @@
 import pandas as pd
+
 # from models import MrModel
 from utils import chunk_text
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime
 from models import MrModel, retry_with_validation
 from datetime import timedelta
 import math
+from utils import OptionType
+
 ### General Functions ###
 
 cancer_icd9s = [
@@ -45,21 +48,43 @@ CANCER_STAGE_SYNTHETIC_KEYWORDS = [
     ]
 # fmt: on
 
+KEYWORD_ADDITIONAL_INFO = defaultdict(
+    lambda: None,
+    {
+        "amoxicillin": "amoxicillin (DO NOT INCLUDE amoxicillin clavulanate, which is sometimes first mentioned as amoxicillin clavulanate, then mentioned as amoxicillin)",
+        "doxycycline": "doxycycline (BE SURE TO INCLUDE doxycycline hyclate and doxycycline monohydrate, which are sometimes mentioned as doxycycline)",
+    },
+)
+
+# used for questions about meidcations
+ENTRY_FORMAT_STR = """Entries in this medical record typically adhere to the following format, though the header may be missing:
+###
+                                                   Disp             Refills           Start               End
+
+cetirizine (ZYRTEC) 10 MG tablet (Taking)          30 tablet        1                 01/30/2020          02/30/2021
+
+Sig - Route: Take 1 tablet (10 mg total) by mouth daily. Take       daily during allergy season. -  Oral
+###
+Note that some fields may be missing, and the format may not be perfect. If you see the meidcation in this format or under the (Taking) header, assume the patient took the medication, even if Disp/Refills/Start/End are missing. Note that other formats, such as long form notes, may also indicate medication use.
+"""
+# strings
+
+NOT_CANCER_STR = "Pre-cancer, atypia, dysplasia, pre-malignant, non-malignant, or benign conditions are not considered cancer."
+FAMILY_HISTORY_STR = (
+    "Ignore family history of cancer (e.g. mother, father, sister, brother, etc.)."
+)
+DATE_INTERPOLATION_STR = "If only the month and year are given, assume the date was the 15th. If only the year is given, assume the date was July 2. Answer in the format YYYYMMDD, including leading zeros."
+
+
+
+# helper functions
 def get_rows_by_icd(df: pd.DataFrame, icd9_list: list, icd10_list: list):
     icd10_df = df[df["Code"].apply(lambda x: any(x.startswith(y) for y in icd9_list))]
     icd9_df = df[df["Code"].apply(lambda x: any(x.startswith(y) for y in icd10_list))]
     out_df = pd.concat([icd10_df, icd9_df])
     return out_df
 
-
 ### Patient Features ###
-
-# model = MrModel()
-
-###
-NOT_CANCER_STR = "Pre-cancer, atypia, dysplasia, pre-malignant, non-malignant, or benign conditions are not considered cancer."
-FAMILY_HISTORY_STR = "Ignore family history of cancer (e.g. mother, father, sister, brother, etc.)."
-DATE_INTERPOLATION_STR = "If only the month and year are given, assume the date was the 15th. If only the year is given, assume the date was July 2. Answer in the format YYYYMMDD, including leading zeros."
 
 class PtFeaturesMeta(type):
     registry = {}
@@ -72,58 +97,49 @@ class PtFeaturesMeta(type):
 
 
 class PtFeatureBase(metaclass=PtFeaturesMeta):
-    val_var = False # whether the variable is checked in the validation study
+    val_var = False  # whether the variable is checked in the validation study
     max_tokens = 1  # default max tokens for model prediction
 
     @classmethod
-    def forward(cls, chunk: str, keyword: str, model, inference_type='logit', **kwargs):
+    def forward(cls, chunk: str, keyword: str, model, inference_type="logit", **kwargs):
         """
         Forward pass through the model for a given chunk and keyword from the query.
         This method encapsulates the boilerplate logic for query generation,
         history formatting, and prediction.
-        
+
         Args:
             chunk: The text chunk to process
             keyword: The keyword that was found in the chunk
             model: The model instance to use for prediction
             inference_type: Type of inference to use ('logit' or 'cot')
             **kwargs: Additional arguments to pass to the query method
-            
+
         Returns:
             str: The model prediction
         """
+        keyword = KEYWORD_ADDITIONAL_INFO[keyword] or keyword
         # Generate query using the class's query method
         query = cls.query(chunk=chunk, keyword=keyword, **kwargs)
-        
+
         # Format the query and chunk for the model
-        history = model.format_chunk_qs(
-            q=query, chunk=chunk, options=cls.options
-        )
-        
-        # Make prediction based on feature type and inference type
-        if hasattr(cls, 'options') and cls.options:
-            if inference_type == 'cot':
-                # Use chain of thought for multiple choice questions
-                pred = model.predict_with_cot(
-                    history,
-                    options=cls.options,
-                    max_tokens=cls.max_tokens,
-                    sample=True
-                )
-            else:
-                # Use logit trick for multiple choice questions (default)
-                pred = model.predict_single_with_logit_trick(
-                    history,
-                    output_choices=set(cls.options)
-                )
-        else:
-            # Use standard prediction for free-form text
-            pred = model.predict_single(
+        history = model.format_chunk_qs(q=query, chunk=chunk, options=cls.options)
+
+        if inference_type == "cot":
+            # Use chain of thought for multiple choice questions
+            pred = model.predict_with_cot(
                 history,
-                max_tokens=cls.max_tokens
+                options=cls.options,
+                max_answer_tokens=cls.max_tokens,
+                sample=True,
             )
-        
+        else:
+            # Use logit trick for multiple choice questions (default)
+            pred = model.predict_single_with_logit_trick(
+                history, output_choices=set(cls.options)
+            )
+
         return {cls.__name__: pred}
+
 
 class PtDateFeatureBase(PtFeatureBase):
     def pooling_fn_latest(preds: list):
@@ -132,14 +148,17 @@ class PtDateFeatureBase(PtFeatureBase):
         if not dates:
             return "X"
         return dates.max().strftime("%Y-%m-%d")
+
     def pooling_fn_earliest(preds: list):
         # return the earliest date
         dates = [pd.to_datetime(pred, format="%Y%m%d") for pred in preds if pred != "X"]
         if not dates:
             return "X"
         return dates.min().strftime("%Y-%m-%d")
-    options = None
+
+    options = OptionType.DATE
     max_tokens = 8
+
 
 class bmi(PtFeatureBase):
     @staticmethod
@@ -171,12 +190,14 @@ class smoking_status(PtFeatureBase):
     def query(cls, **kwargs):
         """Return the query for smoking status."""
         return "What is the smoking status of this patient? If it just says 'smoker: no', consider it as 'never smoked'. Options are: A. Never smoked, B. Former smoker, C. Current smoker, D. Unknown"
+
     options = ["A", "B", "C", "D"]
     keywords = ["smokes", "smoker", "smoking", "tobacco"]
     val_var = True
+
     def pooling_fn(preds: list):
         # return the most common smoking status
-        preds = [x for x in preds if x in ["A", "B", "C", "D"]] # drop NO_KW
+        preds = [x for x in preds if x in ["A", "B", "C", "D"]]  # drop NO_KW
         counts = Counter(preds)
         return counts.most_common(1)[0][0]
 
@@ -186,9 +207,11 @@ class smoking_amount(PtFeatureBase):
     def query(cls, **kwargs):
         """Return the query for smoking amount."""
         return "How many packs per week does this patient smoke? If a range is given, take the upper bound. Ignore results from questionaires. Round all values up to the nearest integer (i.e. 0.1 -> 1). Options are: A. 0 (does not smoke), B. 1-2, C. 3-5, D. 6+, E. Smoker but unknown quantity, F. No indication of smoking status"
+
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = smoking_status.keywords
     val_var = True
+
     def pooling_fn(preds: list):
         # Get counts of A-D options
         abcd_counts = Counter([p for p in preds if p in ["A", "B", "C", "D"]])
@@ -209,9 +232,11 @@ class alcohol_status(PtFeatureBase):
     def query(cls, **kwargs):
         """Return the query for alcohol status."""
         return "What is the alcohol status of this patient? (Note: ETOH is the abbreviation for ethanol/drinking/alcohol use.) If no information is given, return C. Options are: A. Currently Drinks, B. Does not currently drink, C. No indication of alcohol status"
+
     options = ["A", "B", "C"]
     keywords = ["alcohol", "drinks", "etoh"]
     val_var = True
+
     def pooling_fn(preds: list):
         # return the most common alcohol status among A, B, C
         abc_counts = Counter([p for p in preds if p in ["A", "B"]])
@@ -220,14 +245,17 @@ class alcohol_status(PtFeatureBase):
         # If no A-C, return D
         return "C"
 
+
 class alcohol_amount(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for alcohol amount."""
         return "How many drinks per week does this patient drink? Round all values up to the nearest integer (i.e. 0.1 -> 1). Options are: A. 0 (sober or does not drink), B. 1-2, C. 3-5, D. 6+, E. Drinker but unknown quantity, F. No indication of alcohol status"
+
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
     val_var = True
+
     def pooling_fn(preds: list):
         if "D" in preds:
             return "D"
@@ -252,33 +280,55 @@ class transplant(PtFeatureBase):
     def query(cls, **kwargs):
         """Return the query for transplant status."""
         return f"Does this medical record indicate that the patient received a transplant, solid organ transplant, stem cell transplant, or bone marrow transplant? Do not include transplant types: {', '.join(EXCLUDED_TRANSPLANTS)}. Options are: A. Yes, B. No"
+
     options = ["A", "B"]
-    keywords = ["transplant", "transplantation",]
+    keywords = [
+        "transplant",
+        "transplantation",
+    ]
     val_var = True
+
     def pooling_fn(preds: list):
         if "A" in preds:
             return "A"
         return "B"
+
 
 class transplant_date(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for transplant date."""
         return "What was the date of the patient's most recent organ transplant? Do not include transplant types: {', '.join(EXCLUDED_TRANSPLANTS)}. If the patient received a transplant but no date is specified, return U. If the record gives no indication of transplant, return X {DATE_INTERPOLATION_STR}"
+
     keywords = transplant.keywords
-    synthetic_keywords = [
-        # "transplant on",
-    ] + [f"status post {x} transplant" for x in INCLUDED_TRANSPLANTS] + [f"s/p {x} transplant" for x in INCLUDED_TRANSPLANTS]
+    synthetic_keywords = (
+        [
+            # "transplant on",
+        ]
+        + [f"status post {x} transplant" for x in INCLUDED_TRANSPLANTS]
+        + [f"s/p {x} transplant" for x in INCLUDED_TRANSPLANTS]
+    )
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
+
 
 class immunosuppressed_disease(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for immunosuppressed disease status."""
         return "Does this medical record indicate that the patient had an immunosuppressed disease, including leukemia, lymphoma, HIV, AIDS, or immune deficiency? Options are: A. Yes, B. No"
+
     options = ["A", "B"]
-    keywords = ["leukemia", "lymphoma", "HIV", "immune deficiency", "immunodeficiency", "immunosuppressed", "immunocompromised", "AIDS"]
+    keywords = [
+        "leukemia",
+        "lymphoma",
+        "HIV",
+        "immune deficiency",
+        "immunodeficiency",
+        "immunosuppressed",
+        "immunocompromised",
+        "AIDS",
+    ]
     synthetic_keywords = [
         # "he is immunosupressed",
         # "she is immunosupressed",
@@ -286,10 +336,12 @@ class immunosuppressed_disease(PtFeatureBase):
         "was immunosupressed",
     ]
     val_var = True
+
     def pooling_fn(preds: list):
         if "A" in preds:
             return "A"
         return "B"
+
 
 class immunosuppressed_transplant_organ_name(PtFeatureBase):
     pass
@@ -367,12 +419,22 @@ class military(PtFeatureBase):
             return None
         mil = mil.value_counts().index[0]
         return mil
-    
+
     @classmethod
     def query(cls, **kwargs):
         """Return the query for military service status."""
         return "Does this medical record indicate that the patient served in the military? Options are: A. Yes, B. No"
-    keywords = ["military", "military", "veteran", "marine corps", "army", "navy", "air force", "coast guard"]
+
+    keywords = [
+        "military",
+        "military",
+        "veteran",
+        "marine corps",
+        "army",
+        "navy",
+        "air force",
+        "coast guard",
+    ]
     # val_var = True
 
 
@@ -381,6 +443,7 @@ class military_years(PtFeatureBase):
     def query(cls, **kwargs):
         """Return the query for military years of service."""
         return "How many years did this patient serve in the military? Answer with a number, or if the patient is not a veteran, return X"
+
     keywords = military.keywords
     # val_var = True
 
@@ -390,6 +453,7 @@ class military_retirement_date(PtDateFeatureBase):
     def query(cls, **kwargs):
         """Return the query for military retirement date."""
         return "What was the date of the patient's military retirement? If the patient is not a veteran, return X {DATE_INTERPOLATION_STR}"
+
     keywords = military.keywords
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
 
@@ -399,6 +463,7 @@ class military_agent_orange(PtFeatureBase):
     def query(cls, **kwargs):
         """Return the query for Agent Orange exposure."""
         return "Does this medical record indicate that the patient was exposed to Agent Orange? Options are: A. Yes, B. No"
+
     options = ["A", "B"]
     keywords = ["agent orange"]
     # val_var = True
@@ -540,14 +605,28 @@ class cancer_cancer(PtFeatureBase):
         if cancer_df.empty:
             return None
         return True
-    
+
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer history."""
         return f"Does this medical record indicate that the patient has a history of cancer? Only consider tumors as cancer if they are malignant. {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Yes, B. No"
+
     options = ["A", "B"]
-    keywords = ["cancer", "carcinoma", "melanoma", "mesothelioma", "sarcoma", "lymphoma", "leukemia", "myeloma", "malignant", "tumor", "myelodysplastic"]
+    keywords = [
+        "cancer",
+        "carcinoma",
+        "melanoma",
+        "mesothelioma",
+        "sarcoma",
+        "lymphoma",
+        "leukemia",
+        "myeloma",
+        "malignant",
+        "tumor",
+        "myelodysplastic",
+    ]
     val_var = True
+
     def pooling_fn(preds: list):
         if "A" in preds:
             return "A"
@@ -563,11 +642,12 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
             return None
         dates = pd.to_datetime(cancer_df["Date"], format="%m/%d/%Y")
         return dates.min()
-    
+
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer diagnosis date."""
         return f"What was the date of the patient's most recent {kwargs['keyword']} diagnosis? If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X {DATE_INTERPOLATION_STR}"
+
     keywords = SPECIFIC_CANCERS
     synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
     val_var = True
@@ -579,11 +659,13 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
     def query(cls, **kwargs):
         """Return the query for cancer stage at diagnosis."""
         return f"What was the stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. In-situ or non-invasive melanoma are stage 0. <=2mm melanoma are stage I. >2mm melanoma are stage II or III. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown, F. Patient does not have cancer."
+
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
     synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
-        
+
     val_var = True
+
     def pooling_fn(preds: list):
         # return latest stage
         if "D" in preds:
@@ -604,10 +686,12 @@ class cancer_maximum_stage(PtFeatureBase):
     def query(cls, **kwargs):
         """Return the query for cancer maximum stage."""
         return f"What was the maximum stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Cancer present but maximum stage unknown, F. Patient does not have cancer"
+
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
     synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
-    val_var = True  
+    val_var = True
+
     def pooling_fn(preds: list):
         # return latest stage
         if "D" in preds:
@@ -628,6 +712,7 @@ class cancer_status_at_last_follow_up(PtFeatureBase):
     def query(cls, **kwargs):
         """Return the query for cancer status at last follow-up."""
         return f"What was the status of the patient's {kwargs['keyword']} at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer"
+
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
     synthetic_keywords = [
@@ -637,9 +722,10 @@ class cancer_status_at_last_follow_up(PtFeatureBase):
         "metastasis",
         "stable disease",
         "progressive disease",
-        "no spread"
+        "no spread",
     ]
     val_var = True
+
     def pooling_fn(preds: list):
         # return the highest status seen
         if "C" in preds:
@@ -654,11 +740,13 @@ class cancer_status_at_last_follow_up(PtFeatureBase):
             return "F"
         return "E"
 
+
 class cancer_date_free(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer free date."""
         return f"What is the date the patient was declared cancer free? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Cancer free can be defined as: cancer free, in remission, complete response, no evidence of disease, or disease free. If the patient had cancer but no cancer free date is specified, return U. If the record gives no indication of cancer, return X {DATE_INTERPOLATION_STR}"
+
     keywords = cancer_cancer.keywords
     synthetic_keywords = [
         "cancer free",
@@ -667,6 +755,7 @@ class cancer_date_free(PtDateFeatureBase):
     ]
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
+
 
 class cancer_treatment_radiation(PtFeatureBase):
     pass
@@ -689,9 +778,11 @@ class cancer_family_any(PtFeatureBase):
     def query(cls, **kwargs):
         """Return the query for family cancer history."""
         return f"Does this medical record indicate that any member of the patient's family has a history of cancer? {NOT_CANCER_STR} Options are: A. Yes, B. No"
+
     options = ["A", "B"]
     keywords = cancer_cancer.keywords
     val_var = True
+
 
 class cancer_family_cancer_type(PtFeatureBase):
     pass
@@ -923,6 +1014,7 @@ class infection_history_salmonella_typhi(PtFeatureBase):
         icd9s = ["002.0"]
         df = get_rows_by_icd(df, icd9s, icd10s)
         return not df.empty
+
 
 # missing from sheet
 # class infection_history_streptococcus_bovis_gallolyticus(PtFeatureBase):
@@ -1568,31 +1660,69 @@ class exposure_to_tanning_bed_and_other_manmade_visible_or_uv_light(PtFeatureBas
 
 class antibiotics(PtFeatureBase):
     keywords = [
-        "tetracycline", "doxycycline", "minocycline", "adoxa", "adoxa pak", "brodspec",
-        "cleeravue-m", "declomycin", "doryx", "dynacin", "minocin", "nuzyra", "sumycin", 
-        "vibramycin calcium", "tmp", "smx", "tmp/smx", "tmp-smx",
-        "trimethoprim sulfamethoxazole", "bactrim", "septra", "smz-tmp", "sulfatrim",
-        "co-trimoxazole", "sxt", "tmp-sulfa", "amoxicot", "amoxil", "dispermox",
-        "moxatag", "moxilin", "trimox", "amoxicillin", "cephalexin", "bio-cef",
-        "keflex", "panixine disperdose", "azithromycin", "zithromax",
-        "zithromax tri-pak", "z-pak", "zmax"
+        "tetracycline",
+        "doxycycline",
+        "minocycline",
+        "adoxa",
+        "adoxa pak",
+        "brodspec",
+        "cleeravue-m",
+        "declomycin",
+        "doryx",
+        "dynacin",
+        "minocin",
+        "nuzyra",
+        "sumycin",
+        "vibramycin calcium",
+        "tmp",
+        "smx",
+        "tmp/smx",
+        "tmp-smx",
+        "trimethoprim sulfamethoxazole",
+        "bactrim",
+        "septra",
+        "smz-tmp",
+        "sulfatrim",
+        "co-trimoxazole",
+        "sxt",
+        "tmp-sulfa",
+        "amoxicot",
+        "amoxil",
+        "dispermox",
+        "moxatag",
+        "moxilin",
+        "trimox",
+        "amoxicillin",
+        "cephalexin",
+        "bio-cef",
+        "keflex",
+        "panixine disperdose",
+        "azithromycin",
+        "zithromax",
+        "zithromax tri-pak",
+        "z-pak",
+        "zmax",
     ]
+
     @classmethod
     def query(cls, **kwargs):
         """Return the query for antibiotics usage."""
         return f"Does this medical record indicate that the patient took any of the following antibiotics, ignoring those mentioned as allergic reactions: {', '.join(cls.keywords)}? Options are: A. Yes, B. No"
+
     options = ["A", "B"]
     val_var = True
+
     def pooling_fn(preds: list):
         if "A" in preds:
             return "A"
         return "B"
 
+
 class antibiotic_duration(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         return """
-    # antibiotic_duration
+# antibiotic_duration
 ## Query
 Query function: 
 
@@ -1621,7 +1751,7 @@ Ask:
 ### Step 3. If the total duration is NOT explicitly written somewhere in the note, estimate duration from pill counts, number of refills, and the frequency of the dose. 
 
 Ask:
-**"How many days total did the patient take {keyword}? If the total duration is NOT explicitly written somewhere in the note, calculate the duration based on the number of pills prescribed, the number of refills, and the frequency of the dose. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day (aka BID), the total days of medication taken by the patient are 5 days. As another example, if the patient was prescribed 20 pills, had 2 refills, and took 3 pills per day, the total days of medication taken by the patient are 20 days. DO NOT assume the patient takes one pill per day. Note that 'refills' are in addition to the initial prescription. For example, 2 refills of 10 pills = 30 pills total. When calculating total days, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer 'NA'. Assume 30 days per month. Answer with a number (of days).**
+**"How many days total did the patient take {keyword}? If the total duration is NOT explicitly written somewhere in the note, calculate the duration based on the number of pills prescribed, the number of refills, and the frequency of the dose. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day, the total days of medication taken by the patient are 5 days. As another example, if the patient was prescribed 20 pills, had 2 refills, and took 3 pills per day, the total days of medication taken by the patient are 20 days. DO NOT assume the patient takes one pill per day. Note that 'refills' are in addition to the initial prescription. For example, 2 refills of 10 pills = 30 pills total. Note that BID is an abreviation meaning "twice a day". When calculating total days, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer 'NA'. Assume 30 days per month. Answer with a number (of days).**
 
 * If a valid **pill count**, **number of refills**, and **frequency of the dose** is given → calculate the total duration (final answer)
 * If the answer is **"NA"** or can’t be determined → move on to step 4.
@@ -1679,83 +1809,69 @@ Example query: None
 
 
     """
+
     keywords = antibiotics.keywords
     val_var = True
+
     @classmethod
-    def forward(cls, model: MrModel, chunk: str, keyword: str, **kwargs):
+    def forward(
+        cls, model: MrModel, chunk: str, keyword: str, inference_type="logit", **kwargs
+    ):
+        keyword = KEYWORD_ADDITIONAL_INFO[keyword] or keyword
         ANSWER_OPTIONS_STR = "A. 0 days (no indication of antibiotic use), B. 1-15 days, C. 16-45 days, D. 46-135 days, E. 136+ days, F. Taken but dates unknown"
-        # raise NotImplementedError("You need to make this logic follow the instructions in the docstring")
-        
-        # Define validation functions
-        # def _date_validation(pred):
-        #     if pred == "NA":
-        #         return True, None  # Valid response, but no date
-        #     try:
-        #         parsed_date = datetime.strptime(pred, "%m/%d/%Y")
-        #         return True, parsed_date
-        #     except ValueError:
-        #         return False, None  # Invalid date format
-        
-        # def _count_validation(pred):
-        #     if pred == "NA":
-        #         return True, None  # Valid response, but no count
-        #     try:
-        #         count = int(pred)
-        #         return True, count
-        #     except ValueError:
-        #         return False, None  # Invalid count format
-        
+
         # Define modular question functions
         def _ask_took():
             """Ask if the patient took the antibiotic."""
-            took_q = f"Did the patient take {keyword}? If the antibiotic is listed as an allergy, consider as 'no indication of antibiotic use'. Options are A. yes, B. no"
+            took_q = f"Did the patient take {keyword}?\n\n{ENTRY_FORMAT_STR}\n\nEdge cases: If the patient discontinued, stopped taking, or previously took the antibiotic, consider it `yes`. If the antibiotic is listed as an allergy, consider as `no`. Options are A. yes, B. no"
             options = ["A", "B"]
-            took_history = model.format_chunk_qs(
-                q=took_q,
-                chunk=chunk,
-                options=options
-            )
-            return model.predict_single_with_logit_trick(took_history, output_choices=["A", "B"]) == "A"
-        
-        # def _ask_start_date():
-        #     """Ask when the patient began taking the antibiotic."""
-        #     start_date_q = f"When did the patient begin taking {keyword}? If no start date is mentioned, answer 'NA'. If only the month and year are given, assume the date was the 15th. If only the year is given, assume the date was July 1. Answer in the format MM/DD/YYYY, including leading zeros."
-        #     start_date_history = model.format_chunk_qs(
-        #         q=start_date_q,
-        #         chunk=chunk,
-        #         options=["MM/DD/YYYY", "NA"]
-        #     )
-        #     return retry_with_validation(model, start_date_history, _date_validation)
-        
-        # def _ask_end_date():
-        #     """Ask when the patient stopped taking the antibiotic."""
-        #     end_date_q = f"When did the patient stop taking {keyword}? If no end date is mentioned, answer 'NA'. If only the month and year are given, assume the date was the 15th. If only the year is given, assume the date was July 1. Answer in the format MM/DD/YYYY, including leading zeros. DO NOT try to infer the end date from the number of pills prescribed."
-        #     end_date_history = model.format_chunk_qs(
-        #         q=end_date_q,
-        #         chunk=chunk,
-        #         options=["MM/DD/YYYY", "NA"]
-        #     )
-        #     return retry_with_validation(model, end_date_history, _date_validation)
-        
+            took_history = model.format_chunk_qs(q=took_q, chunk=chunk, options=options)
+            if inference_type == "cot":
+                pred = model.predict_with_cot(
+                    took_history, options=options, max_answer_tokens=1, sample=True
+                )
+                return pred
+            else:
+                return model.predict_single_with_logit_trick(
+                    took_history, output_choices=["A", "B"]
+                )
+
         def _ask_days_on_explicit_duration():
             """Ask how many days the patient was on the antibiotic based on the total duration explicitly written in the note."""
-            count_doses_q = f"""How many days total did the patient take {keyword}? Answer according to the total duration explicitly written in the note (i.e. 5 days, 7 days, 1 week, 1 month). For example, "patient took {keyword} for 5 days" = 5 total days or "1 week course of {keyword}" = 7 total days or "1 month course of {keyword}" = 30 days.If it states that the patient took the pill as needed, PRN, or is prescribed to be taken under hypothetical future scenarios (i.e. IF the patient experiences traveler's diarrhea), then answer 'F' (patient took antibiotic but duration unknown). Assume 30 days per month. Answer one of: {ANSWER_OPTIONS_STR}, stating only the letter of the answer. """
+            count_doses_q = f"""How many days total did the patient take {keyword}?\n\n{ENTRY_FORMAT_STR}\n\nAnswer according to the total duration explicitly written in the note (i.e. 5 days, 7 days, 1 week, 1 month). For example, "patient took {keyword} for 5 days" = 5 total days or "1 week course of {keyword}" = 7 total days or "1 month course of {keyword}" = 30 days.If it states that the patient took the pill as needed, PRN, or is prescribed to be taken under hypothetical future scenarios (i.e. IF the patient experiences traveler's diarrhea), then answer 'F' (patient took antibiotic but duration unknown). Assume 30 days per month. Answer one of: {ANSWER_OPTIONS_STR}, stating only the letter of the answer. """
             count_doses_history = model.format_chunk_qs(
-                q=count_doses_q,
-                chunk=chunk,
-                options=["A", "B", "C", "D", "E", "F"]
+                q=count_doses_q, chunk=chunk, options=["A", "B", "C", "D", "E", "F"]
             )
-            return model.predict_single_with_logit_trick(count_doses_history, output_choices=["A", "B", "C", "D", "E", "F"])
+            if inference_type == "cot":
+                return model.predict_with_cot(
+                    count_doses_history,
+                    options=["A", "B", "C", "D", "E", "F"],
+                    max_answer_tokens=1,
+                    sample=True,
+                )
+            else:
+                return model.predict_single_with_logit_trick(
+                    count_doses_history, output_choices=["A", "B", "C", "D", "E", "F"]
+                )
             # return retry_with_validation(model, count_doses_history, _count_validation)
+
         def _ask_based_on_pill_count():
             """Ask how many days the patient was on the antibiotic based on the number of pills prescribed, number of refills, and the frequency of the dose."""
-            count_doses_q = f"""How many days total did the patient take {keyword}? Calculate the duration based on the number of pills prescribed, the number of refills, and the frequency of the dose. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day (aka BID), the total days of medication taken by the patient are 5 days. As another example, if the patient was prescribed 20 pills, had 2 refills, and took 3 pills per day, the total days of medication taken by the patient are 20 days. If no pill count is given, assume one pill was taken each day. Note that 'refills' are in addition to the initial prescription. For example, 2 refills of 10 pills = 30 pills total. When calculating total days, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer `F`. Assume 30 days per month. Answer one of: {ANSWER_OPTIONS_STR}, stating only the letter of the answer. """
+            count_doses_q = f"""How many days total did the patient take {keyword}?\n\n{ENTRY_FORMAT_STR}\n\nCalculate the duration based on the number of pills prescribed, the number of refills, and the frequency of the dose. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day (aka BID), the total days of medication taken by the patient are 5 days. As another example, if the patient was prescribed 20 pills, had 2 refills, and took 3 pills per day, the total days of medication taken by the patient are 20 days. If no pill count is given, assume one pill was taken each day. Note that 'refills' are in addition to the initial prescription. For example, 2 refills of 10 pills = 30 pills total. When calculating total days, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer `F`. Assume 30 days per month. Answer one of: {ANSWER_OPTIONS_STR}, stating only the letter of the answer. """
             count_doses_history = model.format_chunk_qs(
-                q=count_doses_q,
-                chunk=chunk,
-                options=["A", "B", "C", "D", "E", "F"]
+                q=count_doses_q, chunk=chunk, options=["A", "B", "C", "D", "E", "F"]
             )
-            return model.predict_single_with_logit_trick(count_doses_history, output_choices=["A", "B", "C", "D", "E", "F"])
+            if inference_type == "cot":
+                return model.predict_with_cot(
+                    count_doses_history,
+                    options=["A", "B", "C", "D", "E", "F"],
+                    max_answer_tokens=1,
+                    sample=True,
+                )
+            else:
+                return model.predict_single_with_logit_trick(
+                    count_doses_history, output_choices=["A", "B", "C", "D", "E", "F"]
+                )
 
         took_pred = _ask_took()
         if took_pred == "B":

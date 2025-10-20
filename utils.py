@@ -1,6 +1,7 @@
 import re
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from datetime import datetime
+import enum
 # from textsplit.tools import split_single
 
 
@@ -39,4 +40,6 @@ def has_keyword(text, keywords):
     
     return list(set(found_keywords))  # Remove duplicates and return as list
 
-
+class OptionType(enum.Enum):
+    DATE = "date"
+    CHOICES = "choices"
