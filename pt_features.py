@@ -250,7 +250,7 @@ class alcohol_amount(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for alcohol amount."""
-        return "How many drinks per week does this patient drink? Round all values up to the nearest integer (i.e. 0.1 -> 1). Options are: A. 0 (sober or does not drink), B. 1-2, C. 3-5, D. 6+, E. Drinker but unknown quantity, F. No indication of alcohol status"
+        return "How many drinks per week does this patient drink? Round all values up to the nearest integer (i.e. 0.1 -> 1), using the largest value if a range is given. Only use stated numbers; do not guess based on words like 'rare'. Do not try to infer the number of drinks from questionnaire scores, such as AUDIT-C. Options are: A. 0 (sober or does not drink), B. 1-2, C. 3-5, D. 6+, E. Drinker but unknown quantity, F. No indication of alcohol status"
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
