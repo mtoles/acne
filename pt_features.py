@@ -69,7 +69,7 @@ Note that some fields may be missing, and the format may not be perfect. If you 
 """
 # strings
 
-NOT_CANCER_STR = "Pre-cancer, atypia, dysplasia, pre-malignant, non-malignant, or benign conditions are not considered cancer."
+NOT_CANCER_STR = "Pre-cancer, atypia, dysplasia, pre-malignant, non-malignant, or benign conditions are not considered cancer. Cancer screenings do not necessarily indicate cancer."
 FAMILY_HISTORY_STR = (
     "Ignore family history of cancer (e.g. mother, father, sister, brother, etc.)."
 )
@@ -206,7 +206,7 @@ class smoking_amount(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for smoking amount."""
-        return "How many packs per week does this patient smoke? If a range is given, take the upper bound. Ignore results from questionaires. Round all values up to the nearest integer (i.e. 0.1 -> 1). Options are: A. 0 (does not smoke), B. 1-2, C. 3-5, D. 6+, E. Smoker but unknown quantity, F. No indication of smoking status"
+        return "How many packs per week does this patient smoke? If a range is given, take the upper bound. Ignore results from questionaires. Round all values up to the nearest integer (i.e. 0.1 -> 1). Do not attempt to infer the number of packs from questionnaire scores (e.g. TAPS, AUDIT-C). Options are: A. 0 (does not smoke), B. 1-2, C. 3-5, D. 6+, E. Smoker but unknown quantity, F. No indication of smoking status"
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = smoking_status.keywords
@@ -231,7 +231,7 @@ class alcohol_status(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for alcohol status."""
-        return "What is the alcohol status of this patient? (Note: ETOH is the abbreviation for ethanol/drinking/alcohol use.) If no information is given, return C. Options are: A. Currently Drinks, B. Does not currently drink, C. No indication of alcohol status"
+        return "What is the alcohol status of this patient? (Note: ETOH is the abbreviation for ethanol/drinking/alcohol use.) If the patient abuses alcohol, return A. If no information is given, return C. DO NOT use questionnaire scores (e.g. AUDIT-C, TAPS) to determine alcohol status. Options are: A. Currently Drinks, B. Does not currently drink, C. No indication of alcohol status"
 
     options = ["A", "B", "C"]
     keywords = ["alcohol", "drinks", "etoh"]
@@ -250,7 +250,7 @@ class alcohol_amount(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for alcohol amount."""
-        return "How many drinks per week does this patient drink? Round all values up to the nearest integer (i.e. 0.1 -> 1), using the largest value if a range is given. Only use stated numbers; do not guess based on words like 'rare'. Do not try to infer the number of drinks from questionnaire scores, such as AUDIT-C. Options are: A. 0 (sober or does not drink), B. 1-2, C. 3-5, D. 6+, E. Drinker but unknown quantity, F. No indication of alcohol status"
+        return "How many drinks per week does this patient drink? Round all values up to the nearest integer (i.e. 0.1 -> 1), using the largest value if a range is given. Only use stated numbers; do not guess based on words like 'rare'. DO NOT use questionnaire scores (e.g. AUDIT-C, TAPS) to determine alcohol status. Options are: A. 0 (sober or does not drink), B. 1-2, C. 3-5, D. 6+, E. Drinker but unknown quantity, F. No indication of alcohol status"
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
@@ -298,7 +298,7 @@ class transplant_date(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for transplant date."""
-        return "What was the date of the patient's most recent organ transplant? Do not include transplant types: {', '.join(EXCLUDED_TRANSPLANTS)}. If the patient received a transplant but no date is specified, return U. If the record gives no indication of transplant, return X {DATE_INTERPOLATION_STR}"
+        return f"What was the date of the patient's most recent organ transplant? Do not include transplant types: {', '.join(EXCLUDED_TRANSPLANTS)}. If the patient received a transplant but no date is specified, return U. If the record gives no indication of transplant, return X {DATE_INTERPOLATION_STR}"
 
     keywords = transplant.keywords
     synthetic_keywords = (
@@ -658,7 +658,7 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer stage at diagnosis."""
-        return f"What was the stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. In-situ or non-invasive melanoma are stage 0. <=2mm melanoma are stage I. >2mm melanoma are stage II or III. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Unknown, F. Patient does not have cancer."
+        return f"What was the stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Only answer stage 0 if one of these terms is explicitly mentioned in the diagnosis. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. In-situ or non-invasive melanoma are stage 0. <=2mm melanoma are stage I. >2mm melanoma are stage II or III. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Patient has cancer but stage unknown, F. Patient does not have cancer."
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
@@ -711,9 +711,11 @@ class cancer_status_at_last_follow_up(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer status at last follow-up."""
-        return f"What was the status of the patient's {kwargs['keyword']} at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer"
+        # return f"What was the status of the patient's {kwargs['keyword']} at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer" # E+F. No indication that patient has cancer
+        return f"What was the status of the patient's {kwargs['keyword']} according the latest available information? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. No indication that the patient has had cancer"
+        # example chart: The patient was diagnosed with progressive cancer in 2004.
 
-    options = ["A", "B", "C", "D", "E", "F"]
+    options = ["A", "B", "C", "D"]
     keywords = SPECIFIC_CANCERS
     synthetic_keywords = [
         "cancer free",
@@ -1707,7 +1709,7 @@ class antibiotics(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for antibiotics usage."""
-        return f"Does this medical record indicate that the patient took any of the following antibiotics, ignoring those mentioned as allergic reactions: {', '.join(cls.keywords)}? Options are: A. Yes, B. No"
+        return f"Does this medical record indicate that the patient took any of the following antibiotics, ignoring those mentioned as allergic reactions: {', '.join(cls.keywords)}? Options are: A. Yes, B. No" # todo: distinguis amoxicillin vs amoxicillin clavulanate, doxy 
 
     options = ["A", "B"]
     val_var = True

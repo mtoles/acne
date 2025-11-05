@@ -73,6 +73,66 @@ def process_single_chunk(args):
     return i, preds_for_chunk
 
 
+def generate_error_analysis_md(feature_name, target_cls, chunk_df, ground_truth, pred_columns, feature_dir):
+    """Generate markdown file with error analysis for a feature"""
+    
+    # Get the prompt/query text
+    try:
+        # Try to get query with a sample keyword
+        sample_keyword = target_cls.keywords[0] if hasattr(target_cls, 'keywords') and target_cls.keywords else "sample"
+        query_text = target_cls.query(keyword=sample_keyword) if hasattr(target_cls, 'query') else "No query method found"
+    except Exception as e:
+        query_text = f"Error getting query: {str(e)}"
+    
+    # Find the main prediction column (usually the feature name itself)
+    main_pred_col = None
+    for col in pred_columns:
+        if col == feature_name or col.lower() == feature_name.lower():
+            main_pred_col = col
+            break
+    
+    if main_pred_col is None and pred_columns:
+        main_pred_col = pred_columns[0]  # Use first prediction column if no exact match
+    
+    if main_pred_col is None:
+        print(f"Warning: No prediction column found for {feature_name}")
+        return
+    
+    predictions = chunk_df[main_pred_col]
+    
+    # Find incorrect predictions
+    incorrect_mask = predictions != ground_truth
+    incorrect_df = chunk_df[incorrect_mask].copy()
+    
+    if len(incorrect_df) == 0:
+        print(f"No errors found for {feature_name}")
+        return
+    
+    # Generate markdown content
+    md_content = f"# Error Analysis for {feature_name}\n\n"
+    md_content += f"## Prompt/Query\n\n```\n{query_text}\n```\n\n"
+    md_content += f"## Summary\n\n"
+    md_content += f"- Total examples: {len(chunk_df)}\n"
+    md_content += f"- Incorrect predictions: {len(incorrect_df)}\n"
+    md_content += f"- Accuracy: {((predictions == ground_truth).sum() / len(predictions) * 100):.1f}%\n\n"
+    md_content += f"## Incorrect Predictions\n\n"
+    
+    for idx, row in incorrect_df.iterrows():
+        md_content += f"### Example {idx + 1}\n\n"
+        md_content += f"**Real Answer:** {row['val_unified']}\n\n"
+        md_content += f"**Prediction:** {row[main_pred_col]}\n\n"
+        md_content += f"**Keyword:** {row['found_keywords']}\n\n"
+        md_content += f"**Chunk Text:**\n```\n{row['chunk']}\n```\n\n"
+        md_content += "---\n\n"
+    
+    # Save markdown file
+    md_file_path = feature_dir / f"{feature_name}_errors.md"
+    with open(md_file_path, 'w', encoding='utf-8') as f:
+        f.write(md_content)
+    
+    print(f"Generated error analysis: {md_file_path}")
+
+
 def process_file(file_path, inference_type, downsample=None):
     print(f"\nProcessing {file_path}")
     feature_name = file_path.stem.replace("_chunks", "")
@@ -89,6 +149,7 @@ def process_file(file_path, inference_type, downsample=None):
     # Read the validation file directly from val_ds_annotated
     annot_df = pd.read_excel(file_path)
     annot_df = annot_df[annot_df["val_unified"].notna()]
+    annot_df["val_unified"] = annot_df["val_unified"].astype(str)
     annot_df["Report_Number"] = annot_df["Report_Number"].astype(str)
 
     # Apply downsampling if specified
@@ -124,6 +185,7 @@ def process_file(file_path, inference_type, downsample=None):
 
     # Process chunks concurrently with progress bar
     with ThreadPoolExecutor(max_workers=100) as executor:
+    # with ThreadPoolExecutor(max_workers=10) as executor:
         # Submit all tasks
         future_to_index = {
             executor.submit(process_single_chunk, args): args[0] for args in chunk_args
@@ -185,6 +247,9 @@ def process_file(file_path, inference_type, downsample=None):
             "correct": correct,
             "total": total,
         }
+
+    # Generate error analysis markdown file
+    generate_error_analysis_md(feature_name, target_cls, chunk_df, ground_truth, pred_columns, feature_dir)
 
     # Clean the DataFrame to remove illegal characters for Excel
     def clean_text_for_excel(text):
