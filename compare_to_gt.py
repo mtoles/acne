@@ -48,6 +48,12 @@ def parse_args():
         default=None,
         help="List of features to run on. If not specified, runs on all available features",
     )
+    parser.add_argument(
+        "--data_source",
+        choices=["mgb", "mimic"],
+        default="mgb",
+        help="Data source to use: mgb (default) or mimic",
+    )
     return parser.parse_args()
 
 
