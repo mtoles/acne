@@ -286,7 +286,7 @@ def main():
     else:
         print("Running on all available features")
 
-    labeled_data_dir = Path("labeled_data/val_ds_annotated")
+    labeled_data_dir = Path("labeled_data/mgb")
 
     # Create the main preds directory structure: preds/model_id/timestamp
     preds_dir = Path("preds")

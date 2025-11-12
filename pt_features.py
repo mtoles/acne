@@ -30,7 +30,7 @@ cancer_icd10s = ["C00", "C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", 
 SPECIFIC_CANCERS = ["Oropharyngeal cancer", "Nasopharyngeal cancer", "Hypopharyngeal cancer", "Esophageal cancer", "Stomach cancer", "Small intestine cancer", "Colorectal cancer", "Anal cancer", "Liver cancer", "Intrahepatic bile duct cancer", "Gallbladder cancer", "Extrahepatic biliary tract cancer", "Pancreatic cancer", "Splenic cancer", "Other intestinal tract cancer", "Retroperitoneal cancer", "Peritoneal cancer", "Nasal cavity and paranasal sinus cancer", "Middle ear cancer", "Laryngeal cancer", "Tracheal cancer", "Bronchial cancer", "Lung cancer", "Thymic cancer", "Heart cancer", "Mediastinal cancer", "Pleural cancer", "Bone cancer", "Melanoma", "Non-melanoma skin cancer", "Merkel cell carcinoma", "Mesothelioma", "Kaposi sarcoma", "Ewing sarcoma", "Rhabdomyosarcoma", "Osteosarcoma", "Chondrosarcoma", "Fibrosarcoma", "Soft tissue sarcoma", "Angiosarcoma", "Liposarcoma", "Breast cancer", "Vulvar cancer", "Vaginal cancer", "Cervical cancer", "Uterine cancer", "Ovarian cancer", "Placental cancer", "Penile cancer", "Prostate cancer", "Testicular cancer", "Kidney cancer", "Urethral cancer", "Ureteral cancer", "Bladder cancer", "Eye cancer", "Brain cancer", "Spinal cord cancer", "Meningeal cancer", "Cranial nerve cancer", "Thyroid cancer", "Adrenal cancer", "Carcinoid tumor", "Neuroendocrine tumor", "Parathyroid cancer", "Pituitary cancer", "Hodgkin lymphoma", "Non-Hodgkin lymphoma", "Leukemia", "Multiple myeloma", "Malignant mast cell tumor", "Malignant histiocytosis", "Myelodysplastic syndrome", "Choriocarcinoma", "Polycythemia vera", "Essential thrombocythemia", "Myelofibrosis", "Plasmacytoma", "Salivary gland cancer", "Appendiceal cancer", "Gliomas", "Glioblastoma", "Astrocytoma", "Oligodendroglioma", "Leiomyosarcoma", "Synovial sarcoma"]
 
 EXCLUDED_TRANSPLANTS = ["corneal", "skin graft", "hair", "osteochondral", "cartilage", "bone", "valve", "autograft", "hip", "shoulder", "tendon", "fecal", "skin" ]
-INCLUDED_TRANSPLANTS = ["liver", "kidney", "pancreas", "heart", "lung", "intestine", "cornea", "middle ear", "skin", "bone", "bone marrow", "heart valve", "connective tissue", "vascular composite allograft"]
+INCLUDED_TRANSPLANTS = ["liver", "kidney", "pancreas", "heart", "lung", "intestine", "middle ear", "skin", "bone", "bone marrow", "heart valve", "connective tissue", "vascular composite allograft"]
 CANCER_STAGE_SYNTHETIC_KEYWORDS = [
         "in situ",
         "non-invasive",
@@ -330,10 +330,10 @@ class immunosuppressed_disease(PtFeatureBase):
         "AIDS",
     ]
     synthetic_keywords = [
-        # "he is immunosupressed",
-        # "she is immunosupressed",
-        "is immunosupressed",
-        "was immunosupressed",
+        # "he is immunosuppressed",
+        # "she is immunosuppressed",
+        "is immunosuppressed",
+        "was immunosuppressed",
     ]
     val_var = True
 
@@ -747,9 +747,9 @@ class cancer_date_free(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer free date."""
-        return f"What is the date the patient was declared cancer free? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Cancer free can be defined as: cancer free, in remission, complete response, no evidence of disease, or disease free. If the patient had cancer but no cancer free date is specified, return U. If the record gives no indication of cancer, return X {DATE_INTERPOLATION_STR}"
+        return f"What is the date the patient was declared cancer free of {kwargs['keyword']}? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Cancer free can be defined as: cancer free, in remission, complete response, no evidence of disease, or disease free. If the patient had cancer but no cancer free date is specified, return U. If the record gives no indication of cancer, return X {DATE_INTERPOLATION_STR}"
 
-    keywords = cancer_cancer.keywords
+    keywords = SPECIFIC_CANCERS
     synthetic_keywords = [
         "cancer free",
         "in remission",
