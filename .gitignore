@@ -13,3 +13,4 @@ reconciliation
 *.json
 *.jsonl
 *.txt
+*.log

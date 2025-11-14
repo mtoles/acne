@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Medical Record Feature Analyzer</title>
+    <title>Matt's LLM Prompt Tuner</title>
     <style>
         * {
             margin: 0;
@@ -224,6 +224,24 @@
             color: #333;
             padding-bottom: 10px;
             border-bottom: 3px solid #667eea;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .toggle-section-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.7em;
+            transition: background 0.3s;
+        }
+        
+        .toggle-section-btn:hover {
+            background: #5568d3;
         }
         
         .result-card {
@@ -276,6 +294,38 @@
             line-height: 1.6;
             white-space: pre-wrap;
             word-wrap: break-word;
+            transition: max-height 0.3s ease;
+            overflow: hidden;
+        }
+        
+        .result-chunk.collapsed {
+            max-height: 0;
+            padding: 0 15px;
+        }
+        
+        .keyword-highlight {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        
+        .toggle-chunk-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.85em;
+            margin-bottom: 10px;
+            transition: background 0.3s;
+        }
+        
+        .toggle-chunk-btn:hover {
+            background: #5568d3;
+        }
+        
+        .chunk-container {
+            margin-top: 15px;
         }
         
         .error-message {
@@ -288,29 +338,27 @@
         }
         
         .query-display {
-            background: white;
+            background: rgba(255, 255, 255, 0.2);
             padding: 15px;
             border-radius: 8px;
             margin-top: 10px;
             font-size: 0.9em;
-            border-left: 4px solid #667eea;
         }
         
         .options-display {
-            background: white;
+            background: rgba(255, 255, 255, 0.2);
             padding: 15px;
             border-radius: 8px;
             margin-top: 10px;
             font-size: 0.9em;
-            border-left: 4px solid #764ba2;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🏥 Medical Record Feature Analyzer</h1>
-            <p>Analyze medical records with AI-powered feature extraction</p>
+            <h1>🏥 Matt's LLM Prompt Tuner</h1>
+            <p>Prompt engineering for EMR feature extraction</p>
         </div>
         
         <div class="status-bar">
@@ -381,12 +429,18 @@
                 </div>
                 
                 <div class="results-section">
-                    <h3>❌ Incorrect Predictions (<span id="incorrect-count">0</span>)</h3>
+                    <h3>
+                        <span>❌ Incorrect Predictions (<span id="incorrect-count">0</span>)</span>
+                        <button class="toggle-section-btn" onclick="toggleAllChunksInSection('incorrect-results', this)">Hide All Chunks</button>
+                    </h3>
                     <div id="incorrect-results"></div>
                 </div>
                 
                 <div class="results-section">
-                    <h3>✅ Correct Predictions (<span id="correct-count">0</span>)</h3>
+                    <h3>
+                        <span>✅ Correct Predictions (<span id="correct-count">0</span>)</span>
+                        <button class="toggle-section-btn" onclick="toggleAllChunksInSection('correct-results', this)">Hide All Chunks</button>
+                    </h3>
                     <div id="correct-results"></div>
                 </div>
             </div>
@@ -536,6 +590,9 @@
             const card = document.createElement('div');
             card.className = 'result-card';
             
+            // Highlight keywords in chunk
+            const highlightedChunk = highlightKeywords(result.chunk, result.keyword);
+            
             card.innerHTML = `
                 <div class="result-header">
                     <div class="result-info">
@@ -551,10 +608,59 @@
                     <div class="label">Keyword</div>
                     <div class="value">${escapeHtml(result.keyword)}</div>
                 </div>
-                <div class="result-chunk">${escapeHtml(result.chunk)}</div>
+                <div class="chunk-container">
+                    <button class="toggle-chunk-btn" onclick="toggleChunk(this)">Hide Chunk</button>
+                    <div class="result-chunk">${highlightedChunk}</div>
+                </div>
             `;
             
             return card;
+        }
+        
+        function highlightKeywords(text, keyword) {
+            if (!keyword || !text) return escapeHtml(text);
+            
+            // Escape HTML first
+            const escapedText = escapeHtml(text);
+            
+            // Create a case-insensitive regex to find all occurrences
+            const regex = new RegExp(`(${escapeRegex(keyword)})`, 'gi');
+            
+            // Replace with highlighted version
+            return escapedText.replace(regex, '<span class="keyword-highlight">$1</span>');
+        }
+        
+        function escapeRegex(string) {
+            return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+        
+        function toggleChunk(button) {
+            const chunk = button.nextElementSibling;
+            chunk.classList.toggle('collapsed');
+            button.textContent = chunk.classList.contains('collapsed') ? 'Show Chunk' : 'Hide Chunk';
+        }
+        
+        function toggleAllChunksInSection(sectionId, button) {
+            const section = document.getElementById(sectionId);
+            const chunks = section.querySelectorAll('.result-chunk');
+            const toggleButtons = section.querySelectorAll('.toggle-chunk-btn');
+            
+            // Check if any chunks are visible
+            const anyVisible = Array.from(chunks).some(chunk => !chunk.classList.contains('collapsed'));
+            
+            // Toggle all chunks
+            chunks.forEach((chunk, index) => {
+                if (anyVisible) {
+                    chunk.classList.add('collapsed');
+                    toggleButtons[index].textContent = 'Show Chunk';
+                } else {
+                    chunk.classList.remove('collapsed');
+                    toggleButtons[index].textContent = 'Hide Chunk';
+                }
+            });
+            
+            // Update button text
+            button.textContent = anyVisible ? 'Show All Chunks' : 'Hide All Chunks';
         }
         
         function escapeHtml(text) {
