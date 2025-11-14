@@ -162,7 +162,7 @@ class MrModel:
             original_prompt = history[-1]["content"]
             # history[-1]["content"] = original_prompt + cot_prompt
             cot_history = [{"role": "user", "content": original_prompt + cot_prompt}]
-            cot_response = self.predict_single(history=cot_history, max_tokens=512, options=None, sample=sample)
+            cot_response = self.predict_single(history=cot_history, max_tokens=None, options=None, sample=sample)
             clean_prompt = f"{original_prompt}\n\n### Thoughts: {cot_response}\n\n{target_type_subprompt_map[target_type]}"
             clean_history = [{"role": "user", "content": clean_prompt}]
             clean_response = self.predict_single(history=clean_history, max_tokens=max_answer_tokens, options=options, sample=sample)

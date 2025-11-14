@@ -119,7 +119,11 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
         """
         keyword = KEYWORD_ADDITIONAL_INFO[keyword] or keyword
         # Generate query using the class's query method
-        query = cls.query(chunk=chunk, keyword=keyword, **kwargs)
+
+        if "custom_query" in kwargs:
+            query = kwargs["custom_query"]
+        else:
+            query = cls.query(chunk=chunk, keyword=keyword, **kwargs)
 
         # Format the query and chunk for the model
         history = model.format_chunk_qs(q=query, chunk=chunk, options=cls.options)
@@ -707,40 +711,42 @@ class cancer_maximum_stage(PtFeatureBase):
         return "E"
 
 
-class cancer_status_at_last_follow_up(PtFeatureBase):
-    @classmethod
-    def query(cls, **kwargs):
-        """Return the query for cancer status at last follow-up."""
-        # return f"What was the status of the patient's {kwargs['keyword']} at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer" # E+F. No indication that patient has cancer
-        return f"What was the status of the patient's {kwargs['keyword']} according the latest available information? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. No indication that the patient has had cancer"
-        # example chart: The patient was diagnosed with progressive cancer in 2004.
+### decided we dont need this feature
 
-    options = ["A", "B", "C", "D"]
-    keywords = SPECIFIC_CANCERS
-    synthetic_keywords = [
-        "cancer free",
-        "in remission",
-        "no evidence of disease",
-        "metastasis",
-        "stable disease",
-        "progressive disease",
-        "no spread",
-    ]
-    val_var = True
+# class cancer_status_at_last_follow_up(PtFeatureBase):
+#     @classmethod
+#     def query(cls, **kwargs):
+#         """Return the query for cancer status at last follow-up."""
+#         # return f"What was the status of the patient's {kwargs['keyword']} at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer" # E+F. No indication that patient has cancer
+#         return f"What was the status of the patient's {kwargs['keyword']} according the latest available information? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. No indication that the patient has had cancer"
+#         # example chart: The patient was diagnosed with progressive cancer in 2004.
 
-    def pooling_fn(preds: list):
-        # return the highest status seen
-        if "C" in preds:
-            return "C"
-        if "B" in preds:
-            return "B"
-        if "A" in preds:
-            return "A"
-        if "D" in preds:
-            return "D"
-        if "F" in preds:
-            return "F"
-        return "E"
+#     options = ["A", "B", "C", "D"]
+#     keywords = SPECIFIC_CANCERS
+#     synthetic_keywords = [
+#         "cancer free",
+#         "in remission",
+#         "no evidence of disease",
+#         "metastasis",
+#         "stable disease",
+#         "progressive disease",
+#         "no spread",
+#     ]
+#     val_var = True
+
+#     def pooling_fn(preds: list):
+#         # return the highest status seen
+#         if "C" in preds:
+#             return "C"
+#         if "B" in preds:
+#             return "B"
+#         if "A" in preds:
+#             return "A"
+#         if "D" in preds:
+#             return "D"
+#         if "F" in preds:
+#             return "F"
+#         return "E"
 
 
 class cancer_date_free(PtDateFeatureBase):

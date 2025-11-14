@@ -191,7 +191,6 @@ def process_file(file_path, inference_type, downsample=None):
 
     # Process chunks concurrently with progress bar
     with ThreadPoolExecutor(max_workers=100) as executor:
-    # with ThreadPoolExecutor(max_workers=10) as executor:
         # Submit all tasks
         future_to_index = {
             executor.submit(process_single_chunk, args): args[0] for args in chunk_args
@@ -292,7 +291,7 @@ def main():
     else:
         print("Running on all available features")
 
-    labeled_data_dir = Path("labeled_data/mgb")
+    labeled_data_dir = Path(f"labeled_data/{args.data_source}")
 
     # Create the main preds directory structure: preds/model_id/timestamp
     preds_dir = Path("preds")
