@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical Record Feature Analyzer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        
+        .status-bar {
+            padding: 15px 30px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #dc3545;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.connected {
+            background: #28a745;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .form-section {
+            margin-bottom: 30px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        
+        .form-group select,
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: all 0.3s;
+        }
+        
+        .form-group select:focus,
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .form-group textarea {
+            min-height: 120px;
+            font-family: inherit;
+            resize: vertical;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.1em;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+        
+        .loading.active {
+            display: block;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .results {
+            display: none;
+            margin-top: 40px;
+        }
+        
+        .results.active {
+            display: block;
+        }
+        
+        .summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+        }
+        
+        .summary h2 {
+            font-size: 1.8em;
+            margin-bottom: 20px;
+        }
+        
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .summary-item {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 15px;
+            border-radius: 8px;
+        }
+        
+        .summary-item .label {
+            font-size: 0.9em;
+            opacity: 0.9;
+            margin-bottom: 5px;
+        }
+        
+        .summary-item .value {
+            font-size: 1.5em;
+            font-weight: 700;
+        }
+        
+        .results-section {
+            margin-bottom: 30px;
+        }
+        
+        .results-section h3 {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            color: #333;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+        
+        .result-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            border: 2px solid #e9ecef;
+            transition: all 0.3s;
+        }
+        
+        .result-card:hover {
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+        
+        .result-header {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .result-info {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+        }
+        
+        .result-info .label {
+            font-size: 0.85em;
+            color: #6c757d;
+            margin-bottom: 5px;
+        }
+        
+        .result-info .value {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .result-chunk {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #f5c6cb;
+            margin-top: 20px;
+        }
+        
+        .query-display {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 0.9em;
+            border-left: 4px solid #667eea;
+        }
+        
+        .options-display {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 0.9em;
+            border-left: 4px solid #764ba2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏥 Medical Record Feature Analyzer</h1>
+            <p>Analyze medical records with AI-powered feature extraction</p>
+        </div>
+        
+        <div class="status-bar">
+            <div class="status-indicator">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Checking server status...</span>
+            </div>
+            <div id="model-info"></div>
+        </div>
+        
+        <div class="content">
+            <form id="query-form" class="form-section">
+                <div class="form-group">
+                    <label for="feature">Feature</label>
+                    <select id="feature" name="feature" required>
+                        <option value="">Loading features...</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="n">Number of Examples (n)</label>
+                    <input type="number" id="n" name="n" value="100" min="1" max="1000" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="query">Query</label>
+                    <textarea id="query" name="query" placeholder="Query will be auto-filled when you select a feature"></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="options">Options (comma-separated)</label>
+                    <input type="text" id="options" name="options" placeholder="e.g., A, B, C, D">
+                </div>
+                
+                <button type="submit" class="btn" id="submit-btn">
+                    Run Analysis
+                </button>
+            </form>
+            
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Processing... This may take a few minutes.</p>
+            </div>
+            
+            <div class="results" id="results">
+                <div class="summary">
+                    <h2>📊 Summary</h2>
+                    <div class="summary-grid">
+                        <div class="summary-item">
+                            <div class="label">Accuracy</div>
+                            <div class="value" id="accuracy">-</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="label">Correct</div>
+                            <div class="value" id="correct">-</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="label">Total</div>
+                            <div class="value" id="total">-</div>
+                        </div>
+                    </div>
+                    <div class="query-display">
+                        <strong>Query:</strong> <span id="summary-query">-</span>
+                    </div>
+                    <div class="options-display">
+                        <strong>Options:</strong> <span id="summary-options">-</span>
+                    </div>
+                </div>
+                
+                <div class="results-section">
+                    <h3>❌ Incorrect Predictions (<span id="incorrect-count">0</span>)</h3>
+                    <div id="incorrect-results"></div>
+                </div>
+                
+                <div class="results-section">
+                    <h3>✅ Correct Predictions (<span id="correct-count">0</span>)</h3>
+                    <div id="correct-results"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let features = [];
+        
+        // Check server status
+        async function checkServerStatus() {
+            try {
+                const response = await fetch('/api/check_server');
+                const data = await response.json();
+                const statusDot = document.getElementById('status-dot');
+                const statusText = document.getElementById('status-text');
+                const modelInfo = document.getElementById('model-info');
+                const submitBtn = document.getElementById('submit-btn');
+                
+                if (data.running) {
+                    statusDot.classList.add('connected');
+                    statusText.textContent = 'vLLM Server Connected';
+                    modelInfo.textContent = `Model: ${data.model_id}`;
+                    submitBtn.disabled = false;
+                } else {
+                    statusDot.classList.remove('connected');
+                    statusText.textContent = 'vLLM Server Disconnected';
+                    modelInfo.textContent = 'Please start the vLLM server';
+                    submitBtn.disabled = true;
+                }
+            } catch (error) {
+                console.error('Error checking server status:', error);
+                document.getElementById('status-text').textContent = 'Error checking server status';
+            }
+        }
+        
+        // Load features
+        async function loadFeatures() {
+            try {
+                const response = await fetch('/api/features');
+                const data = await response.json();
+                features = data.features;
+                
+                const featureSelect = document.getElementById('feature');
+                featureSelect.innerHTML = '<option value="">Select a feature...</option>';
+                
+                features.forEach(feature => {
+                    const option = document.createElement('option');
+                    option.value = feature.name;
+                    option.textContent = feature.name;
+                    featureSelect.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading features:', error);
+                alert('Error loading features');
+            }
+        }
+        
+        // Handle feature selection
+        document.getElementById('feature').addEventListener('change', function() {
+            const featureName = this.value;
+            const feature = features.find(f => f.name === featureName);
+            
+            if (feature) {
+                document.getElementById('query').value = feature.query;
+                if (Array.isArray(feature.options)) {
+                    document.getElementById('options').value = feature.options.join(', ');
+                }
+            }
+        });
+        
+        // Handle form submission
+        document.getElementById('query-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = {
+                feature: document.getElementById('feature').value,
+                n: document.getElementById('n').value,
+                query: document.getElementById('query').value,
+                options: document.getElementById('options').value
+            };
+            
+            // Show loading
+            document.getElementById('loading').classList.add('active');
+            document.getElementById('results').classList.remove('active');
+            document.getElementById('submit-btn').disabled = true;
+            
+            try {
+                const response = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Error running query');
+                }
+                
+                // Display results
+                displayResults(data);
+                
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error: ' + error.message);
+            } finally {
+                document.getElementById('loading').classList.remove('active');
+                document.getElementById('submit-btn').disabled = false;
+            }
+        });
+        
+        function displayResults(data) {
+            // Update summary
+            document.getElementById('accuracy').textContent = data.summary.accuracy;
+            document.getElementById('correct').textContent = data.summary.correct;
+            document.getElementById('total').textContent = data.summary.total;
+            document.getElementById('summary-query').textContent = data.summary.query;
+            document.getElementById('summary-options').textContent = Array.isArray(data.summary.options) ? data.summary.options.join(', ') : data.summary.options;
+            
+            // Update counts
+            document.getElementById('incorrect-count').textContent = data.incorrect.length;
+            document.getElementById('correct-count').textContent = data.correct.length;
+            
+            // Display incorrect results
+            const incorrectDiv = document.getElementById('incorrect-results');
+            incorrectDiv.innerHTML = '';
+            data.incorrect.forEach((result, idx) => {
+                incorrectDiv.appendChild(createResultCard(result, idx));
+            });
+            
+            // Display correct results
+            const correctDiv = document.getElementById('correct-results');
+            correctDiv.innerHTML = '';
+            data.correct.forEach((result, idx) => {
+                correctDiv.appendChild(createResultCard(result, idx));
+            });
+            
+            // Show results
+            document.getElementById('results').classList.add('active');
+            document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function createResultCard(result, idx) {
+            const card = document.createElement('div');
+            card.className = 'result-card';
+            
+            card.innerHTML = `
+                <div class="result-header">
+                    <div class="result-info">
+                        <div class="label">Ground Truth Answer</div>
+                        <div class="value">${escapeHtml(result.gt_answer)}</div>
+                    </div>
+                    <div class="result-info">
+                        <div class="label">Predicted Answer</div>
+                        <div class="value">${escapeHtml(result.predicted_answer)}</div>
+                    </div>
+                </div>
+                <div class="result-info" style="margin-bottom: 15px;">
+                    <div class="label">Keyword</div>
+                    <div class="value">${escapeHtml(result.keyword)}</div>
+                </div>
+                <div class="result-chunk">${escapeHtml(result.chunk)}</div>
+            `;
+            
+            return card;
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // Initialize
+        checkServerStatus();
+        loadFeatures();
+        
+        // Check server status every 10 seconds
+        setInterval(checkServerStatus, 10000);
+    </script>
+</body>
+</html>
+

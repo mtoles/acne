@@ -11,3 +11,5 @@ pyarrow
 flashtext
 langchain
 openpyxl
+flask
+requests

@@ -125,21 +125,26 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
         else:
             query = cls.query(chunk=chunk, keyword=keyword, **kwargs)
 
+        if "custom_options" in kwargs:
+            options = kwargs["custom_options"]
+        else:
+            options = cls.options
+
         # Format the query and chunk for the model
-        history = model.format_chunk_qs(q=query, chunk=chunk, options=cls.options)
+        history = model.format_chunk_qs(q=query, chunk=chunk, options=options)
 
         if inference_type == "cot":
             # Use chain of thought for multiple choice questions
             pred = model.predict_with_cot(
                 history,
-                options=cls.options,
+                options=options,
                 max_answer_tokens=cls.max_tokens,
                 sample=True,
             )
         else:
             # Use logit trick for multiple choice questions (default)
             pred = model.predict_single_with_logit_trick(
-                history, output_choices=set(cls.options)
+                history, output_choices=set(options)
             )
 
         return {cls.__name__: pred}
