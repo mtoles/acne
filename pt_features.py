@@ -436,7 +436,6 @@ class military(PtFeatureBase):
 
     keywords = [
         "military",
-        "military",
         "veteran",
         "marine corps",
         "army",

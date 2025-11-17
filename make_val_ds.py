@@ -42,7 +42,7 @@ for cls in PtFeaturesMeta.registry.values():
     if args.synthetic_keywords and not hasattr(cls, "synthetic_keywords"):
         continue
 
-    if cls.__name__ not in ["immunosuppressed_disease"]:
+    if cls.__name__ not in ["cancer_date_free"]:
         continue
     
     print(f"Checking {cls.__name__} for keywords...")
