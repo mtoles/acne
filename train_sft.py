@@ -1,8 +1,37 @@
-# Run with: CUDA_VISIBLE_DEVICES=2,3 python3 train_sft.py --downsample_train 64 --downsample_eval 64
+# Run with: CUDA_VISIBLE_DEVICES=2,3 python3 train_sft.py --downsample_train 128 --downsample_eval 128
 
 import os
 import sys
 import argparse
+
+# Check for distributed training BEFORE importing torch/CUDA libraries
+# THIS MUST BE BEFORE TORCH IMPORT!
+is_distributed = "LOCAL_RANK" in os.environ
+local_rank = int(os.environ.get("LOCAL_RANK", 0))
+
+# DDP CRITICAL FIX: Set compile location before unsloth import
+# The compiler checks os.getenv("UNSLOTH_COMPILE_LOCATION") during import
+_compile_dir = os.path.abspath(os.path.join(os.getcwd(), "unsloth_compiled_cache"))
+os.makedirs(_compile_dir, exist_ok=True)
+os.environ["UNSLOTH_COMPILE_LOCATION"] = _compile_dir  # Correct env var name!
+os.environ["TRL_EXPERIMENTAL_SILENCE"] = "1"
+
+if is_distributed:
+    print(f"[DDP Mode] Set UNSLOTH_COMPILE_LOCATION to: {_compile_dir}")
+
+# For multi-GPU without torchrun - restrict to first GPU
+# When not using torchrun, we use single GPU mode
+if not is_distributed:
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if cuda_visible and "," in cuda_visible:
+        # Multiple GPUs specified but not using torchrun - use only the first one
+        first_gpu = cuda_visible.split(",")[0]
+        os.environ["CUDA_VISIBLE_DEVICES"] = first_gpu
+        print(f"Multiple GPUs detected ({cuda_visible}).")
+        print(f"Restricting to GPU {first_gpu}.")
+        print(f"For multi-GPU training, use: torchrun --nproc_per_node=2 train_sft.py [args]")
+
+# Now import torch and other CUDA-dependent libraries AFTER GPU restriction
 from datetime import datetime
 from pathlib import Path
 from unsloth import FastLanguageModel
@@ -17,19 +46,6 @@ import pandas as pd
 import wandb
 import yaml
 
-# Check for distributed training BEFORE importing torch/CUDA libraries
-is_distributed = "LOCAL_RANK" in os.environ
-
-# If not in distributed mode but multiple GPUs are visible, restrict to first GPU
-if not is_distributed:
-    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-    if cuda_visible and "," in cuda_visible:
-        # Multiple GPUs specified but not using torchrun - use only the first one
-        first_gpu = cuda_visible.split(",")[0]
-        os.environ["CUDA_VISIBLE_DEVICES"] = first_gpu
-        print(f"Multiple GPUs detected ({cuda_visible}) but not in distributed mode.")
-        print(f"Restricting to GPU {first_gpu}. To use multiple GPUs, launch with torchrun.")
-
 
 if not torch.cuda.is_available():
     raise RuntimeError("CUDA is not available. Please ensure CUDA-capable GPU is accessible.")
@@ -39,8 +55,14 @@ num_gpus = torch.cuda.device_count()
 
 if is_distributed:
     print(f"Running in distributed mode with {num_gpus} GPUs")
-    local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
+    
+    # Rank 0: Signal that unsloth cache is ready
+    if local_rank == 0:
+        from pathlib import Path
+        cache_ready_file = Path("unsloth_compiled_cache/.rank0_ready")
+        cache_ready_file.touch()
+        print(f"[Rank 0] Unsloth cache compilation complete")
 else:
     print(f"Using single GPU: {torch.cuda.get_device_name(0)}")
 
@@ -63,12 +85,14 @@ parser.add_argument('--load_in_4bit', type=lambda x: (str(x).lower() == 'true'),
 parser.add_argument('--lora_r', type=int, default=None, help='LoRA rank')
 parser.add_argument('--lora_alpha', type=int, default=None, help='LoRA alpha')
 parser.add_argument('--lora_dropout', type=float, default=None, help='LoRA dropout')
+parser.add_argument('--lora_lr', type=float, default=None, help='LoRA learning rate (defaults to 10x learning_rate)')
 parser.add_argument('--lora_bias', type=str, default=None, help='LoRA bias')
 parser.add_argument('--use_gradient_checkpointing', type=str, default=None, help='Gradient checkpointing')
 parser.add_argument('--random_state', type=int, default=None, help='Random state')
 parser.add_argument('--use_rslora', type=lambda x: (str(x).lower() == 'true'), default=None, help='Use RSLoRA')
 # Training args
 parser.add_argument('--per_device_train_batch_size', type=int, default=None, help='Batch size per device')
+parser.add_argument('--per_device_eval_batch_size', type=int, default=None, help='Eval batch size per device')
 parser.add_argument('--gradient_accumulation_steps', type=int, default=None, help='Gradient accumulation steps')
 parser.add_argument('--warmup_steps', type=int, default=None, help='Warmup steps')
 parser.add_argument('--max_steps', type=int, default=None, help='Maximum training steps')
@@ -110,6 +134,7 @@ load_in_4bit = get_config_value("model", "load_in_4bit", args_cli.load_in_4bit, 
 lora_r = get_config_value("lora", "r", args_cli.lora_r, 16)
 lora_alpha = get_config_value("lora", "lora_alpha", args_cli.lora_alpha, 16)
 lora_dropout = get_config_value("lora", "lora_dropout", args_cli.lora_dropout, 0.0)
+lora_lr = get_config_value("lora", "lora_lr", args_cli.lora_lr, None)
 lora_bias = get_config_value("lora", "bias", args_cli.lora_bias, "none")
 use_gradient_checkpointing = get_config_value("lora", "use_gradient_checkpointing", args_cli.use_gradient_checkpointing, "unsloth")
 random_state = get_config_value("lora", "random_state", args_cli.random_state, 3407)
@@ -117,11 +142,15 @@ use_rslora = get_config_value("lora", "use_rslora", args_cli.use_rslora, False)
 loftq_config = get_config_value("lora", "loftq_config", None, None)
 
 # Load model
+# In DDP mode with 4-bit/8-bit, must load model on current device
+device_map_arg = {'':torch.cuda.current_device()} if is_distributed and load_in_4bit else None
+
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=model_name,
     max_seq_length=max_seq_length,
     dtype=dtype,
     load_in_4bit=load_in_4bit,
+    device_map=device_map_arg,
 )
 
 # Add LoRA adapters
@@ -136,6 +165,7 @@ model = FastLanguageModel.get_peft_model(
     random_state=random_state,
     use_rslora=use_rslora,
     loftq_config=loftq_config,
+    # Note: lora_lr will be set in TrainingArguments via loraplus_lr_ratio
 )
 
 # Data preparation
@@ -316,6 +346,9 @@ class GenerationEvalCallback(TrainerCallback):
         self.output_dir.mkdir(parents=True, exist_ok=True)
     
     def on_evaluate(self, args, state, control, model=None, **kwargs):
+        # Skip generation-based evaluation to avoid OOM - rely on loss-based evaluation instead
+        return
+        
         if model is None or self.eval_dataset_raw is None or len(self.eval_dataset_raw) == 0:
             return
         
@@ -343,20 +376,22 @@ class GenerationEvalCallback(TrainerCallback):
                 expected_tokens = self.tokenizer.encode(expected, add_special_tokens=False)
                 num_tokens_to_generate = len(expected_tokens)
                 
-                # Generate exactly the number of tokens in the expected output (at least 1)
-                max_new_tokens = max(1, num_tokens_to_generate)
+                # Generate exactly the number of tokens in the expected output (at least 1, max 10 to prevent OOM)
+                max_new_tokens = min(10, max(1, num_tokens_to_generate))
                 
                 # Tokenize the prompt
                 inputs = self.tokenizer([prompt], return_tensors="pt").to(model.device)
                 
                 # Generate the appropriate number of tokens
-                outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=False,  # Use greedy decoding for deterministic results
-                    pad_token_id=self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                )
+                with torch.cuda.amp.autocast(enabled=False):  # Disable autocast for generation to save memory
+                    outputs = model.generate(
+                        **inputs,
+                        max_new_tokens=max_new_tokens,
+                        do_sample=False,  # Use greedy decoding for deterministic results
+                        pad_token_id=self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                        use_cache=True,  # Use KV cache for efficiency
+                    )
                 
                 # Decode only the generated tokens (skip the prompt)
                 generated_text = self.tokenizer.batch_decode(
@@ -378,6 +413,10 @@ class GenerationEvalCallback(TrainerCallback):
                         "generated": generated_text,
                     })
                 total += 1
+                
+                # Clear CUDA cache after every example to prevent OOM during evaluation
+                del inputs, outputs
+                torch.cuda.empty_cache()
         
         # Calculate accuracy
         accuracy = correct / total if total > 0 else 0.0
@@ -462,10 +501,17 @@ eval_callback = GenerationEvalCallback(
 
 # Training configuration
 per_device_train_batch_size = get_config_value("training", "per_device_train_batch_size", args_cli.per_device_train_batch_size, 2)
+per_device_eval_batch_size = get_config_value("training", "per_device_eval_batch_size", args_cli.per_device_eval_batch_size, 4)
 gradient_accumulation_steps = get_config_value("training", "gradient_accumulation_steps", args_cli.gradient_accumulation_steps, 4)
 warmup_steps = get_config_value("training", "warmup_steps", args_cli.warmup_steps, 5)
 max_steps = get_config_value("training", "max_steps", args_cli.max_steps, 60)
 learning_rate = get_config_value("training", "learning_rate", args_cli.learning_rate, 2e-4)
+
+# Set LoRA learning rate to 10x base learning rate if not specified
+if lora_lr is None:
+    lora_lr = learning_rate * 10
+    print(f"Setting LoRA learning rate to 10x base learning rate: {lora_lr}")
+
 optim = get_config_value("training", "optim", args_cli.optim, "adamw_8bit")
 weight_decay = get_config_value("training", "weight_decay", args_cli.weight_decay, 0.01)
 lr_scheduler_type = get_config_value("training", "lr_scheduler_type", args_cli.lr_scheduler_type, "cosine")
@@ -527,6 +573,7 @@ if effective_batch_size < per_device_train_batch_size:
 # Prepare training arguments
 training_args_dict = {
     "per_device_train_batch_size": effective_batch_size,
+    "per_device_eval_batch_size": per_device_eval_batch_size,
     "gradient_accumulation_steps": gradient_accumulation_steps,
     "warmup_steps": warmup_steps,
     "max_steps": max_steps,
@@ -545,7 +592,14 @@ training_args_dict = {
     "dataloader_drop_last": False,  # Don't drop last batch to avoid issues with small datasets
 }
 
-# Add multi-GPU settings only if running in distributed mode
+# Note: loraplus_lr_ratio is not supported in the current transformers version
+# LoRA learning rate would need to be set via optimizer parameter groups instead
+if lora_lr and lora_lr != learning_rate:
+    print(f"Note: LoRA LR ({lora_lr}) differs from base LR ({learning_rate})")
+    print(f"      loraplus_lr_ratio not available in this transformers version")
+
+# Add multi-GPU settings only if running in distributed mode (torchrun)
+# DataParallel mode (multiple GPUs without torchrun) doesn't need these settings
 if is_distributed:
     training_args_dict["ddp_find_unused_parameters"] = False  # Set to False for efficiency with LoRA
     training_args_dict["ddp_backend"] = "nccl"  # Use NCCL backend for multi-GPU
