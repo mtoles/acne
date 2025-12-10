@@ -1,3 +1,5 @@
+# Run with: CUDA_VISIBLE_DEVICES=2,3 python3 train_sft.py --downsample_train 64 --downsample_eval 64
+
 import os
 import sys
 import argparse
@@ -15,8 +17,32 @@ import pandas as pd
 import wandb
 import yaml
 
+# Check for distributed training BEFORE importing torch/CUDA libraries
+is_distributed = "LOCAL_RANK" in os.environ
+
+# If not in distributed mode but multiple GPUs are visible, restrict to first GPU
+if not is_distributed:
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if cuda_visible and "," in cuda_visible:
+        # Multiple GPUs specified but not using torchrun - use only the first one
+        first_gpu = cuda_visible.split(",")[0]
+        os.environ["CUDA_VISIBLE_DEVICES"] = first_gpu
+        print(f"Multiple GPUs detected ({cuda_visible}) but not in distributed mode.")
+        print(f"Restricting to GPU {first_gpu}. To use multiple GPUs, launch with torchrun.")
+
+
 if not torch.cuda.is_available():
     raise RuntimeError("CUDA is not available. Please ensure CUDA-capable GPU is accessible.")
+
+# Check GPU setup after torch is imported
+num_gpus = torch.cuda.device_count()
+
+if is_distributed:
+    print(f"Running in distributed mode with {num_gpus} GPUs")
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+else:
+    print(f"Using single GPU: {torch.cuda.get_device_name(0)}")
 
 # Load config file
 config_path = Path("config_sft.yaml")
@@ -451,9 +477,11 @@ eval_steps = get_config_value("training", "eval_steps", args_cli.eval_steps, 10)
 wandb_project = get_config_value("wandb", "project", args_cli.wandb_project, "acne-sft-training")
 wandb_enabled = get_config_value("wandb", "enabled", args_cli.wandb_enabled, True)
 
-# Initialize wandb after datasets are created
+# Initialize wandb after datasets are created (only on rank 0 for multi-GPU)
 if wandb_enabled:
-    wandb.init(
+    # Only initialize wandb on the main process (rank 0) to avoid duplicate logs
+    if not is_distributed or int(os.environ.get("LOCAL_RANK", 0)) == 0:
+        wandb.init(
         project=wandb_project,
         name=f"sft-{timestamp}",
         config={
@@ -477,6 +505,9 @@ if wandb_enabled:
         },
         dir=str(training_runs_dir),
     )
+    else:
+        # Disable wandb on non-main processes
+        os.environ["WANDB_MODE"] = "disabled"
 
 # Training
 print(f"\n" + "="*80)
@@ -488,6 +519,37 @@ if eval_dataset:
           (f" (downsampled from {len(all_eval_data)})" if downsample_eval is not None and len(eval_dataset) < len(all_eval_data) else ""))
 print("="*80)
 
+# Ensure batch size doesn't exceed dataset size
+effective_batch_size = min(per_device_train_batch_size, len(train_dataset))
+if effective_batch_size < per_device_train_batch_size:
+    print(f"Warning: Reducing batch size from {per_device_train_batch_size} to {effective_batch_size} to match dataset size ({len(train_dataset)} examples)")
+
+# Prepare training arguments
+training_args_dict = {
+    "per_device_train_batch_size": effective_batch_size,
+    "gradient_accumulation_steps": gradient_accumulation_steps,
+    "warmup_steps": warmup_steps,
+    "max_steps": max_steps,
+    "learning_rate": learning_rate,
+    "fp16": not is_bfloat16_supported(),
+    "bf16": is_bfloat16_supported(),
+    "logging_steps": logging_steps,
+    "optim": optim,
+    "weight_decay": weight_decay,
+    "lr_scheduler_type": lr_scheduler_type,
+    "seed": seed,
+    "output_dir": str(training_runs_dir),
+    "report_to": "wandb" if wandb_enabled else "none",
+    "eval_strategy": "steps" if eval_dataset else "no",
+    "eval_steps": eval_steps if eval_dataset else None,
+    "dataloader_drop_last": False,  # Don't drop last batch to avoid issues with small datasets
+}
+
+# Add multi-GPU settings only if running in distributed mode
+if is_distributed:
+    training_args_dict["ddp_find_unused_parameters"] = False  # Set to False for efficiency with LoRA
+    training_args_dict["ddp_backend"] = "nccl"  # Use NCCL backend for multi-GPU
+
 trainer = SFTTrainer(
     model=model,
     tokenizer=tokenizer,
@@ -496,24 +558,7 @@ trainer = SFTTrainer(
     dataset_text_field="text",
     max_seq_length=max_seq_length,
     dataset_num_proc=2,
-    args=TrainingArguments(
-        per_device_train_batch_size=per_device_train_batch_size,
-        gradient_accumulation_steps=gradient_accumulation_steps,
-        warmup_steps=warmup_steps,
-        max_steps=max_steps,
-        learning_rate=learning_rate,
-        fp16=not is_bfloat16_supported(),
-        bf16=is_bfloat16_supported(),
-        logging_steps=logging_steps,
-        optim=optim,
-        weight_decay=weight_decay,
-        lr_scheduler_type=lr_scheduler_type,
-        seed=seed,
-        output_dir=str(training_runs_dir),
-        report_to="wandb" if wandb_enabled else "none",
-        eval_strategy="steps" if eval_dataset else "no",
-        eval_steps=eval_steps if eval_dataset else None,
-    ),
+    args=TrainingArguments(**training_args_dict),
     callbacks=[eval_callback] if eval_callback is not None else None,
 )
 
