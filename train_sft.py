@@ -1,15 +1,18 @@
 import os
 import sys
 import argparse
+from datetime import datetime
+from pathlib import Path
 from unsloth import FastLanguageModel
 import torch
 from datasets import load_dataset, Dataset
 from trl import SFTTrainer
-from transformers import TrainingArguments, TextStreamer
+from transformers import TrainingArguments, TextStreamer, TrainerCallback
 from unsloth import is_bfloat16_supported
 from utils import get_dataset
 from pt_features import PtFeaturesMeta
 import pandas as pd
+import wandb
 
 if not torch.cuda.is_available():
     raise RuntimeError("CUDA is not available. Please ensure CUDA-capable GPU is accessible.")
@@ -22,7 +25,7 @@ parser.add_argument('--downsample_eval', type=int, default=None,
 args_cli = parser.parse_args()
 
 # Model configuration
-max_seq_length = 2048
+max_seq_length = 20000
 dtype = None
 load_in_4bit = True
 
@@ -205,6 +208,187 @@ if len(train_dataset) > 0:
     print(f"  Length: {len(sample_text)} characters")
     print(f"  Preview: {sample_text[:200]}...")
 
+# Create evaluation callback for generation-based metrics
+class GenerationEvalCallback(TrainerCallback):
+    def __init__(self, eval_dataset_raw, alpaca_prompt, tokenizer, output_dir):
+        # Store the raw eval dataset (before formatting) to access instruction, input, output
+        self.eval_dataset_raw = eval_dataset_raw
+        self.alpaca_prompt = alpaca_prompt
+        self.tokenizer = tokenizer
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+    
+    def on_evaluate(self, args, state, control, model=None, **kwargs):
+        if model is None or self.eval_dataset_raw is None or len(self.eval_dataset_raw) == 0:
+            return
+        
+        # Set model to eval mode and enable inference
+        model.eval()
+        FastLanguageModel.for_inference(model)
+        
+        correct = 0
+        total = 0
+        wrong_answers = []
+        
+        with torch.no_grad():
+            for idx, example in enumerate(self.eval_dataset_raw):
+                # Format prompt without the answer
+                prompt = self.alpaca_prompt.format(
+                    example["instruction"], 
+                    example["input"], 
+                    ""
+                )
+                
+                # Get expected output and determine how many tokens it contains
+                expected = str(example["output"]).strip()
+                
+                # Tokenize the expected output to determine how many tokens to generate
+                expected_tokens = self.tokenizer.encode(expected, add_special_tokens=False)
+                num_tokens_to_generate = len(expected_tokens)
+                
+                # Generate exactly the number of tokens in the expected output (at least 1)
+                max_new_tokens = max(1, num_tokens_to_generate)
+                
+                # Tokenize the prompt
+                inputs = self.tokenizer([prompt], return_tensors="pt").to(model.device)
+                
+                # Generate the appropriate number of tokens
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=False,  # Use greedy decoding for deterministic results
+                    pad_token_id=self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                )
+                
+                # Decode only the generated tokens (skip the prompt)
+                generated_text = self.tokenizer.batch_decode(
+                    outputs[:, inputs["input_ids"].shape[1]:], 
+                    skip_special_tokens=True
+                )[0].strip()
+                
+                # Exact match comparison
+                if generated_text == expected:
+                    correct += 1
+                else:
+                    # Store wrong answer details
+                    wrong_answers.append({
+                        "index": idx,
+                        "feature": example.get("feature", "unknown"),
+                        "instruction": example["instruction"],
+                        "input": example["input"],
+                        "ground_truth": expected,
+                        "generated": generated_text,
+                    })
+                total += 1
+        
+        # Calculate accuracy
+        accuracy = correct / total if total > 0 else 0.0
+        
+        # Log the metric
+        print(f"\n{'='*80}")
+        print(f"Generation-based Evaluation:")
+        print(f"  Exact Match Accuracy: {accuracy:.4f} ({correct}/{total})")
+        print(f"  Wrong Answers: {len(wrong_answers)}")
+        print(f"{'='*80}\n")
+        
+        # Log to wandb (let wandb auto-assign step)
+        if wandb.run is not None:
+            wandb.log({
+                "eval/exact_match": accuracy,
+                "eval/correct": correct,
+                "eval/wrong": len(wrong_answers),
+                "eval/total": total,
+            })
+        
+        # Save wrong answers to markdown file
+        if wrong_answers:
+            step = state.global_step if hasattr(state, 'global_step') else 0
+            eval_step = state.epoch if hasattr(state, 'epoch') else 0
+            reports_dir = self.output_dir / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            report_path = reports_dir / f"wrong_answers_step_{step:05d}.md"
+            
+            with open(report_path, 'w') as f:
+                # Write metadata
+                f.write("# Evaluation Wrong Answers Report\n\n")
+                f.write("## Metadata\n\n")
+                f.write(f"- **Training Step**: {step}\n")
+                f.write(f"- **Epoch**: {eval_step}\n")
+                f.write(f"- **Evaluation Time**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"- **Total Examples**: {total}\n")
+                f.write(f"- **Correct**: {correct}\n")
+                f.write(f"- **Wrong**: {len(wrong_answers)}\n")
+                f.write(f"- **Accuracy**: {accuracy:.4f} ({accuracy*100:.2f}%)\n\n")
+                f.write("---\n\n")
+                
+                # Write wrong answers
+                f.write("## Wrong Answers\n\n")
+                for i, wrong in enumerate(wrong_answers, 1):
+                    f.write(f"### Wrong Answer {i}\n\n")
+                    f.write(f"- **Index**: {wrong['index']}\n")
+                    f.write(f"- **Feature**: {wrong['feature']}\n")
+                    f.write(f"- **Ground Truth**: `{wrong['ground_truth']}`\n")
+                    f.write(f"- **Generated**: `{wrong['generated']}`\n")
+                    f.write(f"- **Instruction**: {wrong['instruction']}\n")
+                    f.write(f"- **Input**:\n")
+                    # Truncate long inputs for readability
+                    input_text = wrong['input']
+                    if len(input_text) > 500:
+                        f.write(f"  ```\n  {input_text[:500]}...\n  ```\n")
+                    else:
+                        f.write(f"  ```\n  {input_text}\n  ```\n")
+                    f.write("\n")
+            
+            print(f"Saved wrong answers report to: {report_path}")
+        
+        # Set model back to train mode
+        model.train()
+
+# Create training_runs directory with timestamp
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+training_runs_dir = Path("training_runs") / timestamp
+training_runs_dir.mkdir(parents=True, exist_ok=True)
+print(f"\nTraining run directory: {training_runs_dir}")
+
+# Create the evaluation callback - use the dataset before formatting to access raw fields
+eval_dataset_raw = Dataset.from_list(all_eval_data) if all_eval_data else None
+if eval_dataset_raw is not None and args_cli.downsample_eval is not None and len(eval_dataset_raw) > args_cli.downsample_eval:
+    eval_dataset_raw = eval_dataset_raw.select(range(args_cli.downsample_eval))
+
+eval_callback = GenerationEvalCallback(
+    eval_dataset_raw=eval_dataset_raw,
+    alpaca_prompt=alpaca_prompt,
+    tokenizer=tokenizer,
+    output_dir=training_runs_dir
+) if eval_dataset_raw is not None else None
+
+# Initialize wandb after datasets are created
+wandb.init(
+    project="acne-sft-training",
+    name=f"sft-{timestamp}",
+    config={
+        "model_name": "unsloth/Qwen2-7B",
+        "max_seq_length": max_seq_length,
+        "load_in_4bit": load_in_4bit,
+        "per_device_train_batch_size": 2,
+        "gradient_accumulation_steps": 4,
+        "warmup_steps": 5,
+        "max_steps": 60,
+        "learning_rate": 2e-4,
+        "optim": "adamw_8bit",
+        "weight_decay": 0.01,
+        "lr_scheduler_type": "linear",
+        "seed": 0,
+        "train_dataset_size": len(train_dataset),
+        "eval_dataset_size": len(eval_dataset) if eval_dataset else 0,
+        "downsample_train": args_cli.downsample_train,
+        "downsample_eval": args_cli.downsample_eval,
+        "num_features": len(datasets_dict),
+    },
+    dir=str(training_runs_dir),
+)
+
 # Training
 print(f"\n" + "="*80)
 print("Starting training...")
@@ -236,11 +420,12 @@ trainer = SFTTrainer(
         weight_decay=0.01,
         lr_scheduler_type="linear",
         seed=0,
-        output_dir="outputs",
-        report_to="none",
+        output_dir=str(training_runs_dir),
+        report_to="wandb",
         eval_strategy="steps" if eval_dataset else "no",
         eval_steps=10 if eval_dataset else None,
     ),
+    callbacks=[eval_callback] if eval_callback is not None else None,
 )
 
 trainer_stats = trainer.train()
