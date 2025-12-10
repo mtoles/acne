@@ -11,6 +11,7 @@ import argparse
 
 from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase
 from models import MrModel, DummyModel
+from utils import get_dataset
 import re
 
 tqdm.pandas()  # Enable tqdm for pandas operations
@@ -139,7 +140,7 @@ def generate_error_analysis_md(feature_name, target_cls, chunk_df, ground_truth,
     print(f"Generated error analysis: {md_file_path}")
 
 
-def process_file(file_path, inference_type, downsample=None):
+def process_file(file_path, inference_type, downsample=None, data_source=None):
     print(f"\nProcessing {file_path}")
     feature_name = file_path.stem.replace("_chunks", "")
 
@@ -152,26 +153,29 @@ def process_file(file_path, inference_type, downsample=None):
     feature_dir = timestamp_dir / feature_name
     feature_dir.mkdir(parents=True, exist_ok=True)
 
-    # Read the validation file directly from val_ds_annotated
-    annot_df = pd.read_excel(file_path)
-    annot_df = annot_df[annot_df["val_unified"].notna()]
-    annot_df["val_unified"] = annot_df["val_unified"].astype(str)
-    annot_df["Report_Number"] = annot_df["Report_Number"].astype(str)
-
-    # Apply downsampling if specified
-    total_rows = len(annot_df)
+    # Use get_dataset to load and split the data
+    # For compare_to_gt: if downsample is specified, use all data; otherwise use only eval portion (first 50%)
+    datasets = get_dataset(
+        data_source=data_source or "mgb",
+        feature_names=[feature_name],
+        train_split=0.5,  # 50% for eval, 50% for train
+        downsample=downsample,
+        random_state=42
+    )
+    
+    if feature_name not in datasets:
+        raise ValueError(f"Dataset not found for feature: {feature_name}")
+    
+    # If downsample is specified, use all data; otherwise use only eval portion (as per original behavior)
     if downsample is not None:
-        # Downsample to the specified number of examples per feature
-        if total_rows > downsample:
-            annot_df = annot_df.sample(n=downsample, random_state=42).sort_index()
-            print(f"Downsampled to {downsample} out of {total_rows} examples")
-        else:
-            print(f"Using all {total_rows} examples (less than downsampling target of {downsample})")
+        annot_df = datasets[feature_name]["all"].copy()
+        print(f"Using all {len(annot_df)} downsampled examples")
     else:
-        # Default behavior: limit to first 50% of examples
-        limit_rows = total_rows // 2
-        annot_df = annot_df.head(limit_rows)
-        print(f"Processing first {limit_rows} out of {total_rows} examples")
+        annot_df = datasets[feature_name]["eval"].copy()
+        total_rows = len(datasets[feature_name]["all"])
+        natural_count = len(datasets[feature_name]["eval_natural"])
+        synthetic_count = len(datasets[feature_name]["eval_synthetic"])
+        print(f"Using eval set: {len(annot_df)} examples ({natural_count} natural, {synthetic_count} synthetic) out of {total_rows} total examples")
 
     target_cls = PtFeaturesMeta.registry[feature_name]
 
@@ -237,20 +241,53 @@ def process_file(file_path, inference_type, downsample=None):
             "val_unified",
             "Comments",
             "preds",
+            "is_synthetic",
         ]
     ]
 
+    # Separate natural and synthetic data
+    natural_df = chunk_df[chunk_df["is_synthetic"] == False]
+    synthetic_df = chunk_df[chunk_df["is_synthetic"] == True]
+    
     validation_results = {}
     for pred_col in pred_columns:
         predictions = chunk_df[pred_col]
-        # Calculate accuracy
-        correct = (predictions == ground_truth).sum()
-        total = len(predictions)
-        accuracy = correct / total if total > 0 else 0
+        natural_predictions = natural_df[pred_col] if len(natural_df) > 0 else pd.Series(dtype=object)
+        synthetic_predictions = synthetic_df[pred_col] if len(synthetic_df) > 0 else pd.Series(dtype=object)
+        natural_ground_truth = natural_df["val_unified"] if len(natural_df) > 0 else pd.Series(dtype=object)
+        synthetic_ground_truth = synthetic_df["val_unified"] if len(synthetic_df) > 0 else pd.Series(dtype=object)
+        
+        # Combined stats
+        correct_combined = (predictions == ground_truth).sum()
+        total_combined = len(predictions)
+        accuracy_combined = correct_combined / total_combined if total_combined > 0 else 0
+        
+        # Natural stats
+        correct_natural = (natural_predictions == natural_ground_truth).sum() if len(natural_df) > 0 else 0
+        total_natural = len(natural_df)
+        accuracy_natural = correct_natural / total_natural if total_natural > 0 else 0
+        
+        # Synthetic stats
+        correct_synthetic = (synthetic_predictions == synthetic_ground_truth).sum() if len(synthetic_df) > 0 else 0
+        total_synthetic = len(synthetic_df)
+        accuracy_synthetic = correct_synthetic / total_synthetic if total_synthetic > 0 else 0
+        
         validation_results[pred_col] = {
-            "accuracy": accuracy,
-            "correct": correct,
-            "total": total,
+            "combined": {
+                "accuracy": accuracy_combined,
+                "correct": correct_combined,
+                "total": total_combined,
+            },
+            "natural": {
+                "accuracy": accuracy_natural,
+                "correct": correct_natural,
+                "total": total_natural,
+            },
+            "synthetic": {
+                "accuracy": accuracy_synthetic,
+                "correct": correct_synthetic,
+                "total": total_synthetic,
+            },
         }
 
     # Generate error analysis markdown file
@@ -272,8 +309,15 @@ def process_file(file_path, inference_type, downsample=None):
     # Save the processed chunk_df
     chunk_df.to_excel(feature_dir / "chunk_df.xlsx")
 
-    print(f"Processed {len(chunk_df)} chunks for {feature_name}")
-    return {"processed_chunks": len(chunk_df), "validation_results": validation_results}
+    natural_count = len(natural_df)
+    synthetic_count = len(synthetic_df)
+    print(f"Processed {len(chunk_df)} chunks for {feature_name} ({natural_count} natural, {synthetic_count} synthetic)")
+    return {
+        "processed_chunks": len(chunk_df),
+        "natural_chunks": natural_count,
+        "synthetic_chunks": synthetic_count,
+        "validation_results": validation_results
+    }
 
 
 def main():
@@ -330,7 +374,7 @@ def main():
 
     for file_path in excel_files:
         print(f"\nProcessing {file_path.name}...")
-        results = process_file(file_path, inference_type, downsample)
+        results = process_file(file_path, inference_type, downsample, data_source=args.data_source)
         all_results[file_path.stem.replace("_chunks", "")] = results
 
     # Print and write overall summary
@@ -344,7 +388,8 @@ def main():
         print(f"Inference Type: {inference_type}")
         for feature, results in all_results.items():
             summary_line = (
-                f"\n{feature}:\nProcessed chunks: {results['processed_chunks']}"
+                f"\n{feature}:\nProcessed chunks: {results['processed_chunks']} "
+                f"({results.get('natural_chunks', 0)} natural, {results.get('synthetic_chunks', 0)} synthetic)"
             )
             print(summary_line)
             f.write(summary_line)
@@ -354,9 +399,25 @@ def main():
                 f.write("\nValidation Results:")
                 print("Validation Results:")
                 for pred_col, metrics in results["validation_results"].items():
-                    val_line = f"  {pred_col}: {metrics['accuracy']:.3f} accuracy ({metrics['correct']}/{metrics['total']})"
-                    print(val_line)
-                    f.write(f"\n{val_line}")
+                    # Combined stats
+                    combined = metrics.get("combined", {})
+                    val_line_combined = f"  {pred_col} (Combined): {combined['accuracy']:.3f} accuracy ({combined['correct']}/{combined['total']})"
+                    print(val_line_combined)
+                    f.write(f"\n{val_line_combined}")
+                    
+                    # Natural stats
+                    natural = metrics.get("natural", {})
+                    if natural.get("total", 0) > 0:
+                        val_line_natural = f"  {pred_col} (Natural): {natural['accuracy']:.3f} accuracy ({natural['correct']}/{natural['total']})"
+                        print(val_line_natural)
+                        f.write(f"\n{val_line_natural}")
+                    
+                    # Synthetic stats
+                    synthetic = metrics.get("synthetic", {})
+                    if synthetic.get("total", 0) > 0:
+                        val_line_synthetic = f"  {pred_col} (Synthetic): {synthetic['accuracy']:.3f} accuracy ({synthetic['correct']}/{synthetic['total']})"
+                        print(val_line_synthetic)
+                        f.write(f"\n{val_line_synthetic}")
             f.write("\n")
             print()
 

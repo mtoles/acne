@@ -11,5 +11,5 @@ pyarrow
 flashtext
 langchain
 openpyxl
-flask
-requests
+unsloth
+trl

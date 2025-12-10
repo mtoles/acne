@@ -26,7 +26,7 @@ assert args.data_source in ["mgb", "mimic"], "Invalid data source"
 
 db = create_engine(db_url)
 BATCH_SIZE = 1000
-MAX_DS_SIZE = 100 if args.synthetic_keywords else 200
+MAX_DS_SIZE = 50 if args.synthetic_keywords else 200
 
 
 
@@ -42,7 +42,7 @@ for cls in PtFeaturesMeta.registry.values():
     if args.synthetic_keywords and not hasattr(cls, "synthetic_keywords"):
         continue
 
-    if cls.__name__ not in ["cancer_date_free"]:
+    if cls.__name__ not in ["immunosuppressed_disease"]:
         continue
     
     print(f"Checking {cls.__name__} for keywords...")

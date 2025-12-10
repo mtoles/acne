@@ -307,7 +307,7 @@ class transplant_date(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for transplant date."""
-        return f"What was the date of the patient's most recent organ transplant? Do not include transplant types: {', '.join(EXCLUDED_TRANSPLANTS)}. If the patient received a transplant but no date is specified, return U. If the record gives no indication of transplant, return X {DATE_INTERPOLATION_STR}"
+        return f"What was the date of the patient's earliest organ transplant? Do not include transplant types: {', '.join(EXCLUDED_TRANSPLANTS)}. If the patient received a transplant but no date is specified, return U. If the record gives no indication of transplant, return X {DATE_INTERPOLATION_STR}"
 
     keywords = transplant.keywords
     synthetic_keywords = (
@@ -339,10 +339,21 @@ class immunosuppressed_disease(PtFeatureBase):
         "AIDS",
     ]
     synthetic_keywords = [
-        # "he is immunosuppressed",
-        # "she is immunosuppressed",
-        "is immunosuppressed",
-        "was immunosuppressed",
+        # "acquired immunodeficiency syndrome",
+        # "primary immunodeficiency",
+        # "immune deficiency",
+        "human immunodeficiency virus",
+        "acquired immunodeficiency syndrome",
+        "primary immunodeficiency",
+        "immune deficiency",
+        "acute lymphoblastic leukemia",
+        "acute myeloid leukemia",
+        "chronic lymphocytic leukemia",
+        "chronic myeloid leukemia",
+        "non-Hodgkin lymphoma",
+        "Hodgkin lymphoma",
+        "small lymphocytic lymphoma",
+        "lymphoproliferative disorder",
     ]
     val_var = True
 
@@ -654,7 +665,7 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer diagnosis date."""
-        return f"What was the date of the patient's most recent {kwargs['keyword']} diagnosis? If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X {DATE_INTERPOLATION_STR}"
+        return f"What was the date of the patient's earliest {kwargs['keyword']} diagnosis? If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X {DATE_INTERPOLATION_STR}"
 
     keywords = SPECIFIC_CANCERS
     synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
@@ -666,7 +677,7 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer stage at diagnosis."""
-        return f"What was the stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Only answer stage 0 if one of these terms is explicitly mentioned in the diagnosis. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. In-situ or non-invasive melanoma are stage 0. <=2mm melanoma are stage I. >2mm melanoma are stage II or III. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Patient has cancer but stage unknown, F. Patient does not have cancer."
+        return f"What was the stage of the patient's earliest {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Only answer stage 0 if one of these terms is explicitly mentioned in the diagnosis. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. In-situ or non-invasive melanoma are stage 0. <=2mm melanoma are stage I. >2mm melanoma are stage II or III. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Patient has cancer but stage unknown, F. Patient does not have cancer."
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
@@ -693,7 +704,7 @@ class cancer_maximum_stage(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer maximum stage."""
-        return f"What was the maximum stage of the patient's most recent {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Cancer present but maximum stage unknown, F. Patient does not have cancer"
+        return f"What was the maximum stage of the patient's earliest {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Cancer present but maximum stage unknown, F. Patient does not have cancer"
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS

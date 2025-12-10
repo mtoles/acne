@@ -96,5 +96,4 @@ The system extracts features across several medical domains:
 - **Reliability**: Logprob-based prediction ensures consistent outputs
 - **Scalability**: Batch processing and database storage handle large datasets
 - **Validation**: Built-in validation dataset creation for quality assurance
-
 This system enables automated extraction of structured medical features from unstructured clinical text, supporting research and clinical decision-making applications. 
