@@ -139,7 +139,6 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
                 history,
                 options=options,
                 max_answer_tokens=cls.max_tokens,
-                sample=True,
             )
         else:
             # Use logit trick for multiple choice questions (default)
@@ -1851,7 +1850,7 @@ Example query: None
             took_history = model.format_chunk_qs(q=took_q, chunk=chunk, options=options)
             if inference_type == "cot":
                 pred = model.predict_with_cot(
-                    took_history, options=options, max_answer_tokens=1, sample=True
+                    took_history, options=options, max_answer_tokens=1 
                 )
                 return pred
             else:
@@ -1870,7 +1869,6 @@ Example query: None
                     count_doses_history,
                     options=["A", "B", "C", "D", "E", "F"],
                     max_answer_tokens=1,
-                    sample=True,
                 )
             else:
                 return model.predict_single_with_logit_trick(
@@ -1889,7 +1887,6 @@ Example query: None
                     count_doses_history,
                     options=["A", "B", "C", "D", "E", "F"],
                     max_answer_tokens=1,
-                    sample=True,
                 )
             else:
                 return model.predict_single_with_logit_trick(

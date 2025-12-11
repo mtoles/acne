@@ -42,7 +42,7 @@ def retry_with_validation(model, history, validation_func, max_retries=20):
         ValueError: If no valid result is found after max_retries
     """
     for attempt in range(max_retries):
-        pred = model.predict_single(history, max_tokens=10, sample=True)
+        pred = model.predict_single(history, max_tokens=10)
         
         is_valid, parsed_result = validation_func(pred)
         if is_valid:

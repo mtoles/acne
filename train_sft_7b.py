@@ -14,6 +14,10 @@ CUDA_VISIBLE_DEVICES=3 python train_sft_7b.py \
 import os
 import sys
 import argparse
+
+# Fix tokenizers parallelism warning when using multiprocessing data loaders
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import torch
 from datetime import datetime
 from pathlib import Path
@@ -45,7 +49,16 @@ if "LOCAL_RANK" in os.environ:
 if not torch.cuda.is_available():
     raise RuntimeError("CUDA is not available. Please ensure CUDA-capable GPU is accessible.")
 
+def print_gpu_memory():
+    """Print current GPU memory usage"""
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024**3  # Convert to GB
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        print(f"GPU Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved, {total:.2f}GB total")
+
 print(f"Using single GPU: {torch.cuda.get_device_name(0)}")
+print_gpu_memory()
 
 # Load config file
 config_path = Path("config_sft.yaml")
@@ -73,7 +86,9 @@ parser.add_argument('--random_state', type=int, default=None, help='Random state
 parser.add_argument('--per_device_train_batch_size', type=int, default=None, help='Batch size per device')
 parser.add_argument('--per_device_eval_batch_size', type=int, default=None, help='Eval batch size per device')
 parser.add_argument('--gradient_accumulation_steps', type=int, default=None, help='Gradient accumulation steps')
-parser.add_argument('--warmup_steps', type=int, default=None, help='Warmup steps')
+parser.add_argument('--warmup_steps', type=int, default=None, help='Warmup steps (deprecated, use warmup_ratio)')
+parser.add_argument('--warmup_ratio', type=float, default=None, help='Warmup ratio (fraction of total steps)')
+parser.add_argument('--epochs', type=int, default=None, help='Number of epochs to train')
 parser.add_argument('--max_steps', type=int, default=None, help='Maximum training steps')
 parser.add_argument('--learning_rate', type=float, default=None, help='Learning rate')
 parser.add_argument('--optim', type=str, default=None, help='Optimizer')
@@ -81,6 +96,7 @@ parser.add_argument('--weight_decay', type=float, default=None, help='Weight dec
 parser.add_argument('--lr_scheduler_type', type=str, default=None, help='LR scheduler type')
 parser.add_argument('--seed', type=int, default=None, help='Random seed')
 parser.add_argument('--logging_steps', type=int, default=None, help='Logging steps')
+parser.add_argument('--evals_per_epoch', type=int, default=None, help='Number of evaluations per epoch')
 parser.add_argument('--eval_steps', type=int, default=None, help='Evaluation steps')
 # Dataset args
 parser.add_argument('--data_source', type=str, default=None, help='Data source')
@@ -115,19 +131,39 @@ alpaca_prompt = """Below is an instruction that describes a task, paired with an
 ### Response:
 {}"""
 
-# Model configuration
+# Model configuration (must be specified in config file)
 model_name = get_config_value("model", "model_name", args_cli.model_name)
-max_seq_length = get_config_value("model", "max_seq_length", args_cli.max_seq_length, 4096)  # Reasonable default
+max_seq_length = get_config_value("model", "max_seq_length", args_cli.max_seq_length)
 dtype = get_config_value("model", "dtype", args_cli.dtype)
-load_in_4bit = get_config_value("model", "load_in_4bit", args_cli.load_in_4bit, True)
+load_in_4bit = get_config_value("model", "load_in_4bit", args_cli.load_in_4bit)
 
-# LoRA configuration
-lora_r = get_config_value("lora", "r", args_cli.lora_r, 16)
-lora_alpha = get_config_value("lora", "lora_alpha", args_cli.lora_alpha, 32)
-lora_dropout = get_config_value("lora", "lora_dropout", args_cli.lora_dropout, 0.05)
-lora_lr = get_config_value("lora", "lora_lr", args_cli.lora_lr, None)
-lora_bias = get_config_value("lora", "bias", args_cli.lora_bias, "none")
-random_state = get_config_value("lora", "random_state", args_cli.random_state, 3407)
+# Validate required config
+if model_name is None:
+    raise ValueError("model_name must be specified in config file or via --model_name")
+if max_seq_length is None:
+    raise ValueError("max_seq_length must be specified in config file or via --max_seq_length")
+if load_in_4bit is None:
+    raise ValueError("load_in_4bit must be specified in config file or via --load_in_4bit")
+
+# LoRA configuration (must be specified in config file)
+lora_r = get_config_value("lora", "r", args_cli.lora_r)
+lora_alpha = get_config_value("lora", "lora_alpha", args_cli.lora_alpha)
+lora_dropout = get_config_value("lora", "lora_dropout", args_cli.lora_dropout)
+lora_lr = get_config_value("lora", "lora_lr", args_cli.lora_lr)
+lora_bias = get_config_value("lora", "bias", args_cli.lora_bias)
+random_state = get_config_value("lora", "random_state", args_cli.random_state)
+
+# Validate required LoRA config
+if lora_r is None:
+    raise ValueError("lora.r must be specified in config file or via --lora_r")
+if lora_alpha is None:
+    raise ValueError("lora.lora_alpha must be specified in config file or via --lora_alpha")
+if lora_dropout is None:
+    raise ValueError("lora.lora_dropout must be specified in config file or via --lora_dropout")
+if lora_bias is None:
+    raise ValueError("lora.bias must be specified in config file or via --lora_bias")
+if random_state is None:
+    raise ValueError("lora.random_state must be specified in config file or via --random_state")
 
 print("="*80)
 print("Training Qwen 2.5 7B Instruct with LoRA (PRODUCTION)")
@@ -153,14 +189,14 @@ if tokenizer.pad_token is None:
 EOS_TOKEN = tokenizer.eos_token
 
 # Load model with 4-bit quantization for memory efficiency
-print("Loading model...")
+print("Loading model with optimizations...")
 
-# Configure 4-bit quantization
+# Configure 4-bit quantization with aggressive memory optimization
 bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_4bit_quant_type="nf4",
     bnb_4bit_compute_dtype=torch.bfloat16,
-    bnb_4bit_use_double_quant=True,
+    bnb_4bit_use_double_quant=True,  # Nested quantization for extra memory savings
 )
 
 model = AutoModelForCausalLM.from_pretrained(
@@ -169,10 +205,16 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="auto",  # Single GPU
     trust_remote_code=True,
     torch_dtype=torch.bfloat16,
+    attn_implementation="flash_attention_2",
+    low_cpu_mem_usage=True,  # Reduce CPU memory usage during loading
 )
 
-# Prepare model for k-bit training
-model = prepare_model_for_kbit_training(model)
+# Prepare model for k-bit training with gradient checkpointing
+model = prepare_model_for_kbit_training(
+    model,
+    use_gradient_checkpointing=True,
+    gradient_checkpointing_kwargs={"use_reentrant": False}  # More memory efficient
+)
 
 # Configure LoRA
 lora_config = LoraConfig(
@@ -196,13 +238,23 @@ lora_config = LoraConfig(
 print("Adding LoRA adapters...")
 model = get_peft_model(model, lora_config)
 model.print_trainable_parameters()
+print("\nMemory usage after model loading:")
+print_gpu_memory()
 
-# Dataset configuration
-data_source = get_config_value("dataset", "data_source", args_cli.data_source, "mgb")
-feature_names = get_config_value("dataset", "feature_names", None, None)
-train_split = get_config_value("dataset", "train_split", args_cli.train_split, 0.5)
-downsample = get_config_value("dataset", "downsample", None, None)
-random_state_dataset = get_config_value("dataset", "random_state", args_cli.random_state_dataset, 42)
+# Dataset configuration (must be specified in config file)
+data_source = get_config_value("dataset", "data_source", args_cli.data_source)
+feature_names = get_config_value("dataset", "feature_names", None)
+train_split = get_config_value("dataset", "train_split", args_cli.train_split)
+downsample = get_config_value("dataset", "downsample", None)
+random_state_dataset = get_config_value("dataset", "random_state", args_cli.random_state_dataset)
+
+# Validate required dataset config
+if data_source is None:
+    raise ValueError("dataset.data_source must be specified in config file or via --data_source")
+if train_split is None:
+    raise ValueError("dataset.train_split must be specified in config file or via --train_split")
+if random_state_dataset is None:
+    raise ValueError("dataset.random_state must be specified in config file or via --random_state_dataset")
 
 # Load datasets for all features
 print("\n" + "="*80)
@@ -515,54 +567,135 @@ eval_callback = GenerationEvalCallback(
     output_dir=training_runs_dir
 ) if eval_dataset_raw is not None else None
 
-# Training configuration
-per_device_train_batch_size = get_config_value("training", "per_device_train_batch_size", args_cli.per_device_train_batch_size, 1)
-per_device_eval_batch_size = get_config_value("training", "per_device_eval_batch_size", args_cli.per_device_eval_batch_size, 1)
-gradient_accumulation_steps = get_config_value("training", "gradient_accumulation_steps", args_cli.gradient_accumulation_steps, 4)
-warmup_steps = get_config_value("training", "warmup_steps", args_cli.warmup_steps, 5)
-max_steps = get_config_value("training", "max_steps", args_cli.max_steps, 60)
-learning_rate = get_config_value("training", "learning_rate", args_cli.learning_rate, 2e-4)
+# Training configuration (must be specified in config file)
+per_device_train_batch_size = get_config_value("training", "per_device_train_batch_size", args_cli.per_device_train_batch_size)
+per_device_eval_batch_size = get_config_value("training", "per_device_eval_batch_size", args_cli.per_device_eval_batch_size)
+gradient_accumulation_steps = get_config_value("training", "gradient_accumulation_steps", args_cli.gradient_accumulation_steps)
+warmup_steps = get_config_value("training", "warmup_steps", args_cli.warmup_steps)
+warmup_ratio = get_config_value("training", "warmup_ratio", args_cli.warmup_ratio)
+epochs = get_config_value("training", "epochs", args_cli.epochs)  # Optional - defaults to 1 if None
+max_steps = get_config_value("training", "max_steps", args_cli.max_steps)  # Optional - will auto-calculate if None
+learning_rate = get_config_value("training", "learning_rate", args_cli.learning_rate)
+optim = get_config_value("training", "optim", args_cli.optim)
+weight_decay = get_config_value("training", "weight_decay", args_cli.weight_decay)
+lr_scheduler_type = get_config_value("training", "lr_scheduler_type", args_cli.lr_scheduler_type)
+seed = get_config_value("training", "seed", args_cli.seed)
+logging_steps = get_config_value("training", "logging_steps", args_cli.logging_steps)
+evals_per_epoch = get_config_value("training", "evals_per_epoch", args_cli.evals_per_epoch)
+eval_steps = get_config_value("training", "eval_steps", args_cli.eval_steps)
+
+# Validate required training config
+if per_device_train_batch_size is None:
+    raise ValueError("training.per_device_train_batch_size must be specified in config file or via --per_device_train_batch_size")
+if per_device_eval_batch_size is None:
+    raise ValueError("training.per_device_eval_batch_size must be specified in config file or via --per_device_eval_batch_size")
+if gradient_accumulation_steps is None:
+    raise ValueError("training.gradient_accumulation_steps must be specified in config file or via --gradient_accumulation_steps")
+# Require either warmup_steps or warmup_ratio (warmup_ratio is preferred)
+if warmup_steps is None and warmup_ratio is None:
+    raise ValueError("Either training.warmup_steps or training.warmup_ratio must be specified in config file or via CLI args")
+if warmup_steps is not None and warmup_ratio is not None:
+    print("\nWarning: Both warmup_steps and warmup_ratio specified - using warmup_ratio")
+    warmup_steps = None
+if epochs is None:
+    raise ValueError("training.epochs must be specified in config file or via --epochs")
+# max_steps is optional - will be calculated from epochs if not provided
+if learning_rate is None:
+    raise ValueError("training.learning_rate must be specified in config file or via --learning_rate")
+if optim is None:
+    raise ValueError("training.optim must be specified in config file or via --optim")
+if weight_decay is None:
+    raise ValueError("training.weight_decay must be specified in config file or via --weight_decay")
+if lr_scheduler_type is None:
+    raise ValueError("training.lr_scheduler_type must be specified in config file or via --lr_scheduler_type")
+if seed is None:
+    raise ValueError("training.seed must be specified in config file or via --seed")
+if logging_steps is None:
+    raise ValueError("training.logging_steps must be specified in config file or via --logging_steps")
+if evals_per_epoch is None:
+    raise ValueError("training.evals_per_epoch must be specified in config file or via --evals_per_epoch")
+# eval_steps is optional - will be auto-calculated from evals_per_epoch if not provided
 
 # Set LoRA learning rate to 10x base learning rate if not specified
 if lora_lr is None:
     lora_lr = learning_rate * 10
     print(f"Setting LoRA learning rate to 10x base learning rate: {lora_lr}")
 
-optim = get_config_value("training", "optim", args_cli.optim, "adamw_8bit")
-weight_decay = get_config_value("training", "weight_decay", args_cli.weight_decay, 0.01)
-lr_scheduler_type = get_config_value("training", "lr_scheduler_type", args_cli.lr_scheduler_type, "cosine")
-seed = get_config_value("training", "seed", args_cli.seed, 0)
-logging_steps = get_config_value("training", "logging_steps", args_cli.logging_steps, 1)
-eval_steps = get_config_value("training", "eval_steps", args_cli.eval_steps, 10)
+# Calculate steps per epoch (needed for wandb config and eval_steps calculation)
+effective_batch_size = min(per_device_train_batch_size, len(train_dataset))
+if effective_batch_size < per_device_train_batch_size:
+    print(f"\nWarning: Reducing batch size from {per_device_train_batch_size} to {effective_batch_size} to match dataset size ({len(train_dataset)} examples)")
 
-# Wandb configuration
-wandb_project = get_config_value("wandb", "project", args_cli.wandb_project, "acne-sft-training")
-wandb_enabled = get_config_value("wandb", "enabled", args_cli.wandb_enabled, True)
+total_batch_size = effective_batch_size * gradient_accumulation_steps
+steps_per_epoch = len(train_dataset) // total_batch_size
+if len(train_dataset) % total_batch_size != 0:
+    steps_per_epoch += 1  # Add one step for remainder
+
+# Calculate max_steps if not specified (train for specified number of epochs)
+if max_steps is None:
+    max_steps = steps_per_epoch * epochs
+    print(f"\n{'='*80}")
+    print(f"max_steps not specified - auto-calculated for {epochs} epoch(s):")
+    print(f"  Dataset size: {len(train_dataset)}")
+    print(f"  Batch size: {effective_batch_size}")
+    print(f"  Gradient accumulation: {gradient_accumulation_steps}")
+    print(f"  Effective batch size: {total_batch_size}")
+    print(f"  Steps per epoch: {steps_per_epoch}")
+    print(f"  Total steps ({epochs} epochs): {max_steps}")
+    print(f"{'='*80}\n")
+
+# Calculate eval_steps if not specified (evaluate N times per epoch based on evals_per_epoch)
+if eval_steps is None and eval_dataset:
+    eval_steps = max(1, steps_per_epoch // evals_per_epoch)
+    print(f"eval_steps not specified - auto-calculated for {evals_per_epoch} evals per epoch: {eval_steps}")
+    print(f"  (steps_per_epoch: {steps_per_epoch}, eval_steps: {eval_steps})")
+    print()
+
+# Wandb configuration (must be specified in config file)
+wandb_project = get_config_value("wandb", "project", args_cli.wandb_project)
+wandb_enabled = get_config_value("wandb", "enabled", args_cli.wandb_enabled)
+
+# Validate required wandb config
+if wandb_project is None:
+    raise ValueError("wandb.project must be specified in config file or via --wandb_project")
+if wandb_enabled is None:
+    raise ValueError("wandb.enabled must be specified in config file or via --wandb_enabled")
 
 # Initialize wandb after datasets are created
 if wandb_enabled:
+    wandb_config = {
+        "model_name": model_name,
+        "max_seq_length": max_seq_length,
+        "load_in_4bit": load_in_4bit,
+        "per_device_train_batch_size": per_device_train_batch_size,
+        "gradient_accumulation_steps": gradient_accumulation_steps,
+        "epochs": epochs,
+        "max_steps": max_steps,
+        "steps_per_epoch": steps_per_epoch,
+        "evals_per_epoch": evals_per_epoch,
+        "eval_steps": eval_steps,
+        "learning_rate": learning_rate,
+        "optim": optim,
+        "weight_decay": weight_decay,
+        "lr_scheduler_type": lr_scheduler_type,
+        "seed": seed,
+        "train_dataset_size": len(train_dataset),
+        "eval_dataset_size": len(eval_dataset) if eval_dataset else 0,
+        "downsample_train": downsample_train,
+        "downsample_eval": downsample_eval,
+        "num_features": len(datasets_dict),
+    }
+    # Add warmup parameter to config
+    if warmup_ratio is not None:
+        wandb_config["warmup_ratio"] = warmup_ratio
+        wandb_config["warmup_steps_calculated"] = int(warmup_ratio * max_steps)
+    else:
+        wandb_config["warmup_steps"] = warmup_steps
+    
     wandb.init(
         project=wandb_project,
         name=f"sft-7b-{timestamp}",
-        config={
-            "model_name": model_name,
-            "max_seq_length": max_seq_length,
-            "load_in_4bit": load_in_4bit,
-            "per_device_train_batch_size": per_device_train_batch_size,
-            "gradient_accumulation_steps": gradient_accumulation_steps,
-            "warmup_steps": warmup_steps,
-            "max_steps": max_steps,
-            "learning_rate": learning_rate,
-            "optim": optim,
-            "weight_decay": weight_decay,
-            "lr_scheduler_type": lr_scheduler_type,
-            "seed": seed,
-            "train_dataset_size": len(train_dataset),
-            "eval_dataset_size": len(eval_dataset) if eval_dataset else 0,
-            "downsample_train": downsample_train,
-            "downsample_eval": downsample_eval,
-            "num_features": len(datasets_dict),
-        },
+        config=wandb_config,
         dir=str(training_runs_dir),
     )
 
@@ -575,11 +708,6 @@ if eval_dataset:
     print(f"  Eval dataset size: {len(eval_dataset)}" + 
           (f" (downsampled from {len(all_eval_data)})" if downsample_eval is not None and len(eval_dataset) < len(all_eval_data) else ""))
 print("="*80)
-
-# Ensure batch size doesn't exceed dataset size
-effective_batch_size = min(per_device_train_batch_size, len(train_dataset))
-if effective_batch_size < per_device_train_batch_size:
-    print(f"Warning: Reducing batch size from {per_device_train_batch_size} to {effective_batch_size} to match dataset size ({len(train_dataset)} examples)")
 
 # Tokenize dataset - use dynamic padding for memory efficiency
 def tokenize_function(examples):
@@ -608,31 +736,47 @@ data_collator = DataCollatorForLanguageModeling(
     pad_to_multiple_of=8,  # Pad to multiple of 8 for efficiency
 )
 
-# Prepare training arguments
-training_args = TrainingArguments(
-    output_dir=str(training_runs_dir),
-    per_device_train_batch_size=effective_batch_size,
-    per_device_eval_batch_size=per_device_eval_batch_size,
-    gradient_accumulation_steps=gradient_accumulation_steps,
-    warmup_steps=warmup_steps,
-    max_steps=max_steps,
-    learning_rate=learning_rate,
-    fp16=False,
-    bf16=True,
-    logging_steps=logging_steps,
-    optim=optim,
-    weight_decay=weight_decay,
-    lr_scheduler_type=lr_scheduler_type,
-    seed=seed,
-    report_to="wandb" if wandb_enabled else "none",
-    eval_strategy="steps" if eval_dataset else "no",
-    eval_steps=eval_steps if eval_dataset else None,
-    dataloader_drop_last=False,
-    gradient_checkpointing=True,
-    save_steps=100,
-    save_total_limit=2,
-    load_best_model_at_end=False,
-)
+# Prepare training arguments with memory optimizations
+training_args_dict = {
+    "output_dir": str(training_runs_dir),
+    "per_device_train_batch_size": effective_batch_size,
+    "per_device_eval_batch_size": per_device_eval_batch_size,
+    "gradient_accumulation_steps": gradient_accumulation_steps,
+    "max_steps": max_steps,
+    "learning_rate": learning_rate,
+    "fp16": False,
+    "bf16": True,
+    "logging_steps": logging_steps,
+    "optim": optim,
+    "weight_decay": weight_decay,
+    "lr_scheduler_type": lr_scheduler_type,
+    "seed": seed,
+    "report_to": "wandb" if wandb_enabled else "none",
+    "eval_strategy": "steps" if eval_dataset else "no",
+    "eval_steps": eval_steps if eval_dataset else None,
+    "dataloader_drop_last": False,
+    "gradient_checkpointing": True,
+    "gradient_checkpointing_kwargs": {"use_reentrant": False},  # More memory efficient
+    "save_steps": 100,
+    "save_total_limit": 2,
+    "load_best_model_at_end": False,
+    # Memory optimization flags
+    "dataloader_pin_memory": True,  # Pin memory for faster data transfer
+    "dataloader_num_workers": 2,  # Use multiple workers for data loading
+    "max_grad_norm": 1.0,  # Gradient clipping to prevent instability
+    # Training optimizations
+    "tf32": True if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8 else False,  # Use TF32 on Ampere+ GPUs
+}
+
+# Add warmup parameter based on which one is specified (prefer warmup_ratio)
+if warmup_ratio is not None:
+    training_args_dict["warmup_ratio"] = warmup_ratio
+    print(f"Using warmup_ratio: {warmup_ratio} ({int(warmup_ratio * max_steps)} steps out of {max_steps} total)")
+else:
+    training_args_dict["warmup_steps"] = warmup_steps
+    print(f"Using warmup_steps: {warmup_steps} out of {max_steps} total steps")
+
+training_args = TrainingArguments(**training_args_dict)
 
 # Create trainer
 trainer = Trainer(
