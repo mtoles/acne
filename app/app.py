@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pt_features import PtFeaturesMeta
 from models import MrModel
+from utils import OptionType
 
 app = Flask(__name__)
 
@@ -126,6 +127,7 @@ def run_query():
         # Load data
         annot_df = pd.read_excel(chunk_file)
         annot_df = annot_df[annot_df["val_unified"].notna()]
+        annot_df = annot_df[annot_df["val_unified"] != "DROP"]
         
         # Check if there are any labeled examples
         if len(annot_df) == 0:
@@ -221,13 +223,27 @@ def run_query():
             else:
                 incorrect_results.append(result)
         
+        # Convert options to JSON-serializable format
+        if custom_options:
+            serialized_options = custom_options
+        elif hasattr(target_cls, 'options'):
+            options = target_cls.options
+            if isinstance(options, OptionType):
+                serialized_options = options.value
+            elif isinstance(options, enum.Enum):
+                serialized_options = options.value
+            else:
+                serialized_options = options
+        else:
+            serialized_options = []
+        
         return jsonify({
             'summary': {
                 'accuracy': f"{accuracy * 100:.2f}%",
                 'correct': int(correct),
                 'total': int(total),
                 'query': custom_query if custom_query else (target_cls.query(keyword="sample") if hasattr(target_cls, 'query') else ''),
-                'options': custom_options if custom_options else (target_cls.options if hasattr(target_cls, 'options') else [])
+                'options': serialized_options
             },
             'correct': correct_results,
             'incorrect': incorrect_results

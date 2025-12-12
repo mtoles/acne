@@ -177,6 +177,8 @@ def process_file(file_path, inference_type, downsample=None, data_source=None):
         synthetic_count = len(datasets[feature_name]["eval_synthetic"])
         print(f"Using eval set: {len(annot_df)} examples ({natural_count} natural, {synthetic_count} synthetic) out of {total_rows} total examples")
 
+    annot_df = annot_df[annot_df["val_unified"] != "DROP"]
+
     target_cls = PtFeaturesMeta.registry[feature_name]
 
     # Use the annot_df directly as chunk_df since it contains both chunks and ground truth
@@ -217,39 +219,41 @@ def process_file(file_path, inference_type, downsample=None, data_source=None):
     ground_truth = chunk_df["val_unified"]
 
     # Get the main prediction column (usually the first one from the feature class)
-    pred_columns = [
-        col
-        for col in chunk_df.columns
-        if col
-        not in [
-            "Unnamed: 0",
-            "level_0",
-            "EMPI",
-            "EPIC_PMRN",
-            "MRN_Type",
-            "MRN",
-            "Report_Number",
-            "Report_Date_Time",
-            "Report_Description",
-            "Report_Status",
-            "Report_Type",
-            "Report_Text",
-            "found_keywords",
-            "chunk",
-            "Dorsa",
-            "James",
-            "val_unified",
-            "Comments",
-            "preds",
-            "is_synthetic",
-        ]
-    ]
+    pred_columns = ["val_unified"]
+    # pred_columns = [
+    #     col
+    #     for col in chunk_df.columns
+    #     if col
+    #     not in [
+    #         "Unnamed: 0",
+    #         "level_0",
+    #         "EMPI",
+    #         "EPIC_PMRN",
+    #         "MRN_Type",
+    #         "MRN",
+    #         "Report_Number",
+    #         "Report_Date_Time",
+    #         "Report_Description",
+    #         "Report_Status",
+    #         "Report_Type",
+    #         "Report_Text",
+    #         "found_keywords",
+    #         "chunk",
+    #         "Dorsa",
+    #         "James",
+    #         "val_unified",
+    #         "Comments",
+    #         "preds",
+    #         "is_synthetic",
+    #     ]
+    # ]
 
     # Separate natural and synthetic data
     natural_df = chunk_df[chunk_df["is_synthetic"] == False]
     synthetic_df = chunk_df[chunk_df["is_synthetic"] == True]
     
     validation_results = {}
+    incorrect_examples = {}
     for pred_col in pred_columns:
         predictions = chunk_df[pred_col]
         natural_predictions = natural_df[pred_col] if len(natural_df) > 0 else pd.Series(dtype=object)
@@ -289,6 +293,19 @@ def process_file(file_path, inference_type, downsample=None, data_source=None):
                 "total": total_synthetic,
             },
         }
+        
+        # Collect incorrect examples
+        incorrect_mask = predictions != ground_truth
+        incorrect_rows = chunk_df[incorrect_mask]
+        incorrect_examples[pred_col] = [
+            {
+                "gt": row["val_unified"],
+                "pred": row[pred_col],
+                "chunk": row["chunk"] if "chunk" in row else "",
+                "keyword": row["found_keywords"] if "found_keywords" in row else "",
+            }
+            for _, row in incorrect_rows.iterrows()
+        ]
 
     # Generate error analysis markdown file
     generate_error_analysis_md(feature_name, target_cls, chunk_df, ground_truth, pred_columns, feature_dir)
@@ -316,7 +333,8 @@ def process_file(file_path, inference_type, downsample=None, data_source=None):
         "processed_chunks": len(chunk_df),
         "natural_chunks": natural_count,
         "synthetic_chunks": synthetic_count,
-        "validation_results": validation_results
+        "validation_results": validation_results,
+        "incorrect_examples": incorrect_examples
     }
 
 
@@ -418,6 +436,25 @@ def main():
                         val_line_synthetic = f"  {pred_col} (Synthetic): {synthetic['accuracy']:.3f} accuracy ({synthetic['correct']}/{synthetic['total']})"
                         print(val_line_synthetic)
                         f.write(f"\n{val_line_synthetic}")
+            
+            # Print incorrect examples
+            if "incorrect_examples" in results:
+                f.write("\nIncorrect Examples:\n")
+                print("\nIncorrect Examples:")
+                for pred_col, examples in results["incorrect_examples"].items():
+                    if len(examples) > 0:
+                        f.write(f"\n  {pred_col}:\n")
+                        print(f"\n  {pred_col}:")
+                        for i, example in enumerate(examples, 1):
+                            gt = example["gt"]
+                            pred = example["pred"]
+                            incorrect_line = f"    {i}. GT: {gt} | Pred: {pred}"
+                            print(incorrect_line)
+                            f.write(f"{incorrect_line}\n")
+                    else:
+                        f.write(f"\n  {pred_col}: (no incorrect examples)\n")
+                        print(f"  {pred_col}: (no incorrect examples)")
+            
             f.write("\n")
             print()
 
