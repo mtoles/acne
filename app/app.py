@@ -126,6 +126,11 @@ def run_query():
         # Load data
         annot_df = pd.read_excel(chunk_file)
         annot_df = annot_df[annot_df["val_unified"].notna()]
+        
+        # Check if there are any labeled examples
+        if len(annot_df) == 0:
+            return jsonify({'error': f'There are no labeled examples for {feature_name}'}), 400
+        
         annot_df["val_unified"] = annot_df["val_unified"].astype(str)
         
         # Limit to n examples

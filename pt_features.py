@@ -125,7 +125,7 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
         else:
             query = cls.query(chunk=chunk, keyword=keyword, **kwargs)
 
-        if "custom_options" in kwargs:
+        if "custom_options" in kwargs and not isinstance(cls, PtDateFeatureBase):
             options = kwargs["custom_options"]
         else:
             options = cls.options
@@ -1806,37 +1806,44 @@ Ask:
   * **16–45 days** → label **C**
   * **46–135 days** → label **D**
   * **>135 days** → label **E**
-
----
-
-### Final Output
-
-For each patient, record:
-
-* Start date (if known)
-* End date (if known)
-* Days on antibiotic (if calculable)
-* Whether they took the antibiotic (**yes/no**)
-* The final label (**A–G**, as determined above)
-
----
+"""
 
 
-Example query: None
-## Keywords
-['tetracycline', 'doxycycline', 'minocycline', 'adoxa', 'adoxa pak', 'brodspec', 'cleeravue-m', 'declomycin', 'doryx', 'dynacin', 'minocin', 'nuzyra', 'sumycin', 'vibramycin calcium', 'tmp', 'smx', 'tmp/smx', 'tmp-smx', 'trimethoprim sulfamethoxazole', 'bactrim', 'septra', 'smz-tmp', 'sulfatrim', 'co-trimoxazole', 'sxt', 'tmp-sulfa', 'amoxicot', 'amoxil', 'dispermox', 'moxatag', 'moxilin', 'trimox', 'amoxicillin', 'cephalexin', 'bio-cef', 'keflex', 'panixine disperdose', 'azithromycin', 'zithromax', 'zithromax tri-pak', 'z-pak', 'zmax']
-## Number of records with keyword: 100
-## Number of records: 100
-## Number of chunks: 339
 
+
+
+    """
+    ---
+
+    ### Final Output
+
+    For each patient, record:
+
+    * Start date (if known)
+    * End date (if known)
+    * Days on antibiotic (if calculable)
+    * Whether they took the antibiotic (**yes/no**)
+    * The final label (**A–G**, as determined above)
+
+    ---
+
+
+    Example query: None
+    ## Keywords
+    ['tetracycline', 'doxycycline', 'minocycline', 'adoxa', 'adoxa pak', 'brodspec', 'cleeravue-m', 'declomycin', 'doryx', 'dynacin', 'minocin', 'nuzyra', 'sumycin', 'vibramycin calcium', 'tmp', 'smx', 'tmp/smx', 'tmp-smx', 'trimethoprim sulfamethoxazole', 'bactrim', 'septra', 'smz-tmp', 'sulfatrim', 'co-trimoxazole', 'sxt', 'tmp-sulfa', 'amoxicot', 'amoxil', 'dispermox', 'moxatag', 'moxilin', 'trimox', 'amoxicillin', 'cephalexin', 'bio-cef', 'keflex', 'panixine disperdose', 'azithromycin', 'zithromax', 'zithromax tri-pak', 'z-pak', 'zmax']
+    ## Number of records with keyword: 100
+    ## Number of records: 100
+    ## Number of chunks: 339
 
     """
 
     keywords = antibiotics.keywords
     val_var = True
 
+    options = ["A", "B", "C", "D", "E", "F"]
+
     @classmethod
-    def forward(
+    def custom_forward(
         cls, model: MrModel, chunk: str, keyword: str, inference_type="logit", **kwargs
     ):
         keyword = KEYWORD_ADDITIONAL_INFO[keyword] or keyword
