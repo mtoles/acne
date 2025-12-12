@@ -114,6 +114,14 @@
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
         
+        .form-group input:disabled,
+        .form-group textarea:disabled {
+            background-color: #e9ecef;
+            color: #6c757d;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
         .form-group textarea {
             min-height: 120px;
             font-family: inherit;
@@ -500,15 +508,43 @@
         }
         
         // Handle feature selection
-        document.getElementById('feature').addEventListener('change', function() {
+        document.getElementById('feature').addEventListener('change', async function() {
             const featureName = this.value;
             const feature = features.find(f => f.name === featureName);
+            const optionsField = document.getElementById('options');
             
             if (feature) {
                 document.getElementById('query').value = feature.query;
-                if (Array.isArray(feature.options)) {
-                    document.getElementById('options').value = feature.options.join(', ');
+                
+                // Check if it's a date feature
+                if (feature.options === "date") {
+                    optionsField.value = "";
+                    optionsField.disabled = true;
+                } else {
+                    optionsField.disabled = false;
+                    if (Array.isArray(feature.options)) {
+                        optionsField.value = feature.options.join(', ');
+                    } else {
+                        optionsField.value = "";
+                    }
                 }
+                
+                // Update number of examples to match train dataset size
+                try {
+                    const response = await fetch(`/api/dataset_size?feature=${encodeURIComponent(featureName)}`);
+                    const data = await response.json();
+                    if (response.ok && data.size !== undefined) {
+                        document.getElementById('n').value = data.size;
+                        document.getElementById('n').max = data.size;
+                    }
+                } catch (error) {
+                    console.error('Error fetching dataset size:', error);
+                }
+            } else {
+                // No feature selected - clear fields and enable options
+                document.getElementById('query').value = "";
+                optionsField.value = "";
+                optionsField.disabled = false;
             }
         });
         

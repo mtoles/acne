@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pt_features import PtFeaturesMeta
 from models import MrModel
-from utils import OptionType
+from utils import OptionType, get_dataset
 
 app = Flask(__name__)
 
@@ -87,6 +87,39 @@ def check_server():
     is_running = check_vllm_server()
     return jsonify({'running': is_running, 'model_id': MODEL_ID})
 
+@app.route('/api/dataset_size', methods=['GET'])
+def get_dataset_size():
+    """Get the size of the train dataset for a given feature"""
+    feature_name = request.args.get('feature')
+    
+    if not feature_name:
+        return jsonify({'error': 'Feature name is required'}), 400
+    
+    try:
+        # Load labeled data using utils.get_dataset (includes both natural and synthetic)
+        datasets = get_dataset(
+            data_source="mgb",
+            feature_names=[feature_name],
+            train_split=0.5,
+            random_state=42
+        )
+        
+        if feature_name not in datasets:
+            return jsonify({'error': f'Labeled data not found for {feature_name}'}), 404
+        
+        # Get the train dataset and filter out DROP values
+        train_df = datasets[feature_name]["train"].copy()
+        train_df = train_df[train_df["val_unified"] != "DROP"]
+        
+        return jsonify({'size': len(train_df)})
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
 @app.route('/api/run', methods=['POST'])
 def run_query():
     """Run the comparison query"""
@@ -117,23 +150,26 @@ def run_query():
         # Initialize model
         model = MrModel(model_id=MODEL_ID)
         
-        # Load labeled data
-        labeled_data_dir = Path(__file__).parent.parent / "labeled_data" / "mgb" / feature_name
-        chunk_file = labeled_data_dir / f"{feature_name}_chunks.xlsx"
+        # Load labeled data using utils.get_dataset (includes both natural and synthetic)
+        datasets = get_dataset(
+            data_source="mgb",
+            feature_names=[feature_name],
+            train_split=0.5,
+            random_state=42
+        )
         
-        if not chunk_file.exists():
+        if feature_name not in datasets:
             return jsonify({'error': f'Labeled data not found for {feature_name}'}), 404
         
-        # Load data
-        annot_df = pd.read_excel(chunk_file)
-        annot_df = annot_df[annot_df["val_unified"].notna()]
+        # Get the combined dataset (includes both natural and synthetic)
+        annot_df = datasets[feature_name]["train"].copy()
+        
+        # Filter out DROP values
         annot_df = annot_df[annot_df["val_unified"] != "DROP"]
         
         # Check if there are any labeled examples
         if len(annot_df) == 0:
             return jsonify({'error': f'There are no labeled examples for {feature_name}'}), 400
-        
-        annot_df["val_unified"] = annot_df["val_unified"].astype(str)
         
         # Limit to n examples
         if len(annot_df) > n:
@@ -156,7 +192,7 @@ def run_query():
                 keyword=found_kw, 
                 inference_type="cot",
                 **kwargs
-            )
+            ) 
             return idx, pred_dict
         
         # Prepare arguments - use actual DataFrame index to avoid alignment issues
