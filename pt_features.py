@@ -316,7 +316,7 @@ class transplant_date(PtDateFeatureBase):
         + [f"status post {x} transplant" for x in INCLUDED_TRANSPLANTS]
         + [f"s/p {x} transplant" for x in INCLUDED_TRANSPLANTS]
     )
-    val_var = True
+    val_var = False
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
 
 
@@ -775,7 +775,7 @@ class cancer_date_free(PtDateFeatureBase):
         "in remission",
         "no evidence of disease",
     ]
-    val_var = True
+    val_var = False
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
 
 
@@ -1946,7 +1946,6 @@ Ask:
         if "F" in preds:
             return "F"
         return "G"
-
 
 class antibiotic_tetracyclines(PtFeatureBase):
     pass

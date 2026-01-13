@@ -166,17 +166,7 @@ class MrModel:
             clean_prompt = f"{original_prompt}\n\n### Thoughts: {cot_response}\n\n{target_type_subprompt_map[target_type]}"
             clean_history = [{"role": "user", "content": clean_prompt}]
             clean_response = self.predict_single(history=clean_history, max_tokens=max_answer_tokens, options=options, sample=sample)
-            # if answer_response in options:
-            #     return answer_response
 
-            # try:
-            #     clean_response = re.search(r'`(.*?)`', answer_response).group(1)
-            # except AttributeError:
-            #     attempts += 1
-            #     if attempts >= 3:
-            #         # return the answer closest to the options
-            #         closest_option = min(options, key=lambda x: distance(x, answer_response))
-            #         return closest_option
         return clean_response
 
 class DummyModel:

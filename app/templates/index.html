@@ -659,11 +659,26 @@
             // Escape HTML first
             const escapedText = escapeHtml(text);
             
-            // Create a case-insensitive regex to find all occurrences
-            const regex = new RegExp(`(${escapeRegex(keyword)})`, 'gi');
+            // Handle keyword - could be array or string
+            let keywordStr = keyword;
+            if (Array.isArray(keyword)) {
+                keywordStr = keyword[0] || '';
+            } else {
+                keywordStr = String(keyword);
+            }
             
-            // Replace with highlighted version
-            return escapedText.replace(regex, '<span class="keyword-highlight">$1</span>');
+            if (!keywordStr) return escapedText;
+            
+            // Create a case-insensitive regex to find all occurrences
+            try {
+                const regex = new RegExp(`(${escapeRegex(keywordStr)})`, 'gi');
+                // Replace with highlighted version
+                return escapedText.replace(regex, '<span class="keyword-highlight">$1</span>');
+            } catch (e) {
+                // If regex fails, just return the escaped text without highlighting
+                console.error('Regex error with keyword:', keywordStr, e);
+                return escapedText;
+            }
         }
         
         function escapeRegex(string) {

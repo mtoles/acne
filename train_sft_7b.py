@@ -29,6 +29,7 @@ from transformers import (
     DataCollatorForLanguageModeling,
     BitsAndBytesConfig,
     TrainerCallback,
+    TrainerState,
 )
 from peft import (
     LoraConfig,
@@ -41,7 +42,7 @@ from pt_features import PtFeaturesMeta
 import pandas as pd
 import wandb
 import yaml
-
+from pt_features import PtDateFeatureBase, PtFeatureBase
 # Single GPU mode only - check for distributed mode and warn
 if "LOCAL_RANK" in os.environ:
     raise RuntimeError("This script is for single GPU training only. Do not use torchrun.")
@@ -300,7 +301,11 @@ for feature_name, feature_data in datasets_dict.items():
                 keyword = str(found_keywords) if pd.notna(found_keywords) else ""
             
             # Generate instruction using feature's query method
-            instruction = target_cls.query(chunk=chunk, keyword=keyword)
+            if issubclass(target_cls, PtDateFeatureBase):
+                format_instruction = "Respond ONLY with a single letter or with the date in the format of YYYYMMDD, nothing else."
+            else:
+                format_instruction = "Respond ONLY with a single letter, nothing else."
+            instruction = target_cls.query(chunk=chunk, keyword=keyword) + " " + format_instruction
             
             # Format the input - use chunk as input
             input_text = str(chunk) if pd.notna(chunk) else ""
@@ -787,6 +792,30 @@ trainer = Trainer(
     data_collator=data_collator,
     callbacks=[eval_callback] if eval_callback is not None else None,
 )
+
+# ============================================================================
+# PRE-TRAINING EVALUATION (comment out this block to skip)
+# ============================================================================
+if eval_callback is not None:
+    print("\n" + "="*80)
+    print("Running PRE-TRAINING evaluation...")
+    print("="*80)
+    # Create a dummy state object for the callback
+    dummy_state = TrainerState()
+    dummy_state.global_step = 0
+    # Run the evaluation callback manually
+    eval_callback.on_evaluate(
+        args=training_args,
+        state=dummy_state,
+        control=None,
+        model=model,
+    )
+    print("="*80)
+    print("Pre-training evaluation complete!")
+    print("="*80 + "\n")
+# ============================================================================
+# END PRE-TRAINING EVALUATION
+# ============================================================================
 
 # Train
 trainer_stats = trainer.train()

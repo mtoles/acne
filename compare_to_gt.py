@@ -220,33 +220,7 @@ def process_file(file_path, inference_type, downsample=None, data_source=None):
 
     # Get the main prediction column (usually the first one from the feature class)
     pred_columns = ["val_unified"]
-    # pred_columns = [
-    #     col
-    #     for col in chunk_df.columns
-    #     if col
-    #     not in [
-    #         "Unnamed: 0",
-    #         "level_0",
-    #         "EMPI",
-    #         "EPIC_PMRN",
-    #         "MRN_Type",
-    #         "MRN",
-    #         "Report_Number",
-    #         "Report_Date_Time",
-    #         "Report_Description",
-    #         "Report_Status",
-    #         "Report_Type",
-    #         "Report_Text",
-    #         "found_keywords",
-    #         "chunk",
-    #         "Dorsa",
-    #         "James",
-    #         "val_unified",
-    #         "Comments",
-    #         "preds",
-    #         "is_synthetic",
-    #     ]
-    # ]
+
 
     # Separate natural and synthetic data
     natural_df = chunk_df[chunk_df["is_synthetic"] == False]
@@ -392,6 +366,8 @@ def main():
 
     for file_path in excel_files:
         print(f"\nProcessing {file_path.name}...")
+        if "cancer_date_frequency" in file_path.name:
+            continue
         results = process_file(file_path, inference_type, downsample, data_source=args.data_source)
         all_results[file_path.stem.replace("_chunks", "")] = results
 
