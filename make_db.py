@@ -9,7 +9,7 @@ from pt_features import PtFeaturesMeta, PtFeatureBase
 
 # data_dir = "rpdr_dumps/rpdr_latest/8"
 notes_dir = "rpdr_dumps/rpdr_notes/"
-structured_dir = "rpdr_dumps/rpdr_structured/"
+structured_dir = "rpdr_dumps/rpdr_structured_old/"
 store_dir = "stores/file_stores"
 db_url = "sqlite:///stores/rpdr.db"  # Using SQLite for simplicity, can be changed to other databases
 acceptable_suffixes = [
@@ -18,7 +18,7 @@ acceptable_suffixes = [
     # "Dia",  # diagnosis
     # "Enc",  # encounter
     # "Med",  # medications
-    # "Phy",  # ?
+    "Phy",  # ?
     # "Prc",  # procedure?
     # "Rdt",  # radiology
     # "Rfv",  # refill
@@ -33,7 +33,7 @@ acceptable_suffixes = [
     # "Prg",  # progress
     # "Pul",  # pulmonary
     # "Rad",  # radiology
-    "Vis",  # visit
+    # "Vis",  # visit
 ]
 
 
@@ -105,37 +105,38 @@ def parse_pipe_delimited_files(
 
 if __name__ == "__main__":
 
-    # # for root, dirs, files in os.walk(data_dir):
-    # files = list_all_files(notes_dir) + list_all_files(structured_dir)
-    # suffix_paths = []
-    # for suffix in [
-    #     "Vis",
-    #     "Dem",
-    #     "Dia",
-    #     "Med"
-    # ]:
-    #     for file in files:
-    #         if file.endswith(suffix + ".txt"):
-    #             # if file.endswith("1_" + suffix + ".txt"):
-    #             suffix_paths.append(file)
-    #     df = parse_pipe_delimited_files(
-    #         suffix_paths,
-    #         suffix=suffix,
-    #     )
-    #     # Create SQL engine and write to database
-    #     engine = create_engine(db_url)
-    #     table_name = f"{suffix.lower()}"
+    # for root, dirs, files in os.walk(data_dir):
+    files = list_all_files(notes_dir) + list_all_files(structured_dir)
+    suffix_paths = []
+    for suffix in [
+        # "Vis",
+        # "Dem",
+        # "Dia",
+        # "Med"
+        "Phy",
+    ]:
+        for file in files:
+            if file.endswith(suffix + ".txt"):
+                # if file.endswith("1_" + suffix + ".txt"):
+                suffix_paths.append(file)
+        df = parse_pipe_delimited_files(
+            suffix_paths,
+            suffix=suffix,
+        )
+        # Create SQL engine and write to database
+        engine = create_engine(db_url)
+        table_name = f"{suffix.lower()}"
         
-    #     # Write to database in chunks to handle large datasets
-    #     chunksize = 10000
-    #     for i in tqdm(range(0, len(df), chunksize)):
-    #         df_chunk = df.iloc[i:i + chunksize]
-    #         df_chunk.to_sql(
-    #             name=table_name,
-    #             con=engine,
-    #             if_exists='append' if i > 0 else 'replace',
-    #             index=True
-    #         )
+        # Write to database in chunks to handle large datasets
+        chunksize = 10000
+        for i in tqdm(range(0, len(df), chunksize)):
+            df_chunk = df.iloc[i:i + chunksize]
+            df_chunk.to_sql(
+                name=table_name,
+                con=engine,
+                if_exists='append' if i > 0 else 'replace',
+                index=True
+            )
 
     ### Create a table containing key MRs corresponding to key dates ###
 
