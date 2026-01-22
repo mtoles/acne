@@ -32,6 +32,7 @@ from transformers import (
 )
 from peft import (
     LoraConfig,
+    PeftModel,
     get_peft_model,
     prepare_model_for_kbit_training,
 )
@@ -147,6 +148,7 @@ def build_arg_parser():
         help="LoRA learning rate (defaults to 10x learning_rate)",
     )
     parser.add_argument("--lora_bias", type=str, default=None, help="LoRA bias")
+    parser.add_argument("--pretrained_lora", type=str, default=None, help="Path to pretrained LoRA adapter to load")
     parser.add_argument("--random_state", type=int, default=None, help="Random state")
     # Training args
     parser.add_argument(
@@ -1071,8 +1073,20 @@ def main():
     bnb_config = build_bnb_config(model_config["load_in_4bit"])
     model = load_model(model_config["model_name"], bnb_config)
 
-    lora_cfg = build_lora_config(lora_config)
-    model = add_lora_adapters(model, lora_cfg)
+    if args_cli.pretrained_lora:
+        print(f"Loading pretrained LoRA adapter from: {args_cli.pretrained_lora}")
+        model = PeftModel.from_pretrained(
+            model, 
+            args_cli.pretrained_lora + "/lora_model",
+            is_trainable=True
+        )
+        model.train()
+        model.print_trainable_parameters()
+        print("\nMemory usage after loading pretrained LoRA:")
+        print_gpu_memory()
+    else:
+        lora_cfg = build_lora_config(lora_config)
+        model = add_lora_adapters(model, lora_cfg)
 
     datasets_dict = load_feature_datasets(dataset_config)
     all_train_data, all_eval_data = build_examples_from_datasets(datasets_dict)

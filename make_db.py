@@ -9,32 +9,32 @@ from pt_features import PtFeaturesMeta, PtFeatureBase
 
 # data_dir = "rpdr_dumps/rpdr_latest/8"
 notes_dir = "rpdr_dumps/rpdr_notes/"
-structured_dir = "rpdr_dumps/rpdr_structured_old/"
+structured_dir = "rpdr_dumps/rpdr_structured/"
 store_dir = "stores/file_stores"
 db_url = "sqlite:///stores/rpdr.db"  # Using SQLite for simplicity, can be changed to other databases
-acceptable_suffixes = [
-    # "All",  # allergy
-    # "Dem",  # demographics
-    # "Dia",  # diagnosis
-    # "Enc",  # encounter
-    # "Med",  # medications
-    "Phy",  # ?
-    # "Prc",  # procedure?
-    # "Rdt",  # radiology
-    # "Rfv",  # refill
-    # "Dis",  # disease
-    # "End",  # endocrinology
-    # "Hnp",  # history and physical
-    # "Lno",  # letters
-    # "Mic",  # micribiology
-    # "Mrn",  # medical record number
-    # "Opn",  # operation
-    # "Pat",  # patient
-    # "Prg",  # progress
-    # "Pul",  # pulmonary
-    # "Rad",  # radiology
-    # "Vis",  # visit
-]
+# acceptable_suffixes = [
+#     # "All",  # allergy
+#     # "Dem",  # demographics
+#     # "Dia",  # diagnosis
+#     # "Enc",  # encounter
+#     # "Med",  # medications
+#     "Phy",  # ?
+#     # "Prc",  # procedure?
+#     # "Rdt",  # radiology
+#     # "Rfv",  # refill
+#     # "Dis",  # disease
+#     # "End",  # endocrinology
+#     # "Hnp",  # history and physical
+#     # "Lno",  # letters
+#     # "Mic",  # micribiology
+#     # "Mrn",  # medical record number
+#     # "Opn",  # operation
+#     # "Pat",  # patient
+#     # "Prg",  # progress
+#     # "Pul",  # pulmonary
+#     # "Rad",  # radiology
+#     # "Vis",  # visit
+# ]
 
 
 
@@ -110,9 +110,9 @@ if __name__ == "__main__":
     suffix_paths = []
     for suffix in [
         # "Vis",
-        # "Dem",
-        # "Dia",
-        # "Med"
+        "Dem",
+        "Dia",
+        "Med"
         "Phy",
     ]:
         for file in files:
