@@ -214,6 +214,13 @@ def build_arg_parser():
         default=None,
         help="Enable wandb",
     )
+    # Experiment args
+    parser.add_argument(
+        "--experiment_name",
+        type=str,
+        default="default",
+        help="Experiment name (creates subdirectory in training_runs)",
+    )
     return parser
 
 
@@ -559,20 +566,39 @@ def build_examples_from_datasets(datasets_dict):
     return all_train_data, all_eval_data
 
 
-def summarize_dataset(all_train_data, all_eval_data, datasets_dict, downsample_train, downsample_eval):
-    """Print dataset summary."""
-    print("\n" + "=" * 80)
-    print("Dataset Summary (before downsampling):")
-    print(f"  Total train examples: {len(all_train_data)} (from {len(datasets_dict)} features)")
-    print(f"  Total eval examples: {len(all_eval_data)} (from {len(datasets_dict)} features)")
-    print("  Training ONE model on ALL features combined")
+def summarize_dataset(all_train_data, all_eval_data, datasets_dict, downsample_train, downsample_eval, data_source=None, epochs=None, output_dir=None):
+    """Save dataset summary to markdown file in the training runs directory."""
+    summary_lines = []
+    summary_lines.append("# Dataset Summary")
+    summary_lines.append("")
+    if data_source:
+        summary_lines.append(f"- **Dataset**: {data_source}")
+    if epochs is not None:
+        summary_lines.append(f"- **Epochs**: {epochs}")
+    summary_lines.append("")
+    summary_lines.append("## Dataset Statistics (before downsampling)")
+    summary_lines.append("")
+    summary_lines.append(f"- **Total train examples**: {len(all_train_data)} (from {len(datasets_dict)} features)")
+    summary_lines.append(f"- **Total eval examples**: {len(all_eval_data)} (from {len(datasets_dict)} features)")
+    summary_lines.append("- **Training strategy**: Training ONE model on ALL features combined")
+    
     if downsample_train is not None or downsample_eval is not None:
-        print("\nDownsampling settings:")
+        summary_lines.append("")
+        summary_lines.append("## Downsampling Settings")
+        summary_lines.append("")
         if downsample_train is not None:
-            print(f"  Train: {downsample_train} examples")
+            summary_lines.append(f"- **Train**: {downsample_train} examples")
         if downsample_eval is not None:
-            print(f"  Eval: {downsample_eval} examples")
-    print("=" * 80)
+            summary_lines.append(f"- **Eval**: {downsample_eval} examples")
+    
+    summary_text = "\n".join(summary_lines)
+    
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary_file = output_dir / "dataset_summary.md"
+        with open(summary_file, "w") as f:
+            f.write(summary_text)
+        print(f"\nDataset summary saved to: {summary_file}")
 
 
 def downsample_dataset(dataset, limit, label):
@@ -1091,12 +1117,24 @@ def main():
     datasets_dict = load_feature_datasets(dataset_config)
     all_train_data, all_eval_data = build_examples_from_datasets(datasets_dict)
 
+    # Create training run directory early so we can save dataset summary
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    experiment_name = args_cli.experiment_name if args_cli.experiment_name else "default"
+    training_runs_dir = Path("training_runs") / experiment_name / timestamp
+    training_runs_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\nTraining run directory: {training_runs_dir}")
+    if experiment_name != "default":
+        print(f"Experiment name: {experiment_name}")
+
     summarize_dataset(
         all_train_data,
         all_eval_data,
         datasets_dict,
         dataset_config["downsample_train"],
         dataset_config["downsample_eval"],
+        data_source=dataset_config["data_source"],
+        epochs=training_config["epochs"],
+        output_dir=training_runs_dir,
     )
 
     train_dataset = Dataset.from_list(all_train_data)
@@ -1111,11 +1149,6 @@ def main():
         )
 
     train_dataset, eval_dataset = format_datasets(train_dataset, eval_dataset, tokenizer)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    training_runs_dir = Path("training_runs") / timestamp
-    training_runs_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\nTraining run directory: {training_runs_dir}")
 
     eval_callback = build_eval_callback(
         all_eval_data,
