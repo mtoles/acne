@@ -480,95 +480,79 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--n_workers', type=int, default=1, help='Number of worker threads (default: 1)')
 parser.add_argument('--limit', type=int, default=None, help='Max number of patients to process (default: None, process all)')
 parser.add_argument('--dummy-llm', action='store_true', help='Use dummy LLM (sample from prevalence / random dates)')
-parser.add_argument('--cohort-type', type=str, default='matched',
-                    choices=['all', 'matched', 'case', 'control', 'matched_case', 'matched_control'],
-                    help='Which cohort to use: all (all_empis), matched (matched pairs only), case (case_empis), control (control_empis), matched_case, matched_control (default: matched)')
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
 
 start_time = datetime.now()
 print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# Load EMPIs from cohort JSON
+# Load EMPIs from cohort JSON (matched cases only)
 cohort_json_path = Path("cohort/empis.json")
-print(f"Loading EMPIs from {cohort_json_path}")
+print(f"Loading matched case EMPIs from {cohort_json_path}")
 with open(cohort_json_path, 'r') as f:
     cohort_data = json.load(f)
 
-# Select which EMPIs to use based on cohort_type
-if args.cohort_type == 'all':
-    pt_ids = cohort_data['all_empis']
-elif args.cohort_type == 'matched':
-    # Use both matched cases and controls (all matched pairs)
-    pt_ids = cohort_data['matched_case_empis'] + cohort_data['matched_control_empis']
-elif args.cohort_type == 'case':
-    pt_ids = cohort_data['case_empis']
-elif args.cohort_type == 'control':
-    pt_ids = cohort_data['control_empis']
-elif args.cohort_type == 'matched_case':
-    pt_ids = cohort_data['matched_case_empis']
-elif args.cohort_type == 'matched_control':
-    pt_ids = cohort_data['matched_control_empis']
+# Use only matched cases
+pt_ids = cohort_data['matched_case_empis']
 
 # Apply limit if specified
 if args.limit is not None:
     pt_ids = pt_ids[:args.limit]
 
-print(f"Processing {len(pt_ids)} patients from cohort type: {args.cohort_type}")
-    
-    pt_dfs = []
-    index_dates = []
-    
-    if args.n_workers > 1:
-        with ThreadPoolExecutor(max_workers=args.n_workers) as executor:
-            futures = {executor.submit(process_pt, pt_id): pt_id for pt_id in pt_ids}
-            for future in tqdm(as_completed(futures), total=len(pt_ids)):
-                pt_df = future.result()
-                if pt_df is not None:
-                    pt_dfs.append(pt_df)
-    else:
-        for pt_id in tqdm(pt_ids):
-            pt_df = process_pt(pt_id)
+print(f"Processing {len(pt_ids)} matched case patients")
+
+pt_dfs = []
+index_dates = []
+
+if args.n_workers > 1:
+    with ThreadPoolExecutor(max_workers=args.n_workers) as executor:
+        futures = {executor.submit(process_pt, pt_id): pt_id for pt_id in pt_ids}
+        for future in tqdm(as_completed(futures), total=len(pt_ids)):
+            pt_df = future.result()
             if pt_df is not None:
                 pt_dfs.append(pt_df)
-    print
+else:
+    for pt_id in tqdm(pt_ids):
+        pt_df = process_pt(pt_id)
+        if pt_df is not None:
+            pt_dfs.append(pt_df)
+print()
 
-    
-    pt_df = pd.concat(pt_dfs)
-    
-    # Create output directory with timestamp
-    timestamp_str = start_time.strftime('%Y%m%d_%H%M%S')
-    output_dir = Path(f"full_inference_out/{timestamp_str}")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save DataFrame as JSONL
-    if len(pt_df) > 0:
-        jsonl_path = output_dir / "results.jsonl"
-        with open(jsonl_path, 'w') as f:
-            for _, row in pt_df.iterrows():
-                json.dump(row.to_dict(), f)
-                f.write('\n')
-        print(f"\nSaved results to {jsonl_path}")
-    
-    # Plot histogram of feature frequencies
-    if len(pt_df) > 0:
-        feature_counts = pt_df["feature_name"].value_counts().sort_index()
-        
-        plt.figure(figsize=(12, 6))
-        plt.bar(range(len(feature_counts)), feature_counts.values)
-        plt.xticks(range(len(feature_counts)), feature_counts.index, rotation=45, ha='right')
-        plt.xlabel("Feature Name")
-        plt.ylabel("Frequency")
-        plt.title("Frequency of Each Feature")
-        plt.tight_layout()
-        histogram_path = output_dir / "feature_frequency_histogram.png"
-        plt.savefig(histogram_path, dpi=150, bbox_inches='tight')
-        print(f"Saved histogram to {histogram_path}")
-        print(f"\nFeature frequencies:")
-        for feature, count in feature_counts.items():
-            print(f"  {feature}: {count}")
-    else:
-        print("No data to plot")
+pt_df = pd.concat(pt_dfs)
+
+# Create output directory with timestamp
+timestamp_str = start_time.strftime('%Y%m%d_%H%M%S')
+output_dir = Path(f"full_inference_out/{timestamp_str}")
+output_dir.mkdir(parents=True, exist_ok=True)
+
+# Save DataFrame as JSONL
+if len(pt_df) > 0:
+    jsonl_path = output_dir / "results.jsonl"
+    with open(jsonl_path, 'w') as f:
+        for _, row in pt_df.iterrows():
+            json.dump(row.to_dict(), f)
+            f.write('\n')
+    print(f"\nSaved results to {jsonl_path}")
+
+# Plot histogram of feature frequencies
+if len(pt_df) > 0:
+    feature_counts = pt_df["feature_name"].value_counts().sort_index()
+
+    plt.figure(figsize=(12, 6))
+    plt.bar(range(len(feature_counts)), feature_counts.values)
+    plt.xticks(range(len(feature_counts)), feature_counts.index, rotation=45, ha='right')
+    plt.xlabel("Feature Name")
+    plt.ylabel("Frequency")
+    plt.title("Frequency of Each Feature")
+    plt.tight_layout()
+    histogram_path = output_dir / "feature_frequency_histogram.png"
+    plt.savefig(histogram_path, dpi=150, bbox_inches='tight')
+    print(f"Saved histogram to {histogram_path}")
+    print(f"\nFeature frequencies:")
+    for feature, count in feature_counts.items():
+        print(f"  {feature}: {count}")
+else:
+    print("No data to plot")
 
 end_time = datetime.now()
 total_time = end_time - start_time
@@ -581,7 +565,6 @@ with open(runtime_info_path, 'w') as f:
     f.write(f"- **End time**: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
     f.write(f"- **Total time**: {total_time}\n")
     f.write(f"- **Number of workers**: {args.n_workers}\n")
-    f.write(f"- **Cohort type**: {args.cohort_type}\n")
     f.write(f"- **Patient limit**: {args.limit if args.limit is not None else 'None (all)'}\n")
     f.write(f"- **Dummy LLM**: {args.dummy_llm}\n")
     f.write(f"- **Number of patients processed**: {len(pt_ids)}\n")
