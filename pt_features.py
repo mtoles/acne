@@ -296,7 +296,6 @@ class smoking_status(PtFeatureBase):
         """Return the query for smoking status."""
         prompt = find_best_prompt_from_prompt_iteration_labels("smoking_status", **kwargs)
         return prompt
-        return "What is the smoking status of this patient? If it just says 'smoker: no', consider it as 'never smoked'. Options are: A. Never smoked, B. Former smoker, C. Current smoker, D. Unknown"
 
     options = ["A", "B", "C", "D"]
     keywords = ["smokes", "smoker", "smoking", "tobacco"]
@@ -315,7 +314,6 @@ class smoking_amount(PtFeatureBase):
         """Return the query for smoking amount."""
         prompt = find_best_prompt_from_prompt_iteration_labels("smoking_amount", **kwargs)
         return prompt
-        return "How many packs per week does this patient smoke? If a range is given, take the upper bound. Ignore results from questionaires. Round all values up to the nearest integer (i.e. 0.1 -> 1). Do not attempt to infer the number of packs from questionnaire scores (e.g. TAPS, AUDIT-C). Options are: A. 0 (does not smoke), B. 1-2, C. 3-5, D. 6+, E. Smoker but unknown quantity, F. No indication of smoking status"
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = smoking_status.keywords
@@ -342,29 +340,7 @@ class alcohol_status(PtFeatureBase):
         """Return the query for alcohol status."""
         prompt = find_best_prompt_from_prompt_iteration_labels("alcohol_status", **kwargs)
         return prompt
-        return """"What is the alcohol status of this patient?
-(Note: ETOH is the abbreviation for ethanol/drinking/alcohol use. The names of specific alcoholic beverages like beer, wine, champagne, vodka may also be used as abbreviations for ethanol/drinking/alcohol use.)
-
-If the patient abuses alcohol, has EtOH abuse, chronic alcohol use, EtOH use written in the present tense (e.g., “male with EtOH abuse”), has a positive serum or blood alcohol, or is experiencing alcohol withdrawal, return A.
-
-If no information is given, return C.
-
-DO NOT use questionnaire scores (e.g. AUDIT-C, TAPS, PROMs Alcohol Use Screening Score) to determine alcohol status. Treat any alcohol-related questions and answers that appear under sections labeled PROMs, PROMIS, Patient-Reported Outcomes, or Alcohol Use Screening (for example, “How often do you have a drink containing alcohol?” or “How many drinks containing alcohol do you have on a typical day when you are drinking?”) as questionnaire data and ignore them. If the only information about alcohol use comes from questionnaire scores or questionnaire questions/answers, output C.
-
-If it says that “alcohol use as of [date]” is “Not Currently” or “No” but there is also mention of a non-zero amount of alcohol consumption (e.g., 2 drinks per week, 1 per month, socially, rarely, sometimes, on special occasions, etc.), then the patient DOES drink alcohol and the answer should be A.
-
-If both “yes” and “0 drinks” are written next to alcohol use in the note, assume that the patient drinks alcohol because it says “yes”, despite the note of 0 drinks.
-
-A negative serum alcohol result does NOT mean the patient does not drink alcohol and should not be used to assign non-drinking status.
-
-If alcohol use (e.g., alcohol abuse, EtOH use) is mentioned only as past medical history or history of, and there is no indication of current use, return C.
-
-Only answer B if ALL information in the note indicates that the patient does NOT drink alcohol.
-
-Options are:
-A. Currently Drinks
-B. Does not currently drink
-C. No indication of alcohol status"""
+        
 
     options = ["A", "B", "C"]
     keywords = ["alcohol", "drinks", "etoh"]
@@ -385,26 +361,7 @@ class alcohol_amount(PtFeatureBase):
         """Return the query for alcohol amount."""
         prompt = find_best_prompt_from_prompt_iteration_labels("alcohol_amount", **kwargs)
         return prompt
-        return """How many drinks per week does this patient drink?
-
-Round all values up to the nearest integer (e.g., 0.1 → 1). If a range is given, use the largest value. Use only explicitly stated numbers (e.g., “1” or “one”). Do not guess from qualitative terms such as “rare,” “occasional,” “social,” or “sometimes.”
-
-Options are:
-A. 0 (sober or does not drink)
-B. 1–2
-C. 3–5
-D. 6+
-E. Drinker but unknown quantity
-F. No indication of alcohol status
-
-Questionnaire exclusion (CRITICAL): Do NOT use any alcohol questionnaire content to determine drinking status or drinks/week. This includes AUDIT-C, AUDIT, SBAQ/S2BI, TAPS, PROMs, PROMIS, Patient-Reported Outcomes, Alcohol Use Screening, Screening Score, or any similar standardized screening tool. Treat the following as questionnaire data and ignore it entirely: (1) questionnaire scores, AND (2) questionnaire questions and answers (e.g., “How often do you have a drink containing alcohol?”, “How many drinks on a typical day?”, “How often six or more drinks?”), even if they contain numbers like “2–4 times a month” or “1 or 2.” If the only alcohol-related information in the note comes from questionnaire sections or questionnaire Q/A, output F.
-
-“Avoid alcohol” does not indicate alcohol status. Do not use alcohol volume (oz, mL, grams) to infer drinks/week.
-
-How to identify usable alcohol information: Use narrative, clinician-documented, or social history statements outside questionnaires. Recognize alcohol synonyms such as {keyword}, alcohol, etoh, ETOH, ethanol, drinks, beer, wine, liquor, spirits. If the provided {keyword} term (e.g., “etoh”) is not associated with a numeric drinks-per-week quantity, but another alcohol synonym in the note (e.g., “alcohol”) is associated with a numeric drinks-per-week quantity, use that numeric value.
-
-Selecting the number: If multiple numeric drinking quantities are documented (e.g., “2 drinks/week” and “3 glasses of wine/week”), use the highest numeric drinks-per-week value. If the note indicates the patient drinks alcohol but provides no numeric drinks-per-week quantity, output E. If the note explicitly states the patient does not drink / never drinks / sober, output A. If there is no information about alcohol use after excluding questionnaire content, output F. If the note indicates alcohol use but the only numeric value shown is 0, output E unless another non-zero number is explicitly provided elsewhere outside questionnaires.
-        """
+        
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
@@ -435,7 +392,6 @@ class transplant(PtFeatureBase):
         """Return the query for transplant status."""
         prompt = find_best_prompt_from_prompt_iteration_labels("transplant", **kwargs)
         return prompt
-        return f"Does this medical record indicate that the patient received a transplant, solid organ transplant, stem cell transplant, or bone marrow transplant? Do not include transplant types: {', '.join(EXCLUDED_TRANSPLANTS)}. Options are: A. Yes, B. No"
 
     options = ["A", "B"]
     keywords = [
@@ -456,7 +412,6 @@ class transplant_date(PtDateFeatureBase):
         """Return the query for transplant date."""
         prompt = find_best_prompt_from_prompt_iteration_labels("transplant_date", **kwargs)
         return prompt
-        return f"What was the date of the patient's earliest organ transplant? Do not include transplant types: {', '.join(EXCLUDED_TRANSPLANTS)}. If the patient received a transplant but no date is specified, return U. If the record gives no indication of transplant, return X {DATE_INTERPOLATION_STR}"
 
     keywords = transplant.keywords
     synthetic_keywords = (
@@ -476,7 +431,6 @@ class immunosuppressed_disease(PtFeatureBase):
         """Return the query for immunosuppressed disease status."""
         prompt = find_best_prompt_from_prompt_iteration_labels("immunosuppressed_disease", **kwargs)
         return prompt
-        return "Does this medical record indicate that the patient had an immunosuppressed disease, including leukemia, lymphoma, HIV, AIDS, or immune deficiency? Options are: A. Yes, B. No"
 
     options = ["A", "B"]
     keywords = [
@@ -594,7 +548,6 @@ class military(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for military service status."""
-        return "Does this medical record indicate that the patient served in the military? Options are: A. Yes, B. No"
 
     keywords = [
         "military",
@@ -612,7 +565,6 @@ class military_years(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for military years of service."""
-        return "How many years did this patient serve in the military? Answer with a number, or if the patient is not a veteran, return X"
 
     keywords = military.keywords
     # val_var = True
@@ -622,7 +574,6 @@ class military_retirement_date(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for military retirement date."""
-        return f"What was the date of the patient's military retirement? If the patient is not a veteran, return X {DATE_INTERPOLATION_STR}"
 
     keywords = military.keywords
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
@@ -632,138 +583,13 @@ class military_agent_orange(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
         """Return the query for Agent Orange exposure."""
-        return "Does this medical record indicate that the patient was exposed to Agent Orange? Options are: A. Yes, B. No"
 
     options = ["A", "B"]
     keywords = ["agent orange"]
     # val_var = True
 
 
-class military_oef_oif(PtFeatureBase):
-    pass
 
-
-class military_camp_lejeune(PtFeatureBase):
-    pass
-
-
-class pregnancy(PtFeatureBase):
-    pass
-
-
-class pregnancy_age(PtFeatureBase):
-    pass
-
-
-class pregnancy_count(PtFeatureBase):
-    pass
-
-
-class early_menstruation(PtFeatureBase):
-    pass
-
-
-class menopause(PtFeatureBase):
-    pass
-
-
-class menopause_late(PtFeatureBase):
-    pass
-
-
-class birth_control_copper_iud(PtFeatureBase):
-    # structured data text search
-    pass
-
-
-class birth_control_hormonal_iud(PtFeatureBase):
-    # structured data text search
-    pass
-
-
-class birth_control_implant(PtFeatureBase):
-    # structured data text search
-    pass
-
-
-class birth_control_shot(PtFeatureBase):
-    # structured data text search
-    pass
-
-
-class birth_control_patch(PtFeatureBase):
-    # structured data text search
-    pass
-
-
-class birth_control_ring(PtFeatureBase):
-    # structured data text search
-    pass
-
-
-class birth_control_pill(PtFeatureBase):
-    # structured data text search
-    pass
-
-
-class carcinogen_arsenic(PtFeatureBase):
-    pass
-
-
-class carcinogen_asbestos(PtFeatureBase):
-    pass
-
-
-class carcinogen_benzene(PtFeatureBase):
-    pass
-
-
-class carcinogen_beryllium(PtFeatureBase):
-    pass
-
-
-class carcinogen_cadmium(PtFeatureBase):
-    pass
-
-
-class carcinogen_chromium(PtFeatureBase):
-    pass
-
-
-class carcinogen_ethylene_oxide(PtFeatureBase):
-    pass
-
-
-class carcinogen_nickel(PtFeatureBase):
-    pass
-
-
-class carcinogen_radon(PtFeatureBase):
-    pass
-
-
-class carcinogen_vinyl_chloride(PtFeatureBase):
-    pass
-
-
-class carcinogen_smoke(PtFeatureBase):
-    pass
-
-
-class carcinogen_gasoline(PtFeatureBase):
-    pass
-
-
-class carcinogen_formaldehyde(PtFeatureBase):
-    pass
-
-
-class carcinogen_hair_dyes(PtFeatureBase):
-    pass
-
-
-class carcinogen_soot(PtFeatureBase):
-    pass
 
 
 class cancer_cancer(PtFeatureBase):
@@ -820,7 +646,6 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
         """Return the query for cancer diagnosis date."""
         prompt = find_best_prompt_from_prompt_iteration_labels("cancer_date_of_diagnosis", **kwargs)
         return prompt
-        return f"What was the date of the patient's earliest {kwargs['keyword']} diagnosis? If the patient has cancer but no diagnosis date is specified, return U. If the record gives no indication of cancer, return X {DATE_INTERPOLATION_STR}"
 
     keywords = SPECIFIC_CANCERS
     synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
@@ -834,7 +659,6 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
         """Return the query for cancer stage at diagnosis."""
         prompt = find_best_prompt_from_prompt_iteration_labels("cancer_stage_at_diagnosis", **kwargs)
         return prompt
-        return f"What was the stage of the patient's earliest {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Only answer stage 0 if one of these terms is explicitly mentioned in the diagnosis. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. In-situ or non-invasive melanoma are stage 0. <=2mm melanoma are stage I. >2mm melanoma are stage II or III. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Patient has cancer but stage unknown, F. Patient does not have cancer."
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
@@ -863,7 +687,6 @@ class cancer_maximum_stage(PtFeatureBase):
         """Return the query for cancer maximum stage."""
         prompt = find_best_prompt_from_prompt_iteration_labels("cancer_maximum_stage", **kwargs)
         return prompt
-        return f"What was the maximum stage of the patient's earliest {kwargs['keyword']} diagnosis? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Stage 0 is defined as in situ, non-invasive, or carcinoma in situ. Stage I is defined as localized. Stage II and III are defined as locally advanced. Stage IV is defined as metastatic. Options are: A. Stage 0, B. Stage I, C. Stage II or III, D. Stage IV, E. Cancer present but maximum stage unknown, F. Patient does not have cancer"
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
@@ -885,43 +708,6 @@ class cancer_maximum_stage(PtFeatureBase):
         return "E"
 
 
-### decided we dont need this feature
-
-# class cancer_status_at_last_follow_up(PtFeatureBase):
-#     @classmethod
-#     def query(cls, **kwargs):
-#         """Return the query for cancer status at last follow-up."""
-#         # return f"What was the status of the patient's {kwargs['keyword']} at their last follow-up? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. Cancer present but status at last follow-up unknown, E. No indication of patient's cancer status, F. Patient has never had cancer" # E+F. No indication that patient has cancer
-#         return f"What was the status of the patient's {kwargs['keyword']} according the latest available information? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Assume resection is clearance (cancer free) unless otherwise stated. Options are: A. Having previously had cancer, now they are cancer free, in remission, complete response, no evidence of disease, or disease free, B. Stable disease, C. Progressive disease, D. No indication that the patient has had cancer"
-#         # example chart: The patient was diagnosed with progressive cancer in 2004.
-
-#     options = ["A", "B", "C", "D"]
-#     keywords = SPECIFIC_CANCERS
-#     synthetic_keywords = [
-#         "cancer free",
-#         "in remission",
-#         "no evidence of disease",
-#         "metastasis",
-#         "stable disease",
-#         "progressive disease",
-#         "no spread",
-#     ]
-#     val_var = True
-
-#     def pooling_fn(preds: list):
-#         # return the highest status seen
-#         if "C" in preds:
-#             return "C"
-#         if "B" in preds:
-#             return "B"
-#         if "A" in preds:
-#             return "A"
-#         if "D" in preds:
-#             return "D"
-#         if "F" in preds:
-#             return "F"
-#         return "E"
-
 
 class cancer_date_free(PtDateFeatureBase):
     @classmethod
@@ -929,7 +715,6 @@ class cancer_date_free(PtDateFeatureBase):
         """Return the query for cancer free date."""
         prompt = find_best_prompt_from_prompt_iteration_labels("cancer_date_free", **kwargs)
         return prompt
-        return f"What is the date the patient was declared cancer free of {kwargs['keyword']}? {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Cancer free can be defined as: cancer free, in remission, complete response, no evidence of disease, or disease free. If the patient had cancer but no cancer free date is specified, return U. If the record gives no indication of cancer, return X {DATE_INTERPOLATION_STR}"
 
     keywords = SPECIFIC_CANCERS
     synthetic_keywords = [
@@ -963,7 +748,6 @@ class cancer_family_any(PtFeatureBase):
         """Return the query for family cancer history."""
         prompt = find_best_prompt_from_prompt_iteration_labels("cancer_family_any", **kwargs)
         return prompt
-        return f"Does this medical record indicate that any member of the patient's family has a history of cancer? {NOT_CANCER_STR} Options are: A. Yes, B. No"
 
     options = ["A", "B"]
     keywords = cancer_cancer.keywords
@@ -1909,121 +1693,7 @@ class antibiotics(PtFeatureBase):
 class antibiotic_duration(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        return """
-"How many days total did the patient take {keyword}? Round all values up to the nearest integer (i.e. 0.1 -> 1). A. 0 days (no indication of antibiotic use), B. 1-15 days, C. 16-45 days, D. 46-135 days, E. 136+ days, F. Taken but dates unknown 
-
-Do NOT include amoxicillin-clavulanate when determining antibiotic duration. Amoxicillin-clavulanate (Amoxicillin/Potassium Clavulanate, Augmentin) is a different antibiotic and must be excluded. Only plain amoxicillin is included—do not treat amoxicillin-clavulanate as amoxicillin under any circumstance.Also exclude all ophthalmic formulations and all topical antibiotics; only systemic (oral or IV) antibiotics should be counted.
-
-### Step 1. Did the patient take the antibiotic?
-
-Ask:
-**""Did the patient take {keyword}? If the antibiotic is listed as an allergy, consider as 'no indication of antibiotic use'. Options are A. yes, B. no""**
-
-Treat phrases such as “treated with,” “status post treatment with,” “rx’d,” “prescribed,” “course of,” or “prior treatments include” as evidence that the patient took the antibiotic, unless the note explicitly states it was not taken.
-
-Phrases such as “rx’d {keyword} x [duration]” (e.g., “rx’d bactrim x 2 weeks”) should ALWAYS be treated as evidence the patient took the antibiotic unless the note explicitly states it was not taken.
-
-Treat phrases such as “has tried,” “previously tried,” “trialed,” “failed,” “failing,” “nonresponse to,” “history of failing,” “added,” “started,” “commence,” “begin,” “initiated,” “D/C,” or “discontinued” {keyword} as evidence the patient took the antibiotic, unless the note explicitly states it was not taken or never started.
-
-Treat phrases such as “on {keyword},” “taking {keyword},” “currently on,” “completed,” “finished,” “received,” “was given,” “administered,” “discharged on,” “sent home on,” or “s/p {keyword}” as evidence the patient took the antibiotic, unless the note explicitly states it was not taken.
-
-If {keyword} appears in “Prior treatments include” or “Has previously tried” sections, assume the patient took the antibiotic even if dose/duration is not specified. 
-
-If {keyword} is listed with a dose with or without frequency/route (e.g., “100 mg,” “PO,” “BID,” “twice daily”) in the patient’s medication list, assessment, or plan, treat this as evidence the patient took {keyword} (yes) unless the note explicitly says it was not taken or never started.
-
-When deciding if {keyword} is listed with a dose, count “take 1 capsule/tablet” (with or without mg) and any frequency/route words (e.g., once daily, twice daily, BID, PO) as dose/frequency documentation.
-
-If {keyword} appears in a medication table with a dispense quantity (e.g., number of capsules/tablets) AND a Sig (dose/frequency), this is evidence the patient took the antibiotic, even if the medication is marked as “discontinued.” Discontinued indicates prior use, not non-use, unless the note explicitly states it was never started.
-
-If {keyword} appears only in a “reason for discontinuation” field (or similar documentation explaining why the medication was stopped), this does NOT mean the patient did not take {keyword}. It indicates the patient is not currently taking it. If this is the only evidence of {keyword} in the note (i.e., no duration, no course length, no pill counts/refills/frequency, and no narrative statement of use), classify as F (taken but dates unknown). Only classify as no use (Step 1 = no, final label A) if the note explicitly states the patient did not take, never started, declined, or is not taking {keyword}.
-
-Conditional, instructional, or hypothetical statements (e.g., “if you have symptoms, take…”, “should take…”, “may take…”) do NOT indicate antibiotic use unless the note explicitly states the patient took the medication.
-
-If there is strong evidence the patient took {keyword} (e.g., prior treatments, rx’d with duration, medication table with Sig/dispense) but the exact duration cannot be determined, classify as F (“taken but dates unknown”), not A.
-
-If the note says “did not take,” “never started,” “declined,” or “not taking,” then the patient did NOT take {keyword} (no), even if it appears in a medication list.
-
-* If the answer is **(yes)** → continue to Step 2.
-* If the answer is **(no)** → set the final label to **A (""no indication of antibiotic use"")** and stop.
-
----
-
-### Step 2. How many days in total did the patient take the antibiotic for?
-
-Ask:
-**""How many days total did the patient take {keyword}? Answer according to the total duration explicitly written in the note (i.e. 5 days, 7 days, 1 week, 1 month). For example, ""patient took {keyword} for 5 days"" = 5 total days or ""1 week course of {keyword}"" = 7 total days or ""1 month course of {keyword}"" = 30 days. If it states that the patient took the pill as needed, PRN, or is prescribed to be taken under hypothetical future scenarios (i.e. IF the patient experiences traveler's diarrhea), then answer 'F' (patient took antibiotic but duration unknown). If there is not enough information, answer 'NA'. Assume 30 days per month. Answer with a number (of days).**
-
-* If a valid **number of days** is given → use this number as the total duration (final answer)
-* If the answer is **""NA""** or can’t be determined → move on to step 3. 
-
----
-
-### Step 3. If the total duration is NOT explicitly written somewhere in the note, estimate duration from pill counts, number of refills, and the frequency of the dose. 
-
-Ask:
-**""How many days total did the patient take {keyword}? If the total duration is NOT explicitly written somewhere in the note, calculate the duration based on the number of pills prescribed, the number of refills, and the frequency of the dose. For example, if the patient was prescribed 10 pills, and the frequency is 2 pills per day, the total days of medication taken by the patient are 5 days. As another example, if the patient was prescribed 20 pills, had 2 refills, and took 3 pills per day, the total days of medication taken by the patient are 20 days. DO NOT assume the patient takes one pill per day. Note that 'refills' are in addition to the initial prescription. For example, 2 refills of 10 pills = 30 pills total. Note that BID is an abbreviation meaning ""twice a day"". When calculating total days, DO NOT include days that the patient did not take the medication. For example, if the patient took the medication once a week for 4 weeks, the patient took the medication for 4 days. If there is not enough information, answer 'NA'. Assume 30 days per month. Answer with a number (of days).**
-
-* If a valid **pill count**, **number of refills**, and **frequency of the dose** is given → calculate the total duration (final answer)
-* If the answer is **""NA""** or can’t be determined → move on to step 4.
-
----
-
-### Step 4. If the pill counts are available in the note, but there is NOT information on the number of refills and/or the frequency of the dose, then it is OK to estimate duration from the pill counts alone
-
-Ask:
-**""How many days total did the patient take {keyword}? If the total duration is NOT explicitly written somewhere in the note, AND the pill counts are available in the note, but there is not information in the note on frequency of dose and/or number of refills for {keyword}, then we should calculate the total days by assuming one pill was taken each day. For example, if patient received a prescription for 28 pills of {keyword}, then we should assume they took a 28 day course of {keyword}. If it states that the patient took the pill as needed, PRN, or is prescribed to be taken under hypothetical future scenarios (i.e. IF the patient experiences traveler's diarrhea), then answer 'F' (patient took antibiotic but duration unknown). If there is not enough information, answer 'NA'. Assume 30 days per month. Answer with a number (of days).**
-
-
-* If a valid **number of days** is given → use this number as the total duration (final answer)
-* If the answer is **""NA""**, then the total duration remains unknown.
-
----
-
-### Step 5. If the total duration is not explicitly written somewhere in the note AND the pill counts, number of refills and the frequency of the dose are not provided, then answer 'NA'. Answer with a number (of days). Do NOT use start and/or end dates to estimate total duration""** 
-
----
-
-### Step 6. Interpret the duration
-
-* If the calculated duration (**days on antibiotic**) is missing, negative, or unrealistically large (>1,000,000 days):
-  set label to **F (""dates unknown"")**.
-
-* Otherwise, assign duration labels strictly based on the calculated number of days. Do NOT shorten or reinterpret durations based on typical antibiotic course length.
-
-  * **≤15 days** → label **B**
-  * **16–45 days** → label **C**
-  * **46–135 days** → label **D**
-  * **>135 days** → label **E**"
-"""
-
-
-
-
-
-    """
-    ---
-
-    ### Final Output
-
-    For each patient, record:
-
-    * Start date (if known)
-    * End date (if known)
-    * Days on antibiotic (if calculable)
-    * Whether they took the antibiotic (**yes/no**)
-    * The final label (**A–G**, as determined above)
-
-    ---
-
-
-    Example query: None
-    ## Keywords
-    ['tetracycline', 'doxycycline', 'minocycline', 'adoxa', 'adoxa pak', 'brodspec', 'cleeravue-m', 'declomycin', 'doryx', 'dynacin', 'minocin', 'nuzyra', 'sumycin', 'vibramycin calcium', 'tmp', 'smx', 'tmp/smx', 'tmp-smx', 'trimethoprim sulfamethoxazole', 'bactrim', 'septra', 'smz-tmp', 'sulfatrim', 'co-trimoxazole', 'sxt', 'tmp-sulfa', 'amoxicot', 'amoxil', 'dispermox', 'moxatag', 'moxilin', 'trimox', 'amoxicillin', 'cephalexin', 'bio-cef', 'keflex', 'panixine disperdose', 'azithromycin', 'zithromax', 'zithromax tri-pak', 'z-pak', 'zmax']
-    ## Number of records with keyword: 100
-    ## Number of records: 100
-    ## Number of chunks: 339
-
-    """
+        return find_best_prompt_from_prompt_iteration_labels("antibiotic_duration", **kwargs)
 
     keywords = antibiotics.keywords
     val_var = True
