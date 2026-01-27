@@ -11,7 +11,20 @@ reconciliation
 .cursorrules
 Python-3.12.0
 labeled_data
+old/
+physionet.org/
+preds/
+redcap_mrns/
+tensorboard_log/
+tmp/
+training_runs/
+val_ds/
+val_ds_old/
+verl/
+wandb/
 
+
+*.png
 *.csv
 *.json
 *.jsonl
