@@ -293,7 +293,14 @@ class smoking_status(PtFeatureBase):
 
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for smoking status."""
+        """Return the query for smoking status.
+
+        Options:
+        A. Never smoked
+        B. Former smoker
+        C. Current smoker
+        D. Unknown
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("smoking_status", **kwargs)
         return prompt
 
@@ -311,7 +318,16 @@ class smoking_status(PtFeatureBase):
 class smoking_amount(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for smoking amount."""
+        """Return the query for smoking amount.
+
+        Options:
+        A. 0 (does not smoke)
+        B. 1-2 packs per week
+        C. 3-5 packs per week
+        D. 6+ packs per week
+        E. Smoker but unknown quantity
+        F. No indication of smoking status
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("smoking_amount", **kwargs)
         return prompt
 
@@ -337,10 +353,16 @@ class alcohol_status(PtFeatureBase):
 
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for alcohol status."""
+        """Return the query for alcohol status.
+
+        Options:
+        A. Currently Drinks
+        B. Does not currently drink
+        C. No indication of alcohol status
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("alcohol_status", **kwargs)
         return prompt
-        
+
 
     options = ["A", "B", "C"]
     keywords = ["alcohol", "drinks", "etoh"]
@@ -358,10 +380,19 @@ class alcohol_status(PtFeatureBase):
 class alcohol_amount(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for alcohol amount."""
+        """Return the query for alcohol amount.
+
+        Options:
+        A. 0 (sober or does not drink)
+        B. 1-2 drinks per week
+        C. 3-5 drinks per week
+        D. 6+ drinks per week
+        E. Drinker but unknown quantity
+        F. No indication of alcohol status
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("alcohol_amount", **kwargs)
         return prompt
-        
+
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
@@ -389,7 +420,12 @@ class alcohol_amount_drinking_index(PtFeatureBase):
 class transplant(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for transplant status."""
+        """Return the query for transplant status.
+
+        Options:
+        A. Yes
+        B. No
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("transplant", **kwargs)
         return prompt
 
@@ -409,7 +445,13 @@ class transplant(PtFeatureBase):
 class transplant_date(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for transplant date."""
+        """Return the query for transplant date.
+
+        Format: YYYYMMDD
+        Special values:
+        U - Patient received a transplant but no date is specified
+        X - Record gives no indication of transplant
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("transplant_date", **kwargs)
         return prompt
 
@@ -428,7 +470,12 @@ class transplant_date(PtDateFeatureBase):
 class immunosuppressed_disease(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for immunosuppressed disease status."""
+        """Return the query for immunosuppressed disease status.
+
+        Options:
+        A. Yes
+        B. No
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("immunosuppressed_disease", **kwargs)
         return prompt
 
@@ -604,7 +651,12 @@ class cancer_cancer(PtFeatureBase):
 
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for cancer history."""
+        """Return the query for cancer history.
+
+        Options:
+        A. Yes
+        B. No
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("cancer_cancer", **kwargs)
         return prompt
         return f"Does this medical record indicate that the patient has a history of cancer? Only consider tumors as cancer if they are malignant. {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Yes, B. No"
@@ -643,7 +695,17 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
 
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for cancer diagnosis date."""
+        """Return the query for cancer diagnosis date.
+
+        Format: YYYYMMDD (with leading zeros)
+        Special values:
+        U - Patient has cancer but no diagnosis date is specified
+        X - Record gives no indication of cancer
+
+        Date interpolation:
+        - If only month and year are given, assume the 15th
+        - If only year is given, assume July 2
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("cancer_date_of_diagnosis", **kwargs)
         return prompt
 
@@ -656,7 +718,16 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
 class cancer_stage_at_diagnosis(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for cancer stage at diagnosis."""
+        """Return the query for cancer stage at diagnosis.
+
+        Options:
+        A. Stage 0
+        B. Stage I
+        C. Stage II or III
+        D. Stage IV
+        E. Unknown
+        F. Patient does not have cancer
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("cancer_stage_at_diagnosis", **kwargs)
         return prompt
 
@@ -684,7 +755,16 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
 class cancer_maximum_stage(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for cancer maximum stage."""
+        """Return the query for cancer maximum stage.
+
+        Options:
+        A. Stage 0
+        B. Stage I
+        C. Stage II or III
+        D. Stage IV
+        E. Cancer present but maximum stage unknown
+        F. Patient does not have cancer
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("cancer_maximum_stage", **kwargs)
         return prompt
 
@@ -712,7 +792,17 @@ class cancer_maximum_stage(PtFeatureBase):
 class cancer_date_free(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for cancer free date."""
+        """Return the query for cancer free date.
+
+        Format: YYYYMMDD (with leading zeros)
+        Special values:
+        U - Patient had cancer but no cancer free date is specified
+        X - Record gives no indication of cancer
+
+        Date interpolation:
+        - If only month and year are given, assume the 15th
+        - If only year is given, assume July 2
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("cancer_date_free", **kwargs)
         return prompt
 
@@ -745,7 +835,12 @@ class cancer_treatment_other(PtFeatureBase):
 class cancer_family_any(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for family cancer history."""
+        """Return the query for family cancer history.
+
+        Options:
+        A. Yes
+        B. No
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("cancer_family_any", **kwargs)
         return prompt
 
@@ -1676,10 +1771,15 @@ class antibiotics(PtFeatureBase):
 
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for antibiotics usage."""
+        """Return the query for antibiotics usage.
+
+        Options:
+        A. Yes
+        B. No
+        """
         prompt = find_best_prompt_from_prompt_iteration_labels("antibiotics", **kwargs)
         return prompt
-        return f"Does this medical record indicate that the patient took any of the following antibiotics, ignoring those mentioned as allergic reactions: {', '.join(cls.keywords)}? Options are: A. Yes, B. No" # todo: distinguis amoxicillin vs amoxicillin clavulanate, doxy 
+        return f"Does this medical record indicate that the patient took any of the following antibiotics, ignoring those mentioned as allergic reactions: {', '.join(cls.keywords)}? Options are: A. Yes, B. No" # todo: distinguis amoxicillin vs amoxicillin clavulanate, doxy
 
     options = ["A", "B"]
     val_var = True
@@ -1693,6 +1793,16 @@ class antibiotics(PtFeatureBase):
 class antibiotic_duration(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
+        """Return the query for antibiotic duration.
+
+        Options:
+        A. 0 days (no indication of antibiotic use)
+        B. 1-15 days
+        C. 16-45 days
+        D. 46-135 days
+        E. 136+ days
+        F. Taken but dates unknown
+        """
         return find_best_prompt_from_prompt_iteration_labels("antibiotic_duration", **kwargs)
 
     keywords = antibiotics.keywords
