@@ -1,5 +1,5 @@
 __pycache__
-.venv
+.venv*
 .vscode
 stores_temp
 stores_tmp
@@ -22,6 +22,7 @@ val_ds/
 val_ds_old/
 verl/
 wandb/
+cohort/
 
 
 *.png
