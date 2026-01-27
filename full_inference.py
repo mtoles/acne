@@ -208,19 +208,14 @@ def filter_records_by_date_range(records, start_date=None, end_date=None):
     return filtered_records
 
 
-def process_feature_grouped(records, index_date, feature_cls, rows, block_size_months=None, block_size_weeks=None, 
-                            follow_up_features=None, keywords=None):
+def process_feature_single_block(block_records, feature_cls, rows, follow_up_features=None, keywords=None):
     """
-    Process a feature by grouping records into time blocks and selecting the record
-    with the most keywords in each block.
-    
+    Process a feature for a single time block by selecting the record with the most keywords.
+
     Args:
-        records: List of record dictionaries
-        index_date: Reference date for grouping
+        block_records: List of record dictionaries for this time block
         feature_cls: Feature class (e.g., smoking_status)
         rows: List to append result rows to
-        block_size_months: Size of block in months
-        block_size_weeks: Size of block in weeks
         follow_up_features: Dict mapping prediction value to list of (feature_cls, feature_name) tuples
                            e.g., {"C": [(smoking_amount, "smoking_amount")]}
                            or {"A": [(cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
@@ -230,52 +225,43 @@ def process_feature_grouped(records, index_date, feature_cls, rows, block_size_m
     # Use custom keywords if provided, otherwise use feature class keywords
     if keywords is None:
         keywords = feature_cls.keywords
-    
-    # Group records into time blocks
-    records_by_block = group_records_by_time_blocks(
-        records, index_date, 
-        block_size_months=block_size_months, 
-        block_size_weeks=block_size_weeks
-    )
-    
-    # Process each block
-    for block_index, block_records in records_by_block.items():
-        # Find the record with the most keywords
-        best_record, keyword_count = select_record_with_most_keywords(block_records, keywords)
-        
-        # If we found a record with keywords, process it
-        if best_record and keyword_count > 0:
-            record_date = best_record["Report_Date_Time"]
-            record_text = best_record["Report_Text"]
-            
-            # Process all keywords
-            for kw in keywords:
-                chunks = get_chunks_by_keyword(record_text, kw)
-                # Process all instances (chunks) of the keyword
-                for chunk in chunks:
-                    pred = call_llm(feature_cls, chunk, kw)
-                    rows.append({
-                        "feature_name": feature_cls.__name__,
-                        "keyword": kw,
-                        "date": record_date,
-                        "prediction": pred,
-                    })
-                    
-                    # Handle follow-up features
-                    if follow_up_features and pred.upper() in follow_up_features:
-                        follow_ups = follow_up_features[pred.upper()]
-                        # Support both single tuple and list of tuples
-                        if isinstance(follow_ups, tuple):
-                            follow_ups = [follow_ups]
-                        
-                        for follow_up_cls, follow_up_name in follow_ups:
-                            follow_up_pred = call_llm(follow_up_cls, chunk, kw)
-                            rows.append({
-                                "feature_name": follow_up_name,
-                                "keyword": kw,
-                                "date": record_date,
-                                "prediction": follow_up_pred,
-                            })
+
+    # Find the record with the most keywords
+    best_record, keyword_count = select_record_with_most_keywords(block_records, keywords)
+
+    # If we found a record with keywords, process it
+    if best_record and keyword_count > 0:
+        record_date = best_record["Report_Date_Time"]
+        record_text = best_record["Report_Text"]
+
+        # Process all keywords
+        for kw in keywords:
+            chunks = get_chunks_by_keyword(record_text, kw)
+            # Process all instances (chunks) of the keyword
+            for chunk in chunks:
+                pred = call_llm(feature_cls, chunk, kw)
+                rows.append({
+                    "feature_name": feature_cls.__name__,
+                    "keyword": kw,
+                    "date": record_date,
+                    "prediction": pred,
+                })
+
+                # Handle follow-up features
+                if follow_up_features and pred.upper() in follow_up_features:
+                    follow_ups = follow_up_features[pred.upper()]
+                    # Support both single tuple and list of tuples
+                    if isinstance(follow_ups, tuple):
+                        follow_ups = [follow_ups]
+
+                    for follow_up_cls, follow_up_name in follow_ups:
+                        follow_up_pred = call_llm(follow_up_cls, chunk, kw)
+                        rows.append({
+                            "feature_name": follow_up_name,
+                            "keyword": kw,
+                            "date": record_date,
+                            "prediction": follow_up_pred,
+                        })
 
 
 def process_feature_all_records(records, feature_cls, rows, follow_up_features=None):
@@ -368,12 +354,11 @@ def process_pt(pt_id):
     Return None if the patient can't be processed (e.g. no acne diagnosis)
     dates are in mm/dd/yyyy format
     """
-    ### determine index date ###
-    # first acne diagnosis 
+    ### Step 1: Determine index date and calculate time windows ###
     with db.connect() as conn:
         query = text(f"SELECT * FROM dia WHERE EMPI = '{pt_id}' AND (Code LIKE '%L70.0%' OR Code LIKE '%L70.8%' OR Code LIKE '%L70.9%' OR Code LIKE '%L70.1%' OR Code LIKE '%706.1%' OR Code LIKE '%acne%') ORDER BY Date ASC LIMIT 1")
         result = conn.execute(query)
-        
+
         fetched = result.mappings().fetchone()
         if fetched is not None:
             index_date = fetched["Date"]
@@ -382,94 +367,113 @@ def process_pt(pt_id):
         else:
             print("WARNING: No acne diagnosis found for patient {pt_id}")
             return None
-    print(f"Index date: {index_date}")
-    print
-    
 
+    print(f"Index date: {index_date}")
+    print(f"Outcome window starts: {outcome_window_start_date}")
+
+    ### Step 2: Get all records for patient ###
     with db.connect() as conn:
         query = text(f"SELECT * FROM vis WHERE EMPI = '{pt_id}'")
         result = conn.execute(query)
         records = result.mappings().fetchall()
 
+    ### Step 3: Define time windows and filter records ###
+    # Window 1: All records (for smoking, alcohol, transplant, immunosuppressed_disease)
+    all_records = records
 
-    # target_features = [ft for ft in PtFeaturesMeta.registry.values() if ft.val_var]
+    # Window 2: Records after outcome_window_start_date (for cancer features)
+    outcome_records = filter_records_by_date_range(records, start_date=outcome_window_start_date)
 
-    # for target_feature in target_features:
+    # Window 3: Records between index_date and outcome_window_start_date (for antibiotics)
+    treatment_window_records = filter_records_by_date_range(records, start_date=index_date, end_date=outcome_window_start_date)
 
-    
-    # List to store DataFrame rows
+    print(f"Total records: {len(all_records)}, Outcome window: {len(outcome_records)}, Treatment window: {len(treatment_window_records)}")
+
+    ### Step 4: Calculate time blocks for each feature ###
+    # Smoking status: 1 per 3 months
+    smoking_blocks = group_records_by_time_blocks(all_records, index_date, block_size_months=3)
+
+    # Alcohol status: 1 per 3 months
+    alcohol_blocks = group_records_by_time_blocks(all_records, index_date, block_size_months=3)
+
+    # Immunosuppressed disease: 1 per 6 months
+    immunosuppressed_blocks = group_records_by_time_blocks(all_records, index_date, block_size_months=6)
+
+    # Cancer cancer: 1 per 3 months
+    cancer_cancer_blocks = group_records_by_time_blocks(outcome_records, index_date, block_size_months=3)
+
+    # Cancer family any: 1 per 6 months
+    cancer_family_blocks = group_records_by_time_blocks(outcome_records, index_date, block_size_months=6)
+
+    print(f"Time blocks - Smoking: {len(smoking_blocks)}, Alcohol: {len(alcohol_blocks)}, Immunosuppressed: {len(immunosuppressed_blocks)}, Cancer cancer: {len(cancer_cancer_blocks)}, Cancer family: {len(cancer_family_blocks)}")
+
+    ### Step 5: Process features organized by time window ###
     rows = []
 
-    ### filter which records are necessary for each feature ###
-    # smoking, alcohol: 1 per 3 months
-    # abx: every record
-    # cancer family any: 1 per 6 months
-    # cancer cancer: 1 per 2 weeks
-    # immunosuppressed disease: 1 per 6 months
+    # === Features using all records ===
 
-    ### smoking status ###
-    # 1 per 3 months
-    process_feature_grouped(
-        records, index_date, smoking_status, rows,
-        block_size_months=3,
-        follow_up_features={"C": (smoking_amount, "smoking_amount")}
-    )
+    # Smoking status: process each 3-month block
+    for block_index, block_records in smoking_blocks.items():
+        process_feature_single_block(
+            block_records, smoking_status, rows,
+            follow_up_features={"C": (smoking_amount, "smoking_amount")}
+        )
     print(f"Completed smoking status for {pt_id}")
-    
-    ### alcohol status ###
-    # 1 per 3 months
-    process_feature_grouped(
-        records, index_date, alcohol_status, rows,
-        block_size_months=3,
-        follow_up_features={"A": (alcohol_amount, "alcohol_amount")}
-    )
+
+    # Alcohol status: process each 3-month block
+    for block_index, block_records in alcohol_blocks.items():
+        process_feature_single_block(
+            block_records, alcohol_status, rows,
+            follow_up_features={"A": (alcohol_amount, "alcohol_amount")}
+        )
     print(f"Completed alcohol status for {pt_id}")
-    ### transplant ###
+
+    # Transplant: every record
     process_feature_all_records(
-        records, transplant, rows,
+        all_records, transplant, rows,
         follow_up_features={"A": (transplant_date, "transplant_date")}
     )
     print(f"Completed transplant for {pt_id}")
-    ### immunosuppressed disease ###
-    # 1 per 6 months
-    process_feature_grouped(
-        records, index_date, immunosuppressed_disease, rows,
-        block_size_months=6
-    )
+
+    # Immunosuppressed disease: process each 6-month block
+    for block_index, block_records in immunosuppressed_blocks.items():
+        process_feature_single_block(
+            block_records, immunosuppressed_disease, rows
+        )
     print(f"Completed immunosuppressed disease for {pt_id}")
-    ### cancer ###
-    # 1 per 2 weeks, use SPECIFIC_CANCERS as keywords
-    # Only assess cancer AFTER outcome_window_start_date (strictly after, not inclusive)
-    cancer_records = filter_records_by_date_range(records, start_date=outcome_window_start_date)
-    process_feature_grouped(
-        cancer_records, index_date, cancer_cancer, rows,
-        block_size_weeks=2,
-        keywords=SPECIFIC_CANCERS,
-        follow_up_features={"A": [
-            (cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
-            (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis"),
-            (cancer_maximum_stage, "cancer_maximum_stage")
-        ]}
-    )
+
+    # === Features using outcome window (after outcome_window_start_date) ===
+
+    # Cancer cancer: process each 3-month block
+    for block_index, block_records in cancer_cancer_blocks.items():
+        process_feature_single_block(
+            block_records, cancer_cancer, rows,
+            keywords=SPECIFIC_CANCERS,
+            follow_up_features={"A": [
+                (cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
+                (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis"),
+                (cancer_maximum_stage, "cancer_maximum_stage")
+            ]}
+        )
     print(f"Completed cancer cancer for {pt_id}")
-    ### cancer family any ###
-    # 1 per 6 months, use SPECIFIC_CANCERS as keywords
-    # Only assess cancer AFTER outcome_window_start_date (strictly after, not inclusive)
-    process_feature_grouped(
-        cancer_records, index_date, cancer_family_any, rows,
-        block_size_months=6,
-        keywords=SPECIFIC_CANCERS
-    )
+
+    # Cancer family any: process each 6-month block
+    for block_index, block_records in cancer_family_blocks.items():
+        process_feature_single_block(
+            block_records, cancer_family_any, rows,
+            keywords=SPECIFIC_CANCERS
+        )
     print(f"Completed cancer family any for {pt_id}")
-    ### antibiotics ###
-    # every record
-    # Only assess antibiotics BETWEEN index_date and outcome_window_start_date (inclusive on both ends)
-    abx_records = filter_records_by_date_range(records, start_date=index_date, end_date=outcome_window_start_date)
+
+    # === Features using treatment window (index_date to outcome_window_start_date) ===
+
+    # Antibiotics: every record
     process_feature_all_records(
-        abx_records, antibiotics, rows,
+        treatment_window_records, antibiotics, rows,
         follow_up_features={"A": (antibiotic_duration, "antibiotic_duration")}
     )
     print(f"Completed antibiotics for {pt_id}")
+
     # Convert to DataFrame
     df = pd.DataFrame(rows)
     return df
