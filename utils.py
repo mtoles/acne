@@ -49,7 +49,7 @@ class OptionType(enum.Enum):
 
 
 def get_dataset(
-    data_source: str = "mgb",
+    data_source: str,
     feature_names: Optional[List[str]] = None,
     train_split: float = 0.5,
     downsample: Optional[int] = None,
