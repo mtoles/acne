@@ -2,7 +2,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from tqdm import tqdm
 from make_db import db_url
-from pt_features import get_rows_by_icd, cancer_icd9s, cancer_icd10s
+from pt_features import get_rows_by_icd, cancer_icd9s, cancer_icd10s, smoking_status, alcohol_status
 import json
 from pathlib import Path
 import numpy as np
@@ -131,46 +131,7 @@ dem_df["study_bmi_category"] = dem_df["study_bmi"].apply(categorize_bmi)
 
 # Vectorized smoking detection (avoid copying entire dataframe)
 print("Processing smoking status...")
-def is_smoker_vectorized(phy_subset):
-    """Vectorized smoking detection"""
-    concept_name = phy_subset["Concept_Name"]
-    result_lower = phy_subset["Result"].astype(str).str.lower()
-
-    # Initialize all as False
-    is_smoker_flag = pd.Series(False, index=phy_subset.index)
-
-    # Smoking status checks
-    is_smoker_flag |= (
-        (concept_name == "Smoking status") &
-        result_lower.isin([
-            "current every day smoker", "smoker, current status unknown",
-            "former smoker", "quit tobacco >= 1 year ago",
-            "current tobacco user", "1/2 ppd"
-        ])
-    )
-
-    # Concept name checks
-    is_smoker_flag |= concept_name.isin([
-        "Smoking Tobacco Use-Former Smoker",
-        "Smoking Tobacco Use-Current Every Day Smoker",
-        "Smoking Tobacco Use-Current Some Day Smoker",
-        "Smoking Tobacco Use-Light Tobacco Smoker",
-        "Smoking Tobacco Use-Smoker, Current Status Unknown",
-        "Smoking Tobacco Use-Heavy Tobacco Smoker",
-        "Tobacco User-Yes", "Tobacco User-Quit",
-        "Cigarettes", "Tobacco Pack Per Day"
-    ])
-
-    # Smoker yes/true checks
-    is_smoker_flag |= (concept_name == "Smoker") & result_lower.isin(["yes", "1", "true", "1.0"])
-
-    # Tobacco years used check
-    is_smoker_flag |= (concept_name == "Tobacco Used Years") & ~result_lower.isin(["0", "0.0", ""])
-
-    return is_smoker_flag
-
-# Process smoking without copying dataframe
-smoking_flags = is_smoker_vectorized(phy_df)
+smoking_flags = smoking_status.is_smoker_vectorized(phy_df)
 smoking_by_empi = phy_df.loc[smoking_flags].groupby("EMPI").size() > 0
 dem_df["study_smoking_status"] = dem_df["EMPI"].map(smoking_by_empi).map({True: "Yes", False: "No"})
 dem_df.loc[~dem_df["EMPI"].isin(smoking_by_empi.index), "study_smoking_status"] = "Unknown"
@@ -178,31 +139,7 @@ dem_df.loc[~dem_df["EMPI"].isin(smoking_by_empi.index), "study_smoking_status"] 
 
 # Vectorized alcohol detection
 print("Processing alcohol status...")
-def is_alcohol_user_vectorized(phy_subset):
-    """Vectorized alcohol user detection"""
-    concept_name = phy_subset["Concept_Name"]
-    result_lower = phy_subset["Result"].astype(str).str.lower()
-
-    # Initialize all as False
-    is_alcohol_flag = pd.Series(False, index=phy_subset.index)
-
-    # Drinks per week checks (non-zero)
-    is_alcohol_flag |= (
-        concept_name.isin(["Alcohol Drinks Per Week", "Alcohol Oz Per Week"]) &
-        (result_lower != "0")
-    )
-
-    # Direct alcohol indicators
-    is_alcohol_flag |= concept_name.isin([
-        "Alcohol User-Yes", "Alcohol Type - Shots of liquor",
-        "Alcohol Type - Wine", "Alcohol Type - Beer",
-        "Alcohol User-Not Currently", "Alcohol Type - Unknown"
-    ])
-
-    return is_alcohol_flag
-
-# Process alcohol without copying dataframe
-alcohol_flags = is_alcohol_user_vectorized(phy_df)
+alcohol_flags = alcohol_status.is_alcohol_user_vectorized(phy_df)
 alcohol_by_empi = phy_df.loc[alcohol_flags].groupby("EMPI").size() > 0
 dem_df["study_alcohol_status"] = dem_df["EMPI"].map(alcohol_by_empi).map({True: "Yes", False: "No"})
 dem_df.loc[~dem_df["EMPI"].isin(alcohol_by_empi.index), "study_alcohol_status"] = "Unknown"

@@ -291,6 +291,128 @@ class smoking_status(PtFeatureBase):
         smoking_status = smoking_statuses.value_counts().index[0]
         return smoking_status
 
+    @staticmethod
+    def is_smoker_vectorized(phy_subset):
+        """Vectorized smoking detection from Phy table structured data.
+
+        Args:
+            phy_subset: DataFrame with columns 'Concept_Name' and 'Result'
+
+        Returns:
+            pd.Series: Boolean series indicating which rows indicate smoking
+        """
+        import pandas as pd
+
+        concept_name = phy_subset["Concept_Name"]
+        result_lower = phy_subset["Result"].astype(str).str.lower()
+
+        # Initialize all as False
+        is_smoker_flag = pd.Series(False, index=phy_subset.index)
+
+        # Smoking status checks
+        is_smoker_flag |= (
+            (concept_name == "Smoking status") &
+            result_lower.isin([
+                "current every day smoker", "smoker, current status unknown",
+                "former smoker", "quit tobacco >= 1 year ago",
+                "current tobacco user", "1/2 ppd"
+            ])
+        )
+
+        # Concept name checks
+        is_smoker_flag |= concept_name.isin([
+            "Smoking Tobacco Use-Former Smoker",
+            "Smoking Tobacco Use-Current Every Day Smoker",
+            "Smoking Tobacco Use-Current Some Day Smoker",
+            "Smoking Tobacco Use-Light Tobacco Smoker",
+            "Smoking Tobacco Use-Smoker, Current Status Unknown",
+            "Smoking Tobacco Use-Heavy Tobacco Smoker",
+            "Tobacco User-Yes", "Tobacco User-Quit",
+            "Cigarettes", "Tobacco Pack Per Day"
+        ])
+
+        # Smoker yes/true checks
+        is_smoker_flag |= (concept_name == "Smoker") & result_lower.isin(["yes", "1", "true", "1.0"])
+
+        # Tobacco years used check
+        is_smoker_flag |= (concept_name == "Tobacco Used Years") & ~result_lower.isin(["0", "0.0", ""])
+
+        return is_smoker_flag
+
+    @staticmethod
+    def option_from_structured(records: list):
+        """Given records from phy table, return the smoking status option based on structured data.
+
+        Args:
+            records: List of record dictionaries with 'Concept_Name' and 'Result' fields
+
+        Returns:
+            str or None: One of 'A', 'B', 'C', or None
+            - A: Never smoked (conclusive)
+            - B: Former smoker (conclusive)
+            - C: Current smoker (conclusive)
+            - None: No structured data available OR inconclusive (fall back to LLM)
+        """
+        if not records:
+            return None
+
+        # Track indicators for each status
+        never_smoker = False
+        former_smoker = False
+        current_smoker = False
+
+        for record in records:
+            concept_name = record.get("Concept_Name", "")
+            result = str(record.get("Result", "")).lower()
+
+            # Check Smoking status field with standardized values
+            if concept_name == "Smoking status":
+                if result in ["never smoker", "never smoked"]:
+                    never_smoker = True
+                elif result in ["former smoker", "quit tobacco >= 1 year ago"]:
+                    former_smoker = True
+                elif result in ["current every day smoker", "current some day smoker",
+                               "smoker, current status unknown", "current tobacco user"]:
+                    current_smoker = True
+
+            # Check Smoking Tobacco Use concept names
+            elif concept_name == "Smoking Tobacco Use-Never Smoker":
+                never_smoker = True
+            elif concept_name == "Smoking Tobacco Use-Former Smoker":
+                former_smoker = True
+            elif concept_name in ["Smoking Tobacco Use-Current Every Day Smoker",
+                                  "Smoking Tobacco Use-Current Some Day Smoker",
+                                  "Smoking Tobacco Use-Smoker, Current Status Unknown",
+                                  "Smoking Tobacco Use-Heavy Tobacco Smoker",
+                                  "Smoking Tobacco Use-Light Tobacco Smoker"]:
+                current_smoker = True
+
+            # Check Tobacco User fields
+            elif concept_name == "Tobacco User-Never":
+                never_smoker = True
+            elif concept_name == "Tobacco User-Quit":
+                former_smoker = True
+            elif concept_name == "Tobacco User-Yes":
+                current_smoker = True
+
+            # Check Smoker field
+            elif concept_name == "Smoker":
+                if result in ["yes", "1", "true", "1.0"]:
+                    current_smoker = True
+                elif result in ["no", "0", "false", "0.0"]:
+                    never_smoker = True
+
+        # Priority: Most recent/severe status (current > former > never)
+        if current_smoker:
+            return "C"
+        elif former_smoker:
+            return "B"
+        elif never_smoker:
+            return "A"
+        # If no conclusive structured data, return None to use LLM
+        else:
+            return None
+
     @classmethod
     def query(cls, **kwargs):
         """Return the query for smoking status.
@@ -307,6 +429,7 @@ class smoking_status(PtFeatureBase):
     options = ["A", "B", "C", "D"]
     keywords = ["smokes", "smoker", "smoking", "tobacco"]
     val_var = True
+    inconclusive_values = {"D"}  # "Unknown" is inconclusive - should trigger LLM fallback
 
     def pooling_fn(preds: list):
         # return the most common smoking status
@@ -334,6 +457,7 @@ class smoking_amount(PtFeatureBase):
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = smoking_status.keywords
     val_var = True
+    inconclusive_values = {"F"}  # "No indication" is inconclusive - should trigger LLM fallback
 
     def pooling_fn(preds: list):
         # Get counts of A-D options
@@ -349,7 +473,38 @@ class smoking_amount(PtFeatureBase):
 
 
 class alcohol_status(PtFeatureBase):
-    pass
+    @staticmethod
+    def is_alcohol_user_vectorized(phy_subset):
+        """Vectorized alcohol user detection from Phy table structured data.
+
+        Args:
+            phy_subset: DataFrame with columns 'Concept_Name' and 'Result'
+
+        Returns:
+            pd.Series: Boolean series indicating which rows indicate alcohol use
+        """
+        import pandas as pd
+
+        concept_name = phy_subset["Concept_Name"]
+        result_lower = phy_subset["Result"].astype(str).str.lower()
+
+        # Initialize all as False
+        is_alcohol_flag = pd.Series(False, index=phy_subset.index)
+
+        # Drinks per week checks (non-zero)
+        is_alcohol_flag |= (
+            concept_name.isin(["Alcohol Drinks Per Week", "Alcohol Oz Per Week"]) &
+            (result_lower != "0")
+        )
+
+        # Direct alcohol indicators
+        is_alcohol_flag |= concept_name.isin([
+            "Alcohol User-Yes", "Alcohol Type - Shots of liquor",
+            "Alcohol Type - Wine", "Alcohol Type - Beer",
+            "Alcohol User-Not Currently", "Alcohol Type - Unknown"
+        ])
+
+        return is_alcohol_flag
 
     @classmethod
     def query(cls, **kwargs):
@@ -367,6 +522,7 @@ class alcohol_status(PtFeatureBase):
     options = ["A", "B", "C"]
     keywords = ["alcohol", "drinks", "etoh"]
     val_var = True
+    inconclusive_values = {"C"}  # "No indication" is inconclusive - should trigger LLM fallback
 
     def pooling_fn(preds: list):
         # return the most common alcohol status among A, B, C
@@ -375,6 +531,57 @@ class alcohol_status(PtFeatureBase):
             return abc_counts.most_common(1)[0][0]
         # If no A-C, return D
         return "C"
+
+    @staticmethod
+    def option_from_structured(records: list):
+        """Given records from phy table, return the alcohol status option based on structured data.
+
+        Args:
+            records: List of record dictionaries with 'Concept_Name' and 'Result' fields
+
+        Returns:
+            str or None: One of 'A', 'B', or None
+            - A: Currently Drinks (conclusive)
+            - B: Does not currently drink (conclusive)
+            - None: No structured data available OR inconclusive (fall back to LLM)
+        """
+        if not records:
+            return None
+
+        # Track indicators for each status
+        currently_drinks = False
+        does_not_drink = False
+
+        for record in records:
+            concept_name = record.get("Concept_Name", "")
+            result = str(record.get("Result", "")).lower()
+
+            # Check for "Currently Drinks" indicators (A)
+            if concept_name == "Alcohol User-Yes":
+                currently_drinks = True
+            elif concept_name in ["Alcohol Type - Beer", "Alcohol Type - Shots of liquor",
+                                   "Alcohol Type - Wine", "Alcohol Type - Unknown",
+                                   "Alcohol Type - Drinks containing 0.5 oz of alcohol"]:
+                currently_drinks = True
+            elif concept_name in ["Alcohol Drinks Per Week", "Alcohol Oz Per Week"]:
+                if result not in ["0", "0.0", "", "none"]:
+                    currently_drinks = True
+                elif result in ["0", "0.0"]:
+                    does_not_drink = True
+
+            # Check for "Does not currently drink" indicators (B)
+            elif concept_name in ["Alcohol User-No", "Alcohol User-Never", "Alcohol User-Not Currently"]:
+                does_not_drink = True
+
+        # Priority: if any evidence of drinking, return A (conclusive)
+        if currently_drinks:
+            return "A"
+        # If evidence of not drinking (and no evidence of drinking), return B (conclusive)
+        elif does_not_drink:
+            return "B"
+        # If only screening or "Not Asked" found, return None (inconclusive - use LLM)
+        else:
+            return None
 
 
 class alcohol_amount(PtFeatureBase):
@@ -397,6 +604,7 @@ class alcohol_amount(PtFeatureBase):
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
     val_var = True
+    inconclusive_values = {"F"}  # "No indication" is inconclusive - should trigger LLM fallback
 
     def pooling_fn(preds: list):
         if "D" in preds:
