@@ -262,6 +262,8 @@ def _extract_and_pool_structured(feature_cls, block_records):
 
 def _process_follow_up_features_llm(follow_up_features, pred_value, record_text, keywords, record_date, rows):
     """Process follow-up features using LLM for a given prediction."""
+    global _llm_windows_count, _per_patient_stats, _per_patient_stats_lock
+
     if not follow_up_features or pred_value.upper() not in follow_up_features:
         return
 
@@ -271,6 +273,14 @@ def _process_follow_up_features_llm(follow_up_features, pred_value, record_text,
         follow_ups = [follow_ups]
 
     for follow_up_cls, follow_up_name in follow_ups:
+        # Track LLM usage for follow-up feature
+        _llm_windows_count += 1
+        if hasattr(_thread_local, 'current_patient_id') and _thread_local.current_patient_id:
+            with _per_patient_stats_lock:
+                if _thread_local.current_patient_id not in _per_patient_stats:
+                    _per_patient_stats[_thread_local.current_patient_id] = {"structured": 0, "llm": 0}
+                _per_patient_stats[_thread_local.current_patient_id]["llm"] += 1
+
         for kw in keywords:
             chunks = get_chunks_by_keyword(record_text, kw)
             for chunk in chunks:
