@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import threading
 
 ### TODO: use the good queries we generated from testing
 
@@ -34,9 +35,10 @@ _total_llm_calls = 0
 _structured_windows_count = 0
 _llm_windows_count = 0
 
-# Per-patient statistics (for first 10 patients)
+# Per-patient statistics (all patients, will output first 10 in report)
 _per_patient_stats = {}
-_current_patient_id = None
+_per_patient_stats_lock = threading.Lock()
+_thread_local = threading.local()
 
 # Cache for prevalence distributions
 _prevalence_cache = {}
@@ -335,7 +337,7 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
                                      (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis")]}
         keywords: Custom keywords list (defaults to feature_cls.keywords)
     """
-    global _structured_windows_count, _llm_windows_count, _per_patient_stats, _current_patient_id
+    global _structured_windows_count, _llm_windows_count, _per_patient_stats, _per_patient_stats_lock
 
     # Use custom keywords if provided, otherwise use feature class keywords
     if keywords is None:
@@ -349,8 +351,12 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
     if structured_value is not None:
         # Track structured window usage
         _structured_windows_count += 1
-        if _current_patient_id and _current_patient_id in _per_patient_stats:
-            _per_patient_stats[_current_patient_id]["structured"] += 1
+        if hasattr(_thread_local, 'current_patient_id') and _thread_local.current_patient_id:
+            with _per_patient_stats_lock:
+                # Initialize stats for this patient if not already tracked
+                if _thread_local.current_patient_id not in _per_patient_stats:
+                    _per_patient_stats[_thread_local.current_patient_id] = {"structured": 0, "llm": 0}
+                _per_patient_stats[_thread_local.current_patient_id]["structured"] += 1
 
         # Use the most recent record date for the block
         if block_records:
@@ -371,16 +377,19 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
         return  # Done processing - structured data was conclusive
 
     # Structured data was None/inconclusive, fall back to LLM processing
-    # Track LLM window usage
-    _llm_windows_count += 1
-    if _current_patient_id and _current_patient_id in _per_patient_stats:
-        _per_patient_stats[_current_patient_id]["llm"] += 1
-
     # Find the record with the most keywords
     best_record, keyword_count = select_record_with_most_keywords(block_records, keywords)
 
     # If we found a record with keywords, process it
     if best_record and keyword_count > 0:
+        # Track LLM window usage (only if we actually process it)
+        _llm_windows_count += 1
+        if hasattr(_thread_local, 'current_patient_id') and _thread_local.current_patient_id:
+            with _per_patient_stats_lock:
+                # Initialize stats for this patient if not already tracked
+                if _thread_local.current_patient_id not in _per_patient_stats:
+                    _per_patient_stats[_thread_local.current_patient_id] = {"structured": 0, "llm": 0}
+                _per_patient_stats[_thread_local.current_patient_id]["llm"] += 1
         record_date = best_record["Report_Date_Time"]
         record_text = best_record["Report_Text"]
 
@@ -517,15 +526,6 @@ def process_pt(pt_id):
     Return None if the patient can't be processed (e.g. no acne diagnosis)
     dates are in mm/dd/yyyy format
     """
-    global _current_patient_id, _per_patient_stats
-
-    # Set current patient ID for tracking
-    _current_patient_id = pt_id
-
-    # Initialize per-patient stats if this is one of the first 10 patients
-    if len(_per_patient_stats) < 10 and pt_id not in _per_patient_stats:
-        _per_patient_stats[pt_id] = {"structured": 0, "llm": 0}
-
     ### Step 1: Determine index date and calculate time windows ###
     with db.connect() as conn:
         query = text(f"SELECT * FROM dia WHERE EMPI = '{pt_id}' AND (Code LIKE '%L70.0%' OR Code LIKE '%L70.8%' OR Code LIKE '%L70.9%' OR Code LIKE '%L70.1%' OR Code LIKE '%706.1%' OR Code LIKE '%acne%') ORDER BY Date ASC LIMIT 1")
@@ -539,6 +539,9 @@ def process_pt(pt_id):
         else:
             print("WARNING: No acne diagnosis found for patient {pt_id}")
             return None
+
+    # Set current patient ID for tracking (only after confirming they have acne diagnosis)
+    _thread_local.current_patient_id = pt_id
 
     print(f"Index date: {index_date}")
     print(f"Outcome window starts: {outcome_window_start_date}")
@@ -656,7 +659,7 @@ def process_pt(pt_id):
     df = pd.DataFrame(rows)
 
     # Clear current patient ID
-    _current_patient_id = None
+    _thread_local.current_patient_id = None
 
     return df
             
@@ -771,10 +774,12 @@ with open(runtime_info_path, 'w') as f:
 
     # Add per-patient breakdown for first 10 patients
     if _per_patient_stats:
-        f.write(f"\n## Per-Patient Breakdown (First {len(_per_patient_stats)} Patients)\n\n")
+        # Take first 10 patients (in order they were added to dict)
+        first_10_patients = list(_per_patient_stats.items())[:10]
+        f.write(f"\n## Per-Patient Breakdown (First {len(first_10_patients)} Patients)\n\n")
         f.write(f"| Patient ID | Structured | LLM | Total | Structured % |\n")
         f.write(f"|------------|------------|-----|-------|-------------|\n")
-        for pt_id, stats in _per_patient_stats.items():
+        for pt_id, stats in first_10_patients:
             total = stats["structured"] + stats["llm"]
             pct = (stats["structured"] / total * 100) if total > 0 else 0
             f.write(f"| {pt_id} | {stats['structured']} | {stats['llm']} | {total} | {pct:.1f}% |\n")
