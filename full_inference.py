@@ -283,7 +283,7 @@ def _process_follow_up_features_llm(follow_up_features, pred_value, record_text,
                 })
 
 
-def _process_follow_up_features_structured(follow_up_features, pred_value, block_records, keywords, rows):
+def _process_follow_up_features_structured(follow_up_features, pred_value, block_records, keywords, rows, phy_records=None):
     """Process follow-up features using structured-then-LLM approach."""
     if not follow_up_features or pred_value.upper() not in follow_up_features:
         return
@@ -294,8 +294,9 @@ def _process_follow_up_features_structured(follow_up_features, pred_value, block
         follow_ups = [follow_ups]
 
     for follow_up_cls, follow_up_name in follow_ups:
-        # Try structured data first (extract from ALL records and pool)
-        structured_value = _extract_and_pool_structured(follow_up_cls, block_records)
+        # Try structured data first (extract from phy_records and pool)
+        structured_records = phy_records if phy_records is not None else []
+        structured_value = _extract_and_pool_structured(follow_up_cls, structured_records)
 
         if structured_value is not None:
             # Structured data was conclusive
@@ -320,15 +321,15 @@ def _process_follow_up_features_structured(follow_up_features, pred_value, block
                                                pred_value, record_text, keywords, record_date, rows)
 
 
-def process_feature_single_block(block_records, feature_cls, rows, follow_up_features=None, keywords=None):
+def process_feature_single_block(block_records, feature_cls, rows, follow_up_features=None, keywords=None, phy_records=None):
     """
     Process a feature for a single time block.
 
-    Extracts structured data from ALL records in the block, pools them, and uses the result.
-    Falls back to LLM-based extraction if structured data is unavailable or inconclusive.
+    Extracts structured data from phy_records, pools them, and uses the result.
+    Falls back to LLM-based extraction using block_records if structured data is unavailable or inconclusive.
 
     Args:
-        block_records: List of record dictionaries for this time block
+        block_records: List of vis table record dictionaries for this time block (for LLM)
         feature_cls: Feature class (e.g., smoking_status)
         rows: List to append result rows to
         follow_up_features: Dict mapping prediction value to list of (feature_cls, feature_name) tuples
@@ -336,6 +337,7 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
                            or {"A": [(cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
                                      (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis")]}
         keywords: Custom keywords list (defaults to feature_cls.keywords)
+        phy_records: List of phy table record dictionaries (for structured data extraction)
     """
     global _structured_windows_count, _llm_windows_count, _per_patient_stats, _per_patient_stats_lock
 
@@ -343,9 +345,10 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
     if keywords is None:
         keywords = feature_cls.keywords
 
-    # Try to get value from structured data (extract from ALL records and pool)
+    # Try to get value from structured data (extract from phy_records and pool)
     # Returns None if no structured data OR if structured data is inconclusive
-    structured_value = _extract_and_pool_structured(feature_cls, block_records)
+    structured_records = phy_records if phy_records is not None else []
+    structured_value = _extract_and_pool_structured(feature_cls, structured_records)
 
     # If structured data gave a conclusive answer, use it and process follow-ups
     if structured_value is not None:
@@ -372,7 +375,7 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
         })
 
         # Process follow-up features using structured-then-LLM approach
-        _process_follow_up_features_structured(follow_up_features, structured_value, block_records, keywords, rows)
+        _process_follow_up_features_structured(follow_up_features, structured_value, block_records, keywords, rows, phy_records)
 
         return  # Done processing - structured data was conclusive
 
@@ -548,9 +551,15 @@ def process_pt(pt_id):
 
     ### Step 2: Get all records for patient ###
     with db.connect() as conn:
+        # Query vis table for LLM-based extraction (has Report_Text)
         query = text(f"SELECT * FROM vis WHERE EMPI = '{pt_id}'")
         result = conn.execute(query)
         records = result.mappings().fetchall()
+
+        # Query phy table for structured data extraction (has Concept_Name and Result)
+        phy_query = text(f"SELECT * FROM phy WHERE EMPI = '{pt_id}'")
+        phy_result = conn.execute(phy_query)
+        phy_records = phy_result.mappings().fetchall()
 
     ### Step 3: Define time windows and filter records ###
     # Window 1: All records (for smoking, alcohol, transplant, immunosuppressed_disease)
@@ -562,7 +571,7 @@ def process_pt(pt_id):
     # Window 3: Records between index_date and outcome_window_start_date (for antibiotics)
     treatment_window_records = filter_records_by_date_range(records, start_date=index_date, end_date=outcome_window_start_date)
 
-    print(f"Total records: {len(all_records)}, Outcome window: {len(outcome_records)}, Treatment window: {len(treatment_window_records)}")
+    print(f"Total records: {len(all_records)}, Outcome window: {len(outcome_records)}, Treatment window: {len(treatment_window_records)}, Phy records: {len(phy_records)}")
 
     ### Step 4: Calculate time blocks for each feature ###
     # Smoking status: 1 per 3 months
@@ -588,24 +597,26 @@ def process_pt(pt_id):
     # === Features using all records ===
 
     # Smoking status: process each 3-month block
-    # Note: Extracts structured data from ALL records in each block, pools using pooling_fn
+    # Note: Extracts structured data from phy_records, pools using pooling_fn
     # Falls back to LLM if structured data is unavailable/inconclusive
     # Follow-up features (smoking_amount) also use structured-then-LLM approach
     for block_index, block_records in smoking_blocks.items():
         process_feature_single_block(
             block_records, smoking_status, rows,
-            follow_up_features={"C": (smoking_amount, "smoking_amount")}
+            follow_up_features={"C": (smoking_amount, "smoking_amount")},
+            phy_records=phy_records
         )
     print(f"Completed smoking status for {pt_id}")
 
     # Alcohol status: process each 3-month block
-    # Note: Extracts structured data from ALL records in each block, pools using pooling_fn
+    # Note: Extracts structured data from phy_records, pools using pooling_fn
     # Falls back to LLM if structured data is unavailable/inconclusive
     # Follow-up features (alcohol_amount) also use structured-then-LLM approach
     for block_index, block_records in alcohol_blocks.items():
         process_feature_single_block(
             block_records, alcohol_status, rows,
-            follow_up_features={"A": (alcohol_amount, "alcohol_amount")}
+            follow_up_features={"A": (alcohol_amount, "alcohol_amount")},
+            phy_records=phy_records
         )
     print(f"Completed alcohol status for {pt_id}")
 
