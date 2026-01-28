@@ -6,8 +6,14 @@ from pt_features import get_rows_by_icd, cancer_icd9s, cancer_icd10s, smoking_st
 import json
 from pathlib import Path
 import numpy as np
+import argparse
 
-N_LIMIT = None  # use first N/2 from each cohort for quick test; set to None for full run
+# Parse command line arguments
+parser = argparse.ArgumentParser(description="Create matched case-control cohort for antibiotic study")
+parser.add_argument("--n-limit", type=int, default=None, help="Limit to first N patients (N/2 cases, N/2 controls). Default: None (use all)")
+args = parser.parse_args()
+
+N_LIMIT = args.n_limit  # use first N/2 from each cohort for quick test; set to None for full run
 BATCH_SIZE = 1000  # For SQL queries to avoid memory issues
 
 
@@ -78,6 +84,31 @@ if N_LIMIT is not None:
     no_abx_empis = no_abx_empis[:n_each]
     print(f"Limited to {n_each} cases and {n_each} controls ({N_LIMIT} pts total)")
 
+# Get index dates for cases (first antibiotic date)
+print("Determining index dates for cases...")
+with db.connect() as conn:
+    abx_list_str = ",".join([f"'{str(x)}'" for x in abx_list])
+    empis_str = ",".join([f"'{str(e).replace(chr(39), chr(39)+chr(39))}'" for e in took_abx_empis])
+    query = text(f"""
+        SELECT EMPI, MIN(Medication_Date) as index_date
+        FROM med
+        WHERE EMPI IN ({empis_str}) AND Code IN ({abx_list_str})
+        GROUP BY EMPI
+    """)
+    result = conn.execute(query)
+    index_dates_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+index_dates_df["index_date"] = pd.to_datetime(index_dates_df["index_date"])
+
+# For controls, use the median index date from cases
+median_index_date = index_dates_df["index_date"].median()
+print(f"Median index date for cases: {median_index_date}")
+
+# Create index date mapping for all patients
+index_date_map = index_dates_df.set_index("EMPI")["index_date"].to_dict()
+for empi in no_abx_empis:
+    index_date_map[empi] = median_index_date
+
 # Get demographic info for both cohorts using batched queries
 print("Querying demographic data...")
 with db.connect() as conn:
@@ -106,11 +137,24 @@ with db.connect() as conn:
     all_empis = list(took_abx_empis) + list(no_abx_empis)
     phy_df = batch_sql_query(conn, all_empis, "phy")
 
-# Extract BMI (mean of BMI measurements)
+# Parse dates and filter to records within 1 year before index date
+print("Filtering phy records to closest to index date...")
+phy_df["Date"] = pd.to_datetime(phy_df["Date"], format="%m/%d/%Y", errors="coerce")
+phy_df["index_date"] = phy_df["EMPI"].map(index_date_map)
+
+# Keep records within 1 year before index date
+phy_df["days_before_index"] = (phy_df["index_date"] - phy_df["Date"]).dt.days
+phy_df = phy_df[(phy_df["days_before_index"] >= 0) & (phy_df["days_before_index"] <= 365)]
+
+print(f"Filtered phy records: {len(phy_df)} records within 1 year before index date")
+
+# Extract BMI (use most recent measurement within the window)
 print("Processing BMI data...")
 bmi_df = phy_df[phy_df["Code"] == "BMI"].copy()
 bmi_df["Result"] = pd.to_numeric(bmi_df["Result"], errors="coerce")
-bmi_by_empi = bmi_df.groupby("EMPI")["Result"].mean()
+# Sort by days_before_index to get closest to index date (smallest value = closest)
+bmi_df = bmi_df.sort_values("days_before_index")
+bmi_by_empi = bmi_df.groupby("EMPI")["Result"].first()
 dem_df["study_bmi"] = dem_df["EMPI"].map(bmi_by_empi)
 
 # Categorize BMI into 4 categories
@@ -129,23 +173,52 @@ def categorize_bmi(bmi):
 dem_df["study_bmi_category"] = dem_df["study_bmi"].apply(categorize_bmi)
 
 
-# Vectorized smoking detection (avoid copying entire dataframe)
+def smoking_status_from_structured_wrapper(phy_subset):
+    """Wrapper for smoking_status.option_from_structured to work with grouped EMPI data."""
+    results = {}
+    for empi, group in phy_subset.groupby("EMPI"):
+        records = group[["Concept_Name", "Result"]].to_dict("records")
+        option = smoking_status.option_from_structured(records)
+        # Map options to descriptive labels
+        if option == "C":
+            results[empi] = "Current Smoker"
+        elif option == "B":
+            results[empi] = "Former Smoker"
+        elif option == "A":
+            results[empi] = "Never Smoker"
+        else:
+            results[empi] = "Unknown"
+    return pd.Series(results)
+
+
+def alcohol_status_from_structured_wrapper(phy_subset):
+    """Wrapper for alcohol_status.option_from_structured to work with grouped EMPI data."""
+    results = {}
+    for empi, group in phy_subset.groupby("EMPI"):
+        records = group[["Concept_Name", "Result"]].to_dict("records")
+        option = alcohol_status.option_from_structured(records)
+        # Map options to descriptive labels
+        if option == "A":
+            results[empi] = "Currently Drinks"
+        elif option == "B":
+            results[empi] = "Does Not Currently Drink"
+        else:
+            results[empi] = "Unknown"
+    return pd.Series(results)
+
+
+# Use structured data detection via option_from_structured wrapper
 print("Processing smoking status...")
-smoking_flags = smoking_status.is_smoker_vectorized(phy_df)
-smoking_by_empi = phy_df.loc[smoking_flags].groupby("EMPI").size() > 0
-dem_df["study_smoking_status"] = dem_df["EMPI"].map(smoking_by_empi).map({True: "Yes", False: "No"})
-dem_df.loc[~dem_df["EMPI"].isin(smoking_by_empi.index), "study_smoking_status"] = "Unknown"
+smoking_by_empi = smoking_status_from_structured_wrapper(phy_df)
+dem_df["study_smoking_status"] = dem_df["EMPI"].map(smoking_by_empi).fillna("Unknown")
 
-
-# Vectorized alcohol detection
+# Use structured data detection via option_from_structured wrapper
 print("Processing alcohol status...")
-alcohol_flags = alcohol_status.is_alcohol_user_vectorized(phy_df)
-alcohol_by_empi = phy_df.loc[alcohol_flags].groupby("EMPI").size() > 0
-dem_df["study_alcohol_status"] = dem_df["EMPI"].map(alcohol_by_empi).map({True: "Yes", False: "No"})
-dem_df.loc[~dem_df["EMPI"].isin(alcohol_by_empi.index), "study_alcohol_status"] = "Unknown"
+alcohol_by_empi = alcohol_status_from_structured_wrapper(phy_df)
+dem_df["study_alcohol_status"] = dem_df["EMPI"].map(alcohol_by_empi).fillna("Unknown")
 
 # Free up memory
-del phy_df, bmi_df, smoking_flags, alcohol_flags
+del phy_df, bmi_df
 
 print(f"Smoking status values: {dem_df['study_smoking_status'].value_counts().to_dict()}")
 print(f"Alcohol status values: {dem_df['study_alcohol_status'].value_counts().to_dict()}")
@@ -156,7 +229,10 @@ print(dem_df.head())
 print(f"Patients who took ABX: {len(took_abx_empis)}")
 print(f"Patients who did not take ABX: {len(no_abx_empis)}")
 
-dem_df = dem_df[["EMPI", "took_abx", "study_age", "study_sex", "study_race", "study_bmi", "study_bmi_category", "study_smoking_status", "study_alcohol_status"]]
+# Add index date to dem_df for reference
+dem_df["index_date"] = dem_df["EMPI"].map(index_date_map)
+
+dem_df = dem_df[["EMPI", "took_abx", "index_date", "study_age", "study_sex", "study_race", "study_bmi", "study_bmi_category", "study_smoking_status", "study_alcohol_status"]]
 
 # Separate cases and controls
 print("\nPreparing for case-control matching...")
@@ -275,4 +351,39 @@ with open(txt_path, "w") as f:
     f.write(f"Unmatched: {unmatched_count} ({unmatched_percentage:.2f}%)\n")
 
 print(f"Saved match statistics to {txt_path}")
+
+# Create pie charts for each categorical variable
+print("\nCreating pie charts for cohort variables...")
+import matplotlib.pyplot as plt
+
+tmp_dir = Path("tmp")
+tmp_dir.mkdir(exist_ok=True)
+
+# Get matched patients only
+matched_empis = set(matched_case_empis + matched_control_empis)
+matched_dem_df = dem_df[dem_df["EMPI"].isin(matched_empis)]
+
+# Variables to plot
+variables = {
+    "took_abx": "Antibiotic Use",
+    "study_sex": "Sex",
+    "study_race": "Race/Ethnicity",
+    "study_bmi_category": "BMI Category",
+    "study_smoking_status": "Smoking Status",
+    "study_alcohol_status": "Alcohol Status"
+}
+
+for var_name, var_label in variables.items():
+    counts = matched_dem_df[var_name].value_counts()
+
+    plt.figure(figsize=(8, 8))
+    plt.pie(counts.values, labels=counts.index, autopct='%1.1f%%', startangle=90)
+    plt.title(f"{var_label} Distribution in Matched Cohort (N={len(matched_dem_df)})")
+    plt.axis('equal')
+
+    output_path = tmp_dir / f"{var_name}_pie_chart.png"
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Saved {output_path}")
+
 print("\nDone!")

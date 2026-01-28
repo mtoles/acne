@@ -9,6 +9,10 @@ from models import MrModel, retry_with_validation
 from datetime import timedelta
 import math
 from utils import OptionType
+from structured_data_mappings import (
+    alcohol_status_structured_mapping,
+    smoking_status_structured_mapping,
+)
 
 ### General Functions ###
 
@@ -77,7 +81,6 @@ FAMILY_HISTORY_STR = (
 DATE_INTERPOLATION_STR = "If only the month and year are given, assume the date was the 15th. If only the year is given, assume the date was July 2. Answer in the format YYYYMMDD, including leading zeros."
 
 
-
 # helper functions
 def get_rows_by_icd(df: pd.DataFrame, icd9_list: list, icd10_list: list):
     icd10_df = df[df["Code"].apply(lambda x: any(x.startswith(y) for y in icd9_list))]
@@ -89,66 +92,75 @@ def get_rows_by_icd(df: pd.DataFrame, icd9_list: list, icd10_list: list):
 def find_best_prompt_from_prompt_iteration_labels(class_name: str, **kwargs) -> str:
     """
     Find the best prompt for a given class name from the Excel file.
-    
+
     Reads the 'Prompt Tuning' sheet from 'labeled_data/LLM Adjustment Tracking.xlsx',
-    finds rows where 'Data Point' matches the class name, checks all 'Accuracy #x' 
-    columns to find the highest accuracy, and returns the corresponding prompt from 
+    finds rows where 'Data Point' matches the class name, checks all 'Accuracy #x'
+    columns to find the highest accuracy, and returns the corresponding prompt from
     'Prompt #x' column.
-    
+
     Args:
         class_name: The name of the class (e.g., 'cancer_cancer')
         **kwargs: Additional keyword arguments to format the prompt string (e.g., keyword)
-        
+
     Returns:
         The best prompt string
-        
+
     Raises:
         AssertionError: If no prompt is found for the given class name
     """
     excel_path = "labeled_data/LLM Adjustment Tracking.xlsx"
     df = pd.read_excel(excel_path, sheet_name="Prompt Tuning")
-    
+
     # Find rows where Data Point matches the class name
     matching_rows = df[df["Data Point"] == class_name]
-    
-    assert len(matching_rows) > 0, f"No rows found for class '{class_name}' in Excel file"
-    
+
+    assert (
+        len(matching_rows) > 0
+    ), f"No rows found for class '{class_name}' in Excel file"
+
     # Get the row indices
     row_indices = matching_rows.index.tolist()
-    
+
     # Find accuracy columns (Accuracy #1 through Accuracy #8)
     accuracy_cols = [f"Accuracy #{i}" for i in range(1, 9)]
     prompt_cols = [f"Prompt #{i}" for i in range(1, 9)]
     # Also handle the baseline prompt
     if "Prompt #1 (baseline)" in df.columns:
         prompt_cols[0] = "Prompt #1 (baseline)"
-    
+
     best_accuracy = -1
     best_prompt = None
     best_iteration = None
     baseline_prompt = None
-    
+
     # Check all accuracy columns across all matching rows
     for idx in row_indices:
         row = df.loc[idx]
         # First, check if there's a baseline prompt
-        baseline_col = "Prompt #1 (baseline)" if "Prompt #1 (baseline)" in df.columns else "Prompt #1"
+        baseline_col = (
+            "Prompt #1 (baseline)"
+            if "Prompt #1 (baseline)" in df.columns
+            else "Prompt #1"
+        )
         if baseline_col in df.columns:
             baseline_val = row[baseline_col]
             if pd.notna(baseline_val):
                 baseline_prompt = baseline_val
-        
+
         for i, acc_col in enumerate(accuracy_cols):
             if acc_col not in df.columns:
                 continue
             acc_value = row[acc_col]
-            
+
             # Skip NaN, None, and non-numeric values (like "*")
             if pd.isna(acc_value):
                 continue
-            if isinstance(acc_value, str) and not acc_value.replace(".", "").replace("-", "").isdigit():
+            if (
+                isinstance(acc_value, str)
+                and not acc_value.replace(".", "").replace("-", "").isdigit()
+            ):
                 continue
-            
+
             acc_value = float(acc_value)
             if acc_value > best_accuracy:
                 best_accuracy = acc_value
@@ -158,13 +170,15 @@ def find_best_prompt_from_prompt_iteration_labels(class_name: str, **kwargs) -> 
                     prompt_val = row[prompt_col]
                     if pd.notna(prompt_val):
                         best_prompt = prompt_val
-    
+
     # If no prompt with valid accuracy found, fall back to baseline prompt
     if best_prompt is None or pd.isna(best_prompt):
         best_prompt = baseline_prompt
-    
-    assert best_prompt is not None and not pd.isna(best_prompt), f"No valid prompt found for class '{class_name}' (found {len(matching_rows)} matching rows but no prompt with valid accuracy or baseline prompt)"
-    
+
+    assert best_prompt is not None and not pd.isna(
+        best_prompt
+    ), f"No valid prompt found for class '{class_name}' (found {len(matching_rows)} matching rows but no prompt with valid accuracy or baseline prompt)"
+
     # Perform keyword substitution if the best_prompt contains placeholders
     if "{keyword}" in str(best_prompt) or "{kwargs" in str(best_prompt):
         keyword = kwargs.get("keyword", "")
@@ -178,10 +192,12 @@ def find_best_prompt_from_prompt_iteration_labels(class_name: str, **kwargs) -> 
         except KeyError:
             # If formatting fails due to missing keys, just use the prompt as-is after keyword substitution
             pass
-    
+
     return str(best_prompt)
 
+
 ### Patient Features ###
+
 
 class PtFeaturesMeta(type):
     registry = {}
@@ -292,54 +308,6 @@ class smoking_status(PtFeatureBase):
         return smoking_status
 
     @staticmethod
-    def is_smoker_vectorized(phy_subset):
-        """Vectorized smoking detection from Phy table structured data.
-
-        Args:
-            phy_subset: DataFrame with columns 'Concept_Name' and 'Result'
-
-        Returns:
-            pd.Series: Boolean series indicating which rows indicate smoking
-        """
-        import pandas as pd
-
-        concept_name = phy_subset["Concept_Name"]
-        result_lower = phy_subset["Result"].astype(str).str.lower()
-
-        # Initialize all as False
-        is_smoker_flag = pd.Series(False, index=phy_subset.index)
-
-        # Smoking status checks
-        is_smoker_flag |= (
-            (concept_name == "Smoking status") &
-            result_lower.isin([
-                "current every day smoker", "smoker, current status unknown",
-                "former smoker", "quit tobacco >= 1 year ago",
-                "current tobacco user", "1/2 ppd"
-            ])
-        )
-
-        # Concept name checks
-        is_smoker_flag |= concept_name.isin([
-            "Smoking Tobacco Use-Former Smoker",
-            "Smoking Tobacco Use-Current Every Day Smoker",
-            "Smoking Tobacco Use-Current Some Day Smoker",
-            "Smoking Tobacco Use-Light Tobacco Smoker",
-            "Smoking Tobacco Use-Smoker, Current Status Unknown",
-            "Smoking Tobacco Use-Heavy Tobacco Smoker",
-            "Tobacco User-Yes", "Tobacco User-Quit",
-            "Cigarettes", "Tobacco Pack Per Day"
-        ])
-
-        # Smoker yes/true checks
-        is_smoker_flag |= (concept_name == "Smoker") & result_lower.isin(["yes", "1", "true", "1.0"])
-
-        # Tobacco years used check
-        is_smoker_flag |= (concept_name == "Tobacco Used Years") & ~result_lower.isin(["0", "0.0", ""])
-
-        return is_smoker_flag
-
-    @staticmethod
     def option_from_structured(records: list):
         """Given records from phy table, return the smoking status option based on structured data.
 
@@ -353,65 +321,7 @@ class smoking_status(PtFeatureBase):
             - C: Current smoker (conclusive)
             - None: No structured data available OR inconclusive (fall back to LLM)
         """
-        if not records:
-            return None
-
-        # Track indicators for each status
-        never_smoker = False
-        former_smoker = False
-        current_smoker = False
-
-        for record in records:
-            concept_name = record.get("Concept_Name", "")
-            result = str(record.get("Result", "")).lower()
-
-            # Check Smoking status field with standardized values
-            if concept_name == "Smoking status":
-                if result in ["never smoker", "never smoked"]:
-                    never_smoker = True
-                elif result in ["former smoker", "quit tobacco >= 1 year ago"]:
-                    former_smoker = True
-                elif result in ["current every day smoker", "current some day smoker",
-                               "smoker, current status unknown", "current tobacco user"]:
-                    current_smoker = True
-
-            # Check Smoking Tobacco Use concept names
-            elif concept_name == "Smoking Tobacco Use-Never Smoker":
-                never_smoker = True
-            elif concept_name == "Smoking Tobacco Use-Former Smoker":
-                former_smoker = True
-            elif concept_name in ["Smoking Tobacco Use-Current Every Day Smoker",
-                                  "Smoking Tobacco Use-Current Some Day Smoker",
-                                  "Smoking Tobacco Use-Smoker, Current Status Unknown",
-                                  "Smoking Tobacco Use-Heavy Tobacco Smoker",
-                                  "Smoking Tobacco Use-Light Tobacco Smoker"]:
-                current_smoker = True
-
-            # Check Tobacco User fields
-            elif concept_name == "Tobacco User-Never":
-                never_smoker = True
-            elif concept_name == "Tobacco User-Quit":
-                former_smoker = True
-            elif concept_name == "Tobacco User-Yes":
-                current_smoker = True
-
-            # Check Smoker field
-            elif concept_name == "Smoker":
-                if result in ["yes", "1", "true", "1.0"]:
-                    current_smoker = True
-                elif result in ["no", "0", "false", "0.0"]:
-                    never_smoker = True
-
-        # Priority: Most recent/severe status (current > former > never)
-        if current_smoker:
-            return "C"
-        elif former_smoker:
-            return "B"
-        elif never_smoker:
-            return "A"
-        # If no conclusive structured data, return None to use LLM
-        else:
-            return None
+        return smoking_status_structured_mapping(records)
 
     @classmethod
     def query(cls, **kwargs):
@@ -423,13 +333,17 @@ class smoking_status(PtFeatureBase):
         C. Current smoker
         D. Unknown
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("smoking_status", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "smoking_status", **kwargs
+        )
         return prompt
 
     options = ["A", "B", "C", "D"]
     keywords = ["smokes", "smoker", "smoking", "tobacco"]
     val_var = True
-    inconclusive_values = {"D"}  # "Unknown" is inconclusive - should trigger LLM fallback
+    inconclusive_values = {
+        "D"
+    }  # "Unknown" is inconclusive - should trigger LLM fallback
 
     def pooling_fn(preds: list):
         # return the most common smoking status
@@ -451,13 +365,17 @@ class smoking_amount(PtFeatureBase):
         E. Smoker but unknown quantity
         F. No indication of smoking status
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("smoking_amount", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "smoking_amount", **kwargs
+        )
         return prompt
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = smoking_status.keywords
     val_var = True
-    inconclusive_values = {"F"}  # "No indication" is inconclusive - should trigger LLM fallback
+    inconclusive_values = {
+        "F"
+    }  # "No indication" is inconclusive - should trigger LLM fallback
 
     def pooling_fn(preds: list):
         # Get counts of A-D options
@@ -473,39 +391,6 @@ class smoking_amount(PtFeatureBase):
 
 
 class alcohol_status(PtFeatureBase):
-    @staticmethod
-    def is_alcohol_user_vectorized(phy_subset):
-        """Vectorized alcohol user detection from Phy table structured data.
-
-        Args:
-            phy_subset: DataFrame with columns 'Concept_Name' and 'Result'
-
-        Returns:
-            pd.Series: Boolean series indicating which rows indicate alcohol use
-        """
-        import pandas as pd
-
-        concept_name = phy_subset["Concept_Name"]
-        result_lower = phy_subset["Result"].astype(str).str.lower()
-
-        # Initialize all as False
-        is_alcohol_flag = pd.Series(False, index=phy_subset.index)
-
-        # Drinks per week checks (non-zero)
-        is_alcohol_flag |= (
-            concept_name.isin(["Alcohol Drinks Per Week", "Alcohol Oz Per Week"]) &
-            (result_lower != "0")
-        )
-
-        # Direct alcohol indicators
-        is_alcohol_flag |= concept_name.isin([
-            "Alcohol User-Yes", "Alcohol Type - Shots of liquor",
-            "Alcohol Type - Wine", "Alcohol Type - Beer",
-            "Alcohol User-Not Currently", "Alcohol Type - Unknown"
-        ])
-
-        return is_alcohol_flag
-
     @classmethod
     def query(cls, **kwargs):
         """Return the query for alcohol status.
@@ -515,14 +400,17 @@ class alcohol_status(PtFeatureBase):
         B. Does not currently drink
         C. No indication of alcohol status
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("alcohol_status", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "alcohol_status", **kwargs
+        )
         return prompt
-
 
     options = ["A", "B", "C"]
     keywords = ["alcohol", "drinks", "etoh"]
     val_var = True
-    inconclusive_values = {"C"}  # "No indication" is inconclusive - should trigger LLM fallback
+    inconclusive_values = {
+        "C"
+    }  # "No indication" is inconclusive - should trigger LLM fallback
 
     def pooling_fn(preds: list):
         # return the most common alcohol status among A, B, C
@@ -545,43 +433,7 @@ class alcohol_status(PtFeatureBase):
             - B: Does not currently drink (conclusive)
             - None: No structured data available OR inconclusive (fall back to LLM)
         """
-        if not records:
-            return None
-
-        # Track indicators for each status
-        currently_drinks = False
-        does_not_drink = False
-
-        for record in records:
-            concept_name = record.get("Concept_Name", "")
-            result = str(record.get("Result", "")).lower()
-
-            # Check for "Currently Drinks" indicators (A)
-            if concept_name == "Alcohol User-Yes":
-                currently_drinks = True
-            elif concept_name in ["Alcohol Type - Beer", "Alcohol Type - Shots of liquor",
-                                   "Alcohol Type - Wine", "Alcohol Type - Unknown",
-                                   "Alcohol Type - Drinks containing 0.5 oz of alcohol"]:
-                currently_drinks = True
-            elif concept_name in ["Alcohol Drinks Per Week", "Alcohol Oz Per Week"]:
-                if result not in ["0", "0.0", "", "none"]:
-                    currently_drinks = True
-                elif result in ["0", "0.0"]:
-                    does_not_drink = True
-
-            # Check for "Does not currently drink" indicators (B)
-            elif concept_name in ["Alcohol User-No", "Alcohol User-Never", "Alcohol User-Not Currently"]:
-                does_not_drink = True
-
-        # Priority: if any evidence of drinking, return A (conclusive)
-        if currently_drinks:
-            return "A"
-        # If evidence of not drinking (and no evidence of drinking), return B (conclusive)
-        elif does_not_drink:
-            return "B"
-        # If only screening or "Not Asked" found, return None (inconclusive - use LLM)
-        else:
-            return None
+        return alcohol_status_structured_mapping(records)
 
 
 class alcohol_amount(PtFeatureBase):
@@ -597,14 +449,17 @@ class alcohol_amount(PtFeatureBase):
         E. Drinker but unknown quantity
         F. No indication of alcohol status
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("alcohol_amount", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "alcohol_amount", **kwargs
+        )
         return prompt
-
 
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
     val_var = True
-    inconclusive_values = {"F"}  # "No indication" is inconclusive - should trigger LLM fallback
+    inconclusive_values = {
+        "F"
+    }  # "No indication" is inconclusive - should trigger LLM fallback
 
     def pooling_fn(preds: list):
         if "D" in preds:
@@ -660,7 +515,9 @@ class transplant_date(PtDateFeatureBase):
         U - Patient received a transplant but no date is specified
         X - Record gives no indication of transplant
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("transplant_date", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "transplant_date", **kwargs
+        )
         return prompt
 
     keywords = transplant.keywords
@@ -684,7 +541,9 @@ class immunosuppressed_disease(PtFeatureBase):
         A. Yes
         B. No
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("immunosuppressed_disease", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "immunosuppressed_disease", **kwargs
+        )
         return prompt
 
     options = ["A", "B"]
@@ -844,9 +703,6 @@ class military_agent_orange(PtFeatureBase):
     # val_var = True
 
 
-
-
-
 class cancer_cancer(PtFeatureBase):
     @staticmethod
     def compute(dfs: dict):
@@ -865,7 +721,9 @@ class cancer_cancer(PtFeatureBase):
         A. Yes
         B. No
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("cancer_cancer", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "cancer_cancer", **kwargs
+        )
         return prompt
         return f"Does this medical record indicate that the patient has a history of cancer? Only consider tumors as cancer if they are malignant. {NOT_CANCER_STR} {FAMILY_HISTORY_STR} Options are: A. Yes, B. No"
 
@@ -914,7 +772,9 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
         - If only month and year are given, assume the 15th
         - If only year is given, assume July 2
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("cancer_date_of_diagnosis", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "cancer_date_of_diagnosis", **kwargs
+        )
         return prompt
 
     keywords = SPECIFIC_CANCERS
@@ -936,7 +796,9 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
         E. Unknown
         F. Patient does not have cancer
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("cancer_stage_at_diagnosis", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "cancer_stage_at_diagnosis", **kwargs
+        )
         return prompt
 
     options = ["A", "B", "C", "D", "E", "F"]
@@ -973,7 +835,9 @@ class cancer_maximum_stage(PtFeatureBase):
         E. Cancer present but maximum stage unknown
         F. Patient does not have cancer
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("cancer_maximum_stage", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "cancer_maximum_stage", **kwargs
+        )
         return prompt
 
     options = ["A", "B", "C", "D", "E", "F"]
@@ -996,7 +860,6 @@ class cancer_maximum_stage(PtFeatureBase):
         return "E"
 
 
-
 class cancer_date_free(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
@@ -1011,7 +874,9 @@ class cancer_date_free(PtDateFeatureBase):
         - If only month and year are given, assume the 15th
         - If only year is given, assume July 2
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("cancer_date_free", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "cancer_date_free", **kwargs
+        )
         return prompt
 
     keywords = SPECIFIC_CANCERS
@@ -1049,7 +914,9 @@ class cancer_family_any(PtFeatureBase):
         A. Yes
         B. No
         """
-        prompt = find_best_prompt_from_prompt_iteration_labels("cancer_family_any", **kwargs)
+        prompt = find_best_prompt_from_prompt_iteration_labels(
+            "cancer_family_any", **kwargs
+        )
         return prompt
 
     options = ["A", "B"]
@@ -1987,7 +1854,7 @@ class antibiotics(PtFeatureBase):
         """
         prompt = find_best_prompt_from_prompt_iteration_labels("antibiotics", **kwargs)
         return prompt
-        return f"Does this medical record indicate that the patient took any of the following antibiotics, ignoring those mentioned as allergic reactions: {', '.join(cls.keywords)}? Options are: A. Yes, B. No" # todo: distinguis amoxicillin vs amoxicillin clavulanate, doxy
+        return f"Does this medical record indicate that the patient took any of the following antibiotics, ignoring those mentioned as allergic reactions: {', '.join(cls.keywords)}? Options are: A. Yes, B. No"  # todo: distinguis amoxicillin vs amoxicillin clavulanate, doxy
 
     options = ["A", "B"]
     val_var = True
@@ -2011,7 +1878,9 @@ class antibiotic_duration(PtFeatureBase):
         E. 136+ days
         F. Taken but dates unknown
         """
-        return find_best_prompt_from_prompt_iteration_labels("antibiotic_duration", **kwargs)
+        return find_best_prompt_from_prompt_iteration_labels(
+            "antibiotic_duration", **kwargs
+        )
 
     keywords = antibiotics.keywords
     val_var = True
@@ -2033,7 +1902,7 @@ class antibiotic_duration(PtFeatureBase):
             took_history = model.format_chunk_qs(q=took_q, chunk=chunk, options=options)
             if inference_type == "cot":
                 pred = model.predict_with_cot(
-                    took_history, options=options, max_answer_tokens=1 
+                    took_history, options=options, max_answer_tokens=1
                 )
                 return pred
             else:
@@ -2122,6 +1991,7 @@ class antibiotic_duration(PtFeatureBase):
         if "F" in preds:
             return "F"
         return "G"
+
 
 class antibiotic_tetracyclines(PtFeatureBase):
     pass
