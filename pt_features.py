@@ -12,6 +12,8 @@ from utils import OptionType
 from structured_data_mappings import (
     alcohol_status_structured_mapping,
     smoking_status_structured_mapping,
+    alcohol_amount_structured_mapping,
+    smoking_amount_structured_mapping,
 )
 
 ### General Functions ###
@@ -389,6 +391,23 @@ class smoking_amount(PtFeatureBase):
         else:
             return "F"
 
+    @staticmethod
+    def option_from_structured(records: list):
+        """Given records from phy table, return smoking amount option based on structured data.
+
+        Args:
+            records: List of record dictionaries with 'Concept_Name' and 'Result' fields
+
+        Returns:
+            str or None: One of 'A', 'B', 'C', 'D', or None
+            - A: 0 packs (conclusive)
+            - B: 1-2 packs per week (conclusive)
+            - C: 3-5 packs per week (conclusive)
+            - D: 6+ packs per week (conclusive)
+            - None: No structured data available OR inconclusive (fall back to LLM)
+        """
+        return smoking_amount_structured_mapping(records)
+
 
 class alcohol_status(PtFeatureBase):
     @classmethod
@@ -474,6 +493,23 @@ class alcohol_amount(PtFeatureBase):
             return "E"
         else:
             return "F"
+
+    @staticmethod
+    def option_from_structured(records: list):
+        """Given records from phy table, return alcohol amount option based on structured data.
+
+        Args:
+            records: List of record dictionaries with 'Concept_Name' and 'Result' fields
+
+        Returns:
+            str or None: One of 'A', 'B', 'C', 'D', or None
+            - A: 0 drinks (conclusive)
+            - B: 1-2 drinks per week (conclusive)
+            - C: 3-5 drinks per week (conclusive)
+            - D: 6+ drinks per week (conclusive)
+            - None: No structured data available OR inconclusive (fall back to LLM)
+        """
+        return alcohol_amount_structured_mapping(records)
 
 
 class alcohol_amount_drinking_index(PtFeatureBase):
