@@ -30,6 +30,14 @@ model = MrModel(model_id=model_id)
 # Counter for total LLM calls
 _total_llm_calls = 0
 
+# Counters for structured vs LLM window processing
+_structured_windows_count = 0
+_llm_windows_count = 0
+
+# Per-patient statistics (for first 10 patients)
+_per_patient_stats = {}
+_current_patient_id = None
+
 # Cache for prevalence distributions
 _prevalence_cache = {}
 
@@ -327,6 +335,8 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
                                      (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis")]}
         keywords: Custom keywords list (defaults to feature_cls.keywords)
     """
+    global _structured_windows_count, _llm_windows_count, _per_patient_stats, _current_patient_id
+
     # Use custom keywords if provided, otherwise use feature class keywords
     if keywords is None:
         keywords = feature_cls.keywords
@@ -337,6 +347,11 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
 
     # If structured data gave a conclusive answer, use it and process follow-ups
     if structured_value is not None:
+        # Track structured window usage
+        _structured_windows_count += 1
+        if _current_patient_id and _current_patient_id in _per_patient_stats:
+            _per_patient_stats[_current_patient_id]["structured"] += 1
+
         # Use the most recent record date for the block
         if block_records:
             record_date = max(record["Report_Date_Time"] for record in block_records)
@@ -356,6 +371,11 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
         return  # Done processing - structured data was conclusive
 
     # Structured data was None/inconclusive, fall back to LLM processing
+    # Track LLM window usage
+    _llm_windows_count += 1
+    if _current_patient_id and _current_patient_id in _per_patient_stats:
+        _per_patient_stats[_current_patient_id]["llm"] += 1
+
     # Find the record with the most keywords
     best_record, keyword_count = select_record_with_most_keywords(block_records, keywords)
 
@@ -497,6 +517,15 @@ def process_pt(pt_id):
     Return None if the patient can't be processed (e.g. no acne diagnosis)
     dates are in mm/dd/yyyy format
     """
+    global _current_patient_id, _per_patient_stats
+
+    # Set current patient ID for tracking
+    _current_patient_id = pt_id
+
+    # Initialize per-patient stats if this is one of the first 10 patients
+    if len(_per_patient_stats) < 10 and pt_id not in _per_patient_stats:
+        _per_patient_stats[pt_id] = {"structured": 0, "llm": 0}
+
     ### Step 1: Determine index date and calculate time windows ###
     with db.connect() as conn:
         query = text(f"SELECT * FROM dia WHERE EMPI = '{pt_id}' AND (Code LIKE '%L70.0%' OR Code LIKE '%L70.8%' OR Code LIKE '%L70.9%' OR Code LIKE '%L70.1%' OR Code LIKE '%706.1%' OR Code LIKE '%acne%') ORDER BY Date ASC LIMIT 1")
@@ -625,6 +654,10 @@ def process_pt(pt_id):
 
     # Convert to DataFrame
     df = pd.DataFrame(rows)
+
+    # Clear current patient ID
+    _current_patient_id = None
+
     return df
             
 
@@ -723,6 +756,28 @@ with open(runtime_info_path, 'w') as f:
     f.write(f"- **Number of patients processed**: {len(pt_ids)}\n")
     if len(pt_df) > 0:
         f.write(f"- **Total rows in results**: {len(pt_df)}\n")
+
+    # Add window processing statistics
+    f.write(f"\n## Window Processing Breakdown\n\n")
+    total_windows = _structured_windows_count + _llm_windows_count
+    if total_windows > 0:
+        structured_pct = (_structured_windows_count / total_windows) * 100
+        llm_pct = (_llm_windows_count / total_windows) * 100
+        f.write(f"- **Total windows processed**: {total_windows}\n")
+        f.write(f"- **Windows processed via structured data**: {_structured_windows_count} ({structured_pct:.1f}%)\n")
+        f.write(f"- **Windows processed via LLM**: {_llm_windows_count} ({llm_pct:.1f}%)\n")
+    else:
+        f.write(f"- No windows processed\n")
+
+    # Add per-patient breakdown for first 10 patients
+    if _per_patient_stats:
+        f.write(f"\n## Per-Patient Breakdown (First {len(_per_patient_stats)} Patients)\n\n")
+        f.write(f"| Patient ID | Structured | LLM | Total | Structured % |\n")
+        f.write(f"|------------|------------|-----|-------|-------------|\n")
+        for pt_id, stats in _per_patient_stats.items():
+            total = stats["structured"] + stats["llm"]
+            pct = (stats["structured"] / total * 100) if total > 0 else 0
+            f.write(f"| {pt_id} | {stats['structured']} | {stats['llm']} | {total} | {pct:.1f}% |\n")
 
 print(f"\nEnd time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
 print(f"Total time: {total_time}")
