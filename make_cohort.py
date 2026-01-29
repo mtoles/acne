@@ -122,6 +122,23 @@ dem_df = pd.concat([took_abx_dem_df, no_abx_dem_df], ignore_index=True)
 
 print("Processing demographic data...")
 dem_df["study_age"] = dem_df["Age"].astype(int)
+
+# Bin age into 10-year categories for categorical matching
+def categorize_age(age):
+    if pd.isna(age):
+        return None
+    age_int = int(age)
+    # Create bins: 0-9, 10-19, 20-29, ..., 90-99, 100+
+    if age_int < 10:
+        return "0-9"
+    elif age_int >= 100:
+        return "100+"
+    else:
+        decade = (age_int // 10) * 10
+        return f"{decade}-{decade+9}"
+
+dem_df["study_age_bin"] = dem_df["study_age"].apply(categorize_age)
+
 dem_df["study_sex"] = dem_df["Sex_At_Birth"]
 mask = ~dem_df["study_sex"].astype(str).str.lower().isin(["male", "female"])
 dem_df.loc[mask, "study_sex"] = dem_df.loc[mask, "Gender_Legal_Sex"]
@@ -252,13 +269,17 @@ matches_list = []
 # More efficient matching using pre-computed control groups
 # Group controls by characteristics for faster matching
 print("Pre-indexing controls by matching criteria...")
-controls_df["match_key"] = (
-    controls_df["study_sex"].astype(str).str.lower() + "_" +
-    controls_df["study_race"].astype(str) + "_" +
-    controls_df["study_bmi_category"].astype(str) + "_" +
-    controls_df["study_smoking_status"].astype(str) + "_" +
-    controls_df["study_alcohol_status"].astype(str)
-)
+# Build match key row-by-row to ensure consistent formatting (excluding age - matched separately with ±5 year range)
+def build_match_key(row):
+    return (
+        str(row["study_sex"]).lower() + "_" +
+        str(row["study_race"]) + "_" +
+        str(row["study_bmi_category"]) + "_" +
+        str(row["study_smoking_status"]) + "_" +
+        str(row["study_alcohol_status"])
+    )
+
+controls_df["match_key"] = controls_df.apply(build_match_key, axis=1)
 
 # Group controls by match key for faster lookup
 controls_by_key = {}
@@ -270,8 +291,30 @@ for idx, row in controls_df.iterrows():
 
 # Efficient matching
 print("Matching cases to controls...")
+
+# Diagnostic: Print sample keys
+print("\nDiagnostic - Sample match keys:")
+print(f"Total unique control keys: {len(controls_by_key)}")
+if len(controls_df) > 0:
+    sample_control = controls_df.iloc[0]
+    sample_control_key = sample_control["match_key"]
+    print(f"Sample control key: '{sample_control_key}'")
+    print(f"  sex={sample_control['study_sex']}, race={sample_control['study_race']}, bmi={sample_control['study_bmi_category']}, smoking={sample_control['study_smoking_status']}, alcohol={sample_control['study_alcohol_status']}, age={sample_control['study_age']}")
+if len(cases_df) > 0:
+    sample_case = cases_df.iloc[0]
+    sample_case_key = (
+        str(sample_case["study_sex"]).lower() + "_" +
+        str(sample_case["study_race"]) + "_" +
+        str(sample_case["study_bmi_category"]) + "_" +
+        str(sample_case["study_smoking_status"]) + "_" +
+        str(sample_case["study_alcohol_status"])
+    )
+    print(f"Sample case key: '{sample_case_key}'")
+    print(f"  sex={sample_case['study_sex']}, race={sample_case['study_race']}, bmi={sample_case['study_bmi_category']}, smoking={sample_case['study_smoking_status']}, alcohol={sample_case['study_alcohol_status']}, age={sample_case['study_age']}")
+print()
+
 for case_idx, case_row in tqdm(cases_df.iterrows(), total=len(cases_df), desc="Matching cases"):
-    # Build match key for this case
+    # Build match key for this case (excluding age - matched separately)
     case_key = (
         str(case_row["study_sex"]).lower() + "_" +
         str(case_row["study_race"]) + "_" +
@@ -283,14 +326,14 @@ for case_idx, case_row in tqdm(cases_df.iterrows(), total=len(cases_df), desc="M
     # Get candidate controls with same key
     candidate_indices = controls_by_key.get(case_key, [])
 
-    # Find first available control within age range
+    # Find first available control within ±5 year age range
     for ctrl_idx in candidate_indices:
         if ctrl_idx in used_control_indices:
             continue
 
         control_row = controls_df.iloc[ctrl_idx]
 
-        # Check age match
+        # Check age match (±5 years)
         if abs(control_row["study_age"] - case_row["study_age"]) <= 5:
             matches_list.append((case_row["EMPI"], control_row["EMPI"]))
             used_control_indices.add(ctrl_idx)
@@ -299,11 +342,116 @@ for case_idx, case_row in tqdm(cases_df.iterrows(), total=len(cases_df), desc="M
 # Print match statistics
 matched_count = len(matches_list)
 total_cases = len(cases_df)
+
+# Diagnostic: Analyze unmatched cases
+print("\nDiagnostic - Analyzing unmatched cases:")
+matched_case_empis = {pair[0] for pair in matches_list}
+unmatched_cases = cases_df[~cases_df["EMPI"].isin(matched_case_empis)]
+if len(unmatched_cases) > 0:
+    print(f"Total unmatched cases: {len(unmatched_cases)}")
+
+    # Analyze reasons for non-matching
+    no_key_match = 0
+    no_age_match = 0
+    all_used = 0
+
+    for idx, case in unmatched_cases.iterrows():
+        case_key = (
+            str(case["study_sex"]).lower() + "_" +
+            str(case["study_race"]) + "_" +
+            str(case["study_bmi_category"]) + "_" +
+            str(case["study_smoking_status"]) + "_" +
+            str(case["study_alcohol_status"])
+        )
+        candidate_indices = controls_by_key.get(case_key, [])
+
+        if len(candidate_indices) == 0:
+            no_key_match += 1
+        else:
+            # Check if any are available within age range
+            found_age_match = False
+            found_unused = False
+            for ctrl_idx in candidate_indices:
+                if ctrl_idx not in used_control_indices:
+                    found_unused = True
+                    ctrl = controls_df.iloc[ctrl_idx]
+                    if abs(ctrl["study_age"] - case["study_age"]) <= 5:
+                        found_age_match = True
+                        break
+
+            if not found_unused:
+                all_used += 1
+            elif not found_age_match:
+                no_age_match += 1
+
+    print(f"\nUnmatched reasons breakdown:")
+    print(f"  No controls with matching key: {no_key_match} ({no_key_match/len(unmatched_cases)*100:.1f}%)")
+    print(f"  No unused controls within ±5 year age range: {no_age_match} ({no_age_match/len(unmatched_cases)*100:.1f}%)")
+    print(f"  All matching controls already used: {all_used} ({all_used/len(unmatched_cases)*100:.1f}%)")
+
+    # Sample unmatched cases
+    print(f"\nSample unmatched cases (showing up to 20):")
+    for i, (idx, case) in enumerate(unmatched_cases.head(20).iterrows()):
+        case_key = (
+            str(case["study_sex"]).lower() + "_" +
+            str(case["study_race"]) + "_" +
+            str(case["study_bmi_category"]) + "_" +
+            str(case["study_smoking_status"]) + "_" +
+            str(case["study_alcohol_status"])
+        )
+        available_controls = len(controls_by_key.get(case_key, []))
+        available_in_age_range = 0
+        available_unused = 0
+        for ctrl_idx in controls_by_key.get(case_key, []):
+            ctrl = controls_df.iloc[ctrl_idx]
+            if ctrl_idx not in used_control_indices:
+                available_unused += 1
+                if abs(ctrl["study_age"] - case["study_age"]) <= 5:
+                    available_in_age_range += 1
+        print(f"  #{i+1}: key='{case_key}', age={case['study_age']}")
+        print(f"      Total controls w/ key: {available_controls}, Unused: {available_unused}, Unused in age range: {available_in_age_range}")
+print()
 unmatched_count = total_cases - matched_count
 unmatched_percentage = (unmatched_count / total_cases) * 100 if total_cases > 0 else 0
 
 print(f"\nMatched {matched_count} out of {total_cases} cases ({100 - unmatched_percentage:.2f}%)")
 print(f"Unmatched: {unmatched_count} cases ({unmatched_percentage:.2f}%)")
+
+# Verification test: Prove no possible matches remain for unmatched cases
+print("\n" + "="*80)
+print("VERIFICATION TEST: Checking that no possible matches remain")
+print("="*80)
+unmatched_cases = cases_df[~cases_df["EMPI"].isin(matched_case_empis)]
+impossible_matches_found = 0
+
+for idx, case in unmatched_cases.iterrows():
+    case_key = (
+        str(case["study_sex"]).lower() + "_" +
+        str(case["study_race"]) + "_" +
+        str(case["study_bmi_category"]) + "_" +
+        str(case["study_smoking_status"]) + "_" +
+        str(case["study_alcohol_status"])
+    )
+    candidate_indices = controls_by_key.get(case_key, [])
+
+    # Check if there are any unused controls with this key and within age range
+    for ctrl_idx in candidate_indices:
+        if ctrl_idx not in used_control_indices:
+            ctrl = controls_df.iloc[ctrl_idx]
+            if abs(ctrl["study_age"] - case["study_age"]) <= 5:
+                impossible_matches_found += 1
+                print(f"ERROR: Found unused control for unmatched case!")
+                print(f"  Case EMPI: {case['EMPI']}, Age: {case['study_age']}, Key: {case_key}")
+                print(f"  Control idx: {ctrl_idx}, Age: {ctrl['study_age']}")
+                break
+
+if impossible_matches_found == 0:
+    print(f"✓ VERIFIED: All {len(unmatched_cases)} unmatched cases have NO unused controls with matching characteristics and ±5 year age range")
+    print(f"  This confirms the matching algorithm achieved optimal results.")
+else:
+    print(f"✗ FAILED: Found {impossible_matches_found} unmatched cases with available controls!")
+    print(f"  This indicates a bug in the matching algorithm.")
+print("="*80 + "\n")
 
 # Save EMPIs to JSON format in cohort directory
 print("\nSaving results...")

@@ -331,11 +331,11 @@ def _process_follow_up_features_structured(follow_up_features, pred_value, block
                                                pred_value, record_text, keywords, record_date, rows)
 
 
-def process_feature_single_block(block_records, feature_cls, rows, follow_up_features=None, keywords=None, phy_records=None):
+def process_feature_single_block(block_records, feature_cls, rows, follow_up_features=None, keywords=None, phy_records=None, dia_records=None):
     """
     Process a feature for a single time block.
 
-    Extracts structured data from phy_records, pools them, and uses the result.
+    Extracts structured data from phy_records or dia_records, pools them, and uses the result.
     Falls back to LLM-based extraction using block_records if structured data is unavailable or inconclusive.
 
     Args:
@@ -348,6 +348,7 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
                                      (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis")]}
         keywords: Custom keywords list (defaults to feature_cls.keywords)
         phy_records: List of phy table record dictionaries (for structured data extraction)
+        dia_records: List of dia table record dictionaries (for diagnosis-based structured data extraction)
     """
     global _structured_windows_count, _llm_windows_count, _per_patient_stats, _per_patient_stats_lock
 
@@ -355,9 +356,13 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
     if keywords is None:
         keywords = feature_cls.keywords
 
-    # Try to get value from structured data (extract from phy_records and pool)
+    # Try to get value from structured data (extract from phy_records or dia_records and pool)
     # Returns None if no structured data OR if structured data is inconclusive
-    structured_records = phy_records if phy_records is not None else []
+    # For cancer_cancer, use dia_records; for other features, use phy_records
+    if feature_cls.__name__ == "cancer_cancer":
+        structured_records = dia_records if dia_records is not None else []
+    else:
+        structured_records = phy_records if phy_records is not None else []
     structured_value = _extract_and_pool_structured(feature_cls, structured_records)
 
     # If structured data gave a conclusive answer, use it and process follow-ups
@@ -385,7 +390,8 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
         })
 
         # Process follow-up features using structured-then-LLM approach
-        _process_follow_up_features_structured(follow_up_features, structured_value, block_records, keywords, rows, phy_records)
+        # Note: Follow-up features for cancer should still use LLM (no dia_records passed)
+        _process_follow_up_features_structured(follow_up_features, structured_value, block_records, keywords, rows, phy_records=None)
 
         return  # Done processing - structured data was conclusive
 
@@ -571,6 +577,11 @@ def process_pt(pt_id):
         phy_result = conn.execute(phy_query)
         phy_records = phy_result.mappings().fetchall()
 
+        # Query dia table for diagnosis-based structured data extraction (has Code for ICD codes)
+        dia_query = text(f"SELECT * FROM dia WHERE EMPI = '{pt_id}'")
+        dia_result = conn.execute(dia_query)
+        dia_records = dia_result.mappings().fetchall()
+
     ### Step 3: Define time windows and filter records ###
     # Window 1: All records (for smoking, alcohol, transplant, immunosuppressed_disease)
     all_records = records
@@ -578,10 +589,18 @@ def process_pt(pt_id):
     # Window 2: Records after outcome_window_start_date (for cancer features)
     outcome_records = filter_records_by_date_range(records, start_date=outcome_window_start_date)
 
+    # Filter dia_records for outcome window (note: dia table uses "Date" field, not "Report_Date_Time")
+    outcome_dia_records = []
+    for record in dia_records:
+        record_date = record["Date"]
+        record_date_dt = normalize_date(record_date)
+        if record_date_dt >= normalize_date(outcome_window_start_date):
+            outcome_dia_records.append(record)
+
     # Window 3: Records between index_date and outcome_window_start_date (for antibiotics)
     treatment_window_records = filter_records_by_date_range(records, start_date=index_date, end_date=outcome_window_start_date)
 
-    print(f"Total records: {len(all_records)}, Outcome window: {len(outcome_records)}, Treatment window: {len(treatment_window_records)}, Phy records: {len(phy_records)}")
+    print(f"Total records: {len(all_records)}, Outcome window: {len(outcome_records)}, Treatment window: {len(treatment_window_records)}, Phy records: {len(phy_records)}, Dia records: {len(dia_records)}")
 
     ### Step 4: Calculate time blocks for each feature ###
     # Smoking status: 1 per 3 months
@@ -644,28 +663,30 @@ def process_pt(pt_id):
     #     )
     # print(f"Completed immunosuppressed disease for {pt_id}")
 
-    # # === Features using outcome window (after outcome_window_start_date) ===
+    # === Features using outcome window (after outcome_window_start_date) ===
 
-    # # Cancer cancer: process each 3-month block
-    # for block_index, block_records in cancer_cancer_blocks.items():
-    #     process_feature_single_block(
-    #         block_records, cancer_cancer, rows,
-    #         keywords=SPECIFIC_CANCERS,
-    #         follow_up_features={"A": [
-    #             (cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
-    #             (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis"),
-    #             (cancer_maximum_stage, "cancer_maximum_stage")
-    #         ]}
-    #     )
-    # print(f"Completed cancer cancer for {pt_id}")
+    # Cancer cancer: process each 3-month block using structured data from dia table
+    # Follow-up features will use LLM only
+    for block_index, block_records in cancer_cancer_blocks.items():
+        process_feature_single_block(
+            block_records, cancer_cancer, rows,
+            keywords=SPECIFIC_CANCERS,
+            follow_up_features={"A": [
+                (cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
+                (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis"),
+                (cancer_maximum_stage, "cancer_maximum_stage")
+            ]},
+            dia_records=outcome_dia_records  # Pass outcome dia_records for structured cancer detection
+        )
+    print(f"Completed cancer cancer for {pt_id}")
 
-    # # Cancer family any: process each 6-month block
-    # for block_index, block_records in cancer_family_blocks.items():
-    #     process_feature_single_block(
-    #         block_records, cancer_family_any, rows,
-    #         keywords=SPECIFIC_CANCERS
-    #     )
-    # print(f"Completed cancer family any for {pt_id}")
+    # Cancer family any: process each 6-month block
+    for block_index, block_records in cancer_family_blocks.items():
+        process_feature_single_block(
+            block_records, cancer_family_any, rows,
+            keywords=SPECIFIC_CANCERS
+        )
+    print(f"Completed cancer family any for {pt_id}")
 
     # # === Features using treatment window (index_date to outcome_window_start_date) ===
 

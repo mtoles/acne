@@ -749,6 +749,32 @@ class cancer_cancer(PtFeatureBase):
             return None
         return True
 
+    @staticmethod
+    def option_from_structured(records: list):
+        """Given records from dia table, return cancer status based on ICD codes.
+
+        Args:
+            records: List of record dictionaries with 'Code' field from Dia table
+
+        Returns:
+            str or None: 'A' (has cancer), 'B' (no cancer), or None (no data)
+        """
+        if not records:
+            return None
+
+        # Check if any record has a cancer ICD code
+        for record in records:
+            code = record.get("Code", "")
+            # Check ICD-9 codes
+            if any(code.startswith(icd9) for icd9 in cancer_icd9s):
+                return "A"
+            # Check ICD-10 codes
+            if any(code.startswith(icd10) for icd10 in cancer_icd10s):
+                return "A"
+
+        # No cancer codes found, but we have diagnosis data
+        return "B"
+
     @classmethod
     def query(cls, **kwargs):
         """Return the query for cancer history.
