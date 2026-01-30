@@ -375,9 +375,7 @@ class smoking_amount(PtFeatureBase):
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = smoking_status.keywords
     val_var = True
-    inconclusive_values = {
-        "F"
-    }  # "No indication" is inconclusive - should trigger LLM fallback
+    inconclusive_values = {"F"}  # "No indication" is inconclusive; "Unknown quantity" is conclusive
 
     def pooling_fn(preds: list):
         # Get counts of A-D options
@@ -476,9 +474,7 @@ class alcohol_amount(PtFeatureBase):
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
     val_var = True
-    inconclusive_values = {
-        "F"
-    }  # "No indication" is inconclusive - should trigger LLM fallback
+    inconclusive_values = {"F"}  # "No indication" is inconclusive; "Unknown quantity" is conclusive
 
     def pooling_fn(preds: list):
         if "D" in preds:
@@ -843,6 +839,7 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
     synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_earliest
+    inconclusive_values = {"U", "X"}  # "Unknown date" and "No indication" are inconclusive
 
 
 class cancer_stage_at_diagnosis(PtFeatureBase):
@@ -866,8 +863,8 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = SPECIFIC_CANCERS
     synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
-
     val_var = True
+    inconclusive_values = {"E", "F"}  # "Unknown" and "No cancer" are inconclusive
 
     def pooling_fn(preds: list):
         # return latest stage
@@ -906,6 +903,7 @@ class cancer_maximum_stage(PtFeatureBase):
     keywords = SPECIFIC_CANCERS
     synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
     val_var = True
+    inconclusive_values = {"E", "F"}  # "Unknown" and "No cancer" are inconclusive
 
     def pooling_fn(preds: list):
         # return latest stage

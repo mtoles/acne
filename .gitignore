@@ -23,6 +23,9 @@ val_ds_old/
 verl/
 wandb/
 cohort/
+full_inference_out/
+verl/
+
 
 
 *.png

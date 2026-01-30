@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import threading
 import numpy as np
+import logging
 
 ### TODO: use the good queries we generated from testing
 
@@ -114,6 +115,13 @@ def call_llm(feature_cls: PtFeatureBase, chunk: str, keyword: str = None) -> str
     
     _total_llm_calls += 1
     print(f"Total LLM calls: {_total_llm_calls}\r", end="", flush=True)
+
+    # Log the call
+    empi = getattr(_thread_local, 'current_patient_id', '')
+    block_id = getattr(_thread_local, 'block_id', '')
+    block_dates = getattr(_thread_local, 'block_dates', '')
+    logging.getLogger('llm_calls').info(f"{empi}\t{block_id}\t{block_dates}\t{feature_cls.__name__}\t{keyword}\t{pred}")
+
     return pred
 
 def normalize_date(date_value):
@@ -282,9 +290,15 @@ def _process_follow_up_features_llm(follow_up_features, pred_value, record_text,
                     _per_patient_stats[_thread_local.current_patient_id] = {"structured": 0, "llm": 0}
                 _per_patient_stats[_thread_local.current_patient_id]["llm"] += 1
 
+        resolved = False
+        inconclusive = getattr(follow_up_cls, 'inconclusive_values', set())
         for kw in keywords:
+            if resolved:
+                break
             chunks = get_chunks_by_keyword(record_text, kw)
             for chunk in chunks:
+                if resolved:
+                    break
                 follow_up_pred = call_llm(follow_up_cls, chunk, kw)
                 rows.append({
                     "feature_name": follow_up_name,
@@ -292,6 +306,8 @@ def _process_follow_up_features_llm(follow_up_features, pred_value, record_text,
                     "date": record_date,
                     "prediction": follow_up_pred,
                 })
+                if follow_up_pred.upper() not in inconclusive:
+                    resolved = True
 
 
 def _process_follow_up_features_structured(follow_up_features, pred_value, block_records, keywords, rows, phy_records=None):
@@ -423,6 +439,10 @@ def process_feature_single_block(block_records, feature_cls, follow_up_features=
         record_date = best_record["Report_Date_Time"]
         record_text = best_record["Report_Text"]
 
+        # Track which follow-up features have gotten a conclusive (non-unknown) answer
+        # Unknown answers are "E" or "F" for amount features
+        follow_up_resolved = {}
+
         # Process all keywords
         for kw in keywords:
             chunks = get_chunks_by_keyword(record_text, kw)
@@ -444,6 +464,10 @@ def process_feature_single_block(block_records, feature_cls, follow_up_features=
                         follow_ups = [follow_ups]
 
                     for follow_up_cls, follow_up_name in follow_ups:
+                        # Skip if we already have a conclusive answer for this follow-up
+                        if follow_up_resolved.get(follow_up_name):
+                            continue
+
                         # Try structured data first (from ALL records in block)
                         follow_up_structured = _extract_and_pool_structured(follow_up_cls, block_records)
 
@@ -455,6 +479,7 @@ def process_feature_single_block(block_records, feature_cls, follow_up_features=
                                 "date": record_date,
                                 "prediction": follow_up_structured,
                             })
+                            follow_up_resolved[follow_up_name] = True
                         else:
                             # Fall back to LLM on this chunk
                             follow_up_pred = call_llm(follow_up_cls, chunk, kw)
@@ -464,6 +489,10 @@ def process_feature_single_block(block_records, feature_cls, follow_up_features=
                                 "date": record_date,
                                 "prediction": follow_up_pred,
                             })
+                            # Mark as resolved if we got a conclusive answer
+                            inconclusive = getattr(follow_up_cls, 'inconclusive_values', set())
+                            if follow_up_pred.upper() not in inconclusive:
+                                follow_up_resolved[follow_up_name] = True
 
     return rows
 
@@ -650,6 +679,8 @@ def process_pt(pt_id):
     # Follow-up features (smoking_amount) also use structured-then-LLM approach
     # Use LLM if no structured: yes
     for block_index, block_records in smoking_blocks.items():
+        _thread_local.block_id = f"smoking_{block_index}"
+        _thread_local.block_dates = f"{min(r['Report_Date_Time'] for r in block_records)[:10]}~{max(r['Report_Date_Time'] for r in block_records)[:10]}" if block_records else ""
         block_rows = process_feature_single_block(
             block_records, smoking_status,
             follow_up_features={"C": (smoking_amount, "smoking_amount")},
@@ -664,6 +695,8 @@ def process_pt(pt_id):
     # Follow-up features (alcohol_amount) also use structured-then-LLM approach
     # Use LLM if no structured: yes
     for block_index, block_records in alcohol_blocks.items():
+        _thread_local.block_id = f"alcohol_{block_index}"
+        _thread_local.block_dates = f"{min(r['Report_Date_Time'] for r in block_records)[:10]}~{max(r['Report_Date_Time'] for r in block_records)[:10]}" if block_records else ""
         block_rows = process_feature_single_block(
             block_records, alcohol_status,
             follow_up_features={"A": (alcohol_amount, "alcohol_amount")},
@@ -699,6 +732,8 @@ def process_pt(pt_id):
     # Follow-up features will use LLM only
     # Use LLM if no structured: no
     for block_index, block_records in cancer_cancer_blocks.items():
+        _thread_local.block_id = f"cancer_{block_index}"
+        _thread_local.block_dates = f"{min(r['Report_Date_Time'] for r in block_records)[:10]}~{max(r['Report_Date_Time'] for r in block_records)[:10]}" if block_records else ""
         block_rows = process_feature_single_block(
             block_records, cancer_cancer,
             keywords=SPECIFIC_CANCERS,
@@ -724,13 +759,13 @@ def process_pt(pt_id):
 
     # # === Features using treatment window (index_date to outcome_window_start_date) ===
 
-    # # Antibiotics: every record
-    # antibiotic_rows = process_feature_all_records(
-    #     treatment_window_records, antibiotics,
-    #     follow_up_features={"A": (antibiotic_duration, "antibiotic_duration")}
-    # )
-    # rows.extend(antibiotic_rows)
-    # print(f"Completed antibiotics for {pt_id}")
+    # Antibiotics: every record
+    antibiotic_rows = process_feature_all_records(
+        treatment_window_records, antibiotics,
+        follow_up_features={"A": (antibiotic_duration, "antibiotic_duration")}
+    )
+    rows.extend(antibiotic_rows)
+    print(f"Completed antibiotics for {pt_id}")
 
     # Convert to DataFrame
     df = pd.DataFrame(rows)
@@ -767,6 +802,19 @@ if args.limit is not None:
 
 print(f"Processing {len(pt_ids)} matched case patients")
 
+# Create output directory with timestamp
+timestamp_str = start_time.strftime('%Y%m%d_%H%M%S')
+output_dir = Path(f"full_inference_out/{timestamp_str}")
+output_dir.mkdir(parents=True, exist_ok=True)
+
+# Set up LLM call logging
+llm_logger = logging.getLogger('llm_calls')
+llm_logger.setLevel(logging.INFO)
+llm_handler = logging.FileHandler(output_dir / 'llm_calls.log')
+llm_handler.setFormatter(logging.Formatter('%(message)s'))
+llm_logger.addHandler(llm_handler)
+llm_logger.info("empi\tblock_id\tblock_dates\tfeature\tkeyword\tanswer")
+
 pt_dfs = []
 index_dates = []
 
@@ -785,11 +833,6 @@ else:
 print()
 
 pt_df = pd.concat(pt_dfs)
-
-# Create output directory with timestamp
-timestamp_str = start_time.strftime('%Y%m%d_%H%M%S')
-output_dir = Path(f"full_inference_out/{timestamp_str}")
-output_dir.mkdir(parents=True, exist_ok=True)
 
 # Save DataFrame as JSONL
 if len(pt_df) > 0:
