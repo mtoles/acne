@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import threading
+import numpy as np
 
 ### TODO: use the good queries we generated from testing
 
@@ -812,12 +813,113 @@ if len(pt_df) > 0:
     plt.tight_layout()
     histogram_path = output_dir / "feature_frequency_histogram.png"
     plt.savefig(histogram_path, dpi=150, bbox_inches='tight')
+    plt.close()
     print(f"Saved histogram to {histogram_path}")
     print(f"\nFeature frequencies:")
     for feature, count in feature_counts.items():
         print(f"  {feature}: {count}")
 else:
     print("No data to plot")
+
+# Plot pie charts for LLM vs Structured data breakdown
+total_windows = _structured_windows_count + _llm_windows_count
+if total_windows > 0:
+    # Overall windows breakdown pie chart
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Pie chart 1: Windows breakdown (Structured vs LLM)
+    window_labels = ['Structured Data', 'LLM']
+    window_sizes = [_structured_windows_count, _llm_windows_count]
+    window_colors = ['#2ecc71', '#3498db']
+    window_explode = (0.05, 0.05)
+
+    ax1.pie(window_sizes, explode=window_explode, labels=window_labels, colors=window_colors,
+            autopct='%1.1f%%', shadow=False, startangle=90)
+    ax1.set_title(f'Windows Processing Breakdown\n(Total: {total_windows} windows)')
+
+    # Pie chart 2: Extraction method by feature
+    # Count structured vs LLM for each feature
+    structured_features = pt_df[pt_df["keyword"] == "STRUCTURED_DATA"]["feature_name"].value_counts()
+    llm_features = pt_df[pt_df["keyword"] != "STRUCTURED_DATA"]["feature_name"].value_counts()
+
+    # Create breakdown by extraction method
+    extraction_counts = {
+        'Structured Only': 0,
+        'LLM Only': 0,
+        'Mixed (Both)': 0
+    }
+
+    all_features = set(structured_features.index) | set(llm_features.index)
+    for feature in all_features:
+        has_structured = feature in structured_features.index and structured_features[feature] > 0
+        has_llm = feature in llm_features.index and llm_features[feature] > 0
+
+        if has_structured and has_llm:
+            extraction_counts['Mixed (Both)'] += 1
+        elif has_structured:
+            extraction_counts['Structured Only'] += 1
+        else:
+            extraction_counts['LLM Only'] += 1
+
+    method_labels = list(extraction_counts.keys())
+    method_sizes = list(extraction_counts.values())
+    method_colors = ['#2ecc71', '#3498db', '#f39c12']
+    method_explode = (0.05, 0.05, 0.05)
+
+    # Only plot if we have data
+    if sum(method_sizes) > 0:
+        ax2.pie(method_sizes, explode=method_explode, labels=method_labels, colors=method_colors,
+                autopct='%1.1f%%', shadow=False, startangle=90)
+        ax2.set_title(f'Features by Extraction Method\n(Total: {sum(method_sizes)} features)')
+    else:
+        ax2.text(0.5, 0.5, 'No feature data', ha='center', va='center', transform=ax2.transAxes)
+
+    plt.tight_layout()
+    pie_chart_path = output_dir / "llm_breakdown_pie_charts.png"
+    plt.savefig(pie_chart_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved LLM breakdown pie charts to {pie_chart_path}")
+
+    # Create a third pie chart showing total extractions (structured vs LLM)
+    plt.figure(figsize=(8, 8))
+    structured_count = len(pt_df[pt_df["keyword"] == "STRUCTURED_DATA"])
+    llm_count = len(pt_df[pt_df["keyword"] != "STRUCTURED_DATA"])
+
+    extraction_labels = ['Structured Data Extractions', 'LLM Extractions']
+    extraction_sizes = [structured_count, llm_count]
+    extraction_colors = ['#2ecc71', '#3498db']
+    extraction_explode = (0.05, 0.05)
+
+    plt.pie(extraction_sizes, explode=extraction_explode, labels=extraction_labels,
+            colors=extraction_colors, autopct='%1.1f%%', shadow=False, startangle=90)
+    plt.title(f'Total Extractions Breakdown\n(Total: {structured_count + llm_count} extractions)')
+    plt.tight_layout()
+
+    extraction_pie_path = output_dir / "total_extractions_pie_chart.png"
+    plt.savefig(extraction_pie_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved total extractions pie chart to {extraction_pie_path}")
+
+    # Create pie chart showing LLM calls by feature name
+    llm_df = pt_df[pt_df["keyword"] != "STRUCTURED_DATA"]
+    if len(llm_df) > 0:
+        feature_counts = llm_df["feature_name"].value_counts()
+
+        plt.figure(figsize=(10, 10))
+        colors = plt.cm.Set3(np.linspace(0, 1, len(feature_counts)))
+        labels = [f"{name}\n({count:,})" for name, count in zip(feature_counts.index, feature_counts.values)]
+
+        plt.pie(feature_counts.values, labels=labels, colors=colors,
+                autopct='%1.1f%%', shadow=False, startangle=90)
+        plt.title(f'LLM Calls by Feature\n(Total: {len(llm_df):,} calls)')
+        plt.tight_layout()
+
+        feature_pie_path = output_dir / "llm_calls_by_feature_pie.png"
+        plt.savefig(feature_pie_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"Saved LLM calls by feature pie chart to {feature_pie_path}")
+else:
+    print("No window processing data to plot")
 
 end_time = datetime.now()
 total_time = end_time - start_time
@@ -847,6 +949,59 @@ with open(runtime_info_path, 'w') as f:
         f.write(f"- **Windows processed via LLM**: {_llm_windows_count} ({llm_pct:.1f}%)\n")
     else:
         f.write(f"- No windows processed\n")
+
+    # Add extraction-level statistics
+    if len(pt_df) > 0:
+        f.write(f"\n## Extraction-Level Breakdown\n\n")
+        structured_count = len(pt_df[pt_df["keyword"] == "STRUCTURED_DATA"])
+        llm_count = len(pt_df[pt_df["keyword"] != "STRUCTURED_DATA"])
+        total_extractions = structured_count + llm_count
+
+        if total_extractions > 0:
+            structured_extraction_pct = (structured_count / total_extractions) * 100
+            llm_extraction_pct = (llm_count / total_extractions) * 100
+            f.write(f"- **Total extractions**: {total_extractions}\n")
+            f.write(f"- **Structured data extractions**: {structured_count} ({structured_extraction_pct:.1f}%)\n")
+            f.write(f"- **LLM extractions**: {llm_count} ({llm_extraction_pct:.1f}%)\n")
+
+        # Feature breakdown by extraction method
+        f.write(f"\n## Features by Extraction Method\n\n")
+        structured_features = pt_df[pt_df["keyword"] == "STRUCTURED_DATA"]["feature_name"].value_counts()
+        llm_features = pt_df[pt_df["keyword"] != "STRUCTURED_DATA"]["feature_name"].value_counts()
+
+        all_features = set(structured_features.index) | set(llm_features.index)
+        structured_only = []
+        llm_only = []
+        mixed = []
+
+        for feature in all_features:
+            has_structured = feature in structured_features.index and structured_features[feature] > 0
+            has_llm = feature in llm_features.index and llm_features[feature] > 0
+
+            if has_structured and has_llm:
+                mixed.append(feature)
+            elif has_structured:
+                structured_only.append(feature)
+            else:
+                llm_only.append(feature)
+
+        if structured_only:
+            f.write(f"**Structured Data Only** ({len(structured_only)} features):\n")
+            for feat in sorted(structured_only):
+                f.write(f"  - {feat}\n")
+            f.write(f"\n")
+
+        if llm_only:
+            f.write(f"**LLM Only** ({len(llm_only)} features):\n")
+            for feat in sorted(llm_only):
+                f.write(f"  - {feat}\n")
+            f.write(f"\n")
+
+        if mixed:
+            f.write(f"**Mixed (Both Methods)** ({len(mixed)} features):\n")
+            for feat in sorted(mixed):
+                f.write(f"  - {feat}\n")
+            f.write(f"\n")
 
     # Add per-patient breakdown for first 10 patients
     if _per_patient_stats:
