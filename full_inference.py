@@ -235,27 +235,27 @@ def _extract_and_pool_structured(feature_cls, block_records):
         return None
 
     # Extract structured value from each record
-    predictions = []
+    structured_hits = []
     for record in block_records:
         pred = feature_cls.option_from_structured([record])
         if pred is not None:
-            predictions.append(pred)
+            structured_hits.append(pred)
 
     # If no predictions, return None (inconclusive - use LLM)
-    if not predictions:
+    if not structured_hits:
         return None
 
     # Filter out inconclusive values before pooling
     # If feature defines inconclusive_values, remove them from predictions
     if hasattr(feature_cls, 'inconclusive_values'):
-        predictions = [p for p in predictions if p not in feature_cls.inconclusive_values]
+        structured_hits = [p for p in structured_hits if p not in feature_cls.inconclusive_values]
 
-    # If no conclusive predictions remain after filtering, return None (use LLM)
-    if not predictions:
+    # If no conclusive predictions remain after filtering, return None (use LLM, maybe)
+    if not structured_hits:
         return None
 
     # Pool only the conclusive predictions
-    pooled = feature_cls.pooling_fn(predictions)
+    pooled = feature_cls.pooling_fn(structured_hits)
 
     return pooled
 
@@ -331,17 +331,16 @@ def _process_follow_up_features_structured(follow_up_features, pred_value, block
                                                pred_value, record_text, keywords, record_date, rows)
 
 
-def process_feature_single_block(block_records, feature_cls, rows, follow_up_features=None, keywords=None, phy_records=None, dia_records=None):
+def process_feature_single_block(block_records, feature_cls, follow_up_features=None, keywords=None, phy_records=None, dia_records=None, fallback_to_llm=True):
     """
     Process a feature for a single time block.
 
     Extracts structured data from phy_records or dia_records, pools them, and uses the result.
-    Falls back to LLM-based extraction using block_records if structured data is unavailable or inconclusive.
+    Optionally falls back to LLM-based extraction using block_records if structured data is unavailable or inconclusive.
 
     Args:
         block_records: List of vis table record dictionaries for this time block (for LLM)
         feature_cls: Feature class (e.g., smoking_status)
-        rows: List to append result rows to
         follow_up_features: Dict mapping prediction value to list of (feature_cls, feature_name) tuples
                            e.g., {"C": [(smoking_amount, "smoking_amount")]}
                            or {"A": [(cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
@@ -349,8 +348,14 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
         keywords: Custom keywords list (defaults to feature_cls.keywords)
         phy_records: List of phy table record dictionaries (for structured data extraction)
         dia_records: List of dia table record dictionaries (for diagnosis-based structured data extraction)
+        fallback_to_llm: Whether to fall back to LLM if structured data is unavailable/inconclusive (default: True)
+
+    Returns:
+        List of result row dictionaries
     """
     global _structured_windows_count, _llm_windows_count, _per_patient_stats, _per_patient_stats_lock
+
+    rows = []
 
     # Use custom keywords if provided, otherwise use feature class keywords
     if keywords is None:
@@ -393,9 +398,14 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
         # Note: Follow-up features for cancer should still use LLM (no dia_records passed)
         _process_follow_up_features_structured(follow_up_features, structured_value, block_records, keywords, rows, phy_records=None)
 
-        return  # Done processing - structured data was conclusive
+        return rows  # Done processing - structured data was conclusive
 
-    # Structured data was None/inconclusive, fall back to LLM processing
+    # Structured data was None/inconclusive
+    # Only fall back to LLM if fallback_to_llm is True
+    if not fallback_to_llm:
+        return rows  # Don't fall back to LLM - just skip this feature
+
+    # Fall back to LLM processing
     # Find the record with the most keywords
     best_record, keyword_count = select_record_with_most_keywords(block_records, keywords)
 
@@ -454,18 +464,24 @@ def process_feature_single_block(block_records, feature_cls, rows, follow_up_fea
                                 "prediction": follow_up_pred,
                             })
 
+    return rows
 
-def process_feature_all_records(records, feature_cls, rows, follow_up_features=None):
+
+def process_feature_all_records(records, feature_cls, follow_up_features=None):
     """
     Process a feature for all records (no grouping).
-    
+
     Args:
         records: List of record dictionaries
         feature_cls: Feature class (e.g., antibiotics)
-        rows: List to append result rows to
         follow_up_features: Dict mapping prediction value to (feature_cls, feature_name) tuple
                            e.g., {"A": (antibiotic_duration, "antibiotic_duration")}
+
+    Returns:
+        List of result row dictionaries
     """
+    rows = []
+
     for record in records:
         record_date = record["Report_Date_Time"]
         record_text = record["Report_Text"]
@@ -502,6 +518,8 @@ def process_feature_all_records(records, feature_cls, rows, follow_up_features=N
                             "date": record_date,
                             "prediction": follow_up_pred,
                         })
+
+    return rows
 
 
 def get_chunks_by_keyword(record: str, keyword: str, context_words: int = 1000) -> list[str]:
@@ -629,72 +647,88 @@ def process_pt(pt_id):
     # Note: Extracts structured data from phy_records, pools using pooling_fn
     # Falls back to LLM if structured data is unavailable/inconclusive
     # Follow-up features (smoking_amount) also use structured-then-LLM approach
+    # Use LLM if no structured: yes
     for block_index, block_records in smoking_blocks.items():
-        process_feature_single_block(
-            block_records, smoking_status, rows,
+        block_rows = process_feature_single_block(
+            block_records, smoking_status,
             follow_up_features={"C": (smoking_amount, "smoking_amount")},
             phy_records=phy_records
         )
+        rows.extend(block_rows)
     print(f"Completed smoking status for {pt_id}")
 
     # Alcohol status: process each 3-month block
     # Note: Extracts structured data from phy_records, pools using pooling_fn
     # Falls back to LLM if structured data is unavailable/inconclusive
     # Follow-up features (alcohol_amount) also use structured-then-LLM approach
+    # Use LLM if no structured: yes
     for block_index, block_records in alcohol_blocks.items():
-        process_feature_single_block(
-            block_records, alcohol_status, rows,
+        block_rows = process_feature_single_block(
+            block_records, alcohol_status,
             follow_up_features={"A": (alcohol_amount, "alcohol_amount")},
             phy_records=phy_records
         )
+        rows.extend(block_rows)
     print(f"Completed alcohol status for {pt_id}")
 
-    # # Transplant: every record
-    # process_feature_all_records(
-    #     all_records, transplant, rows,
+    # Transplant: every record
+    # Use LLM if no structured: no
+    # Note: transplant feature needs option_from_structured method implemented
+    # transplant_rows = process_feature_all_records(
+    #     all_records, transplant,
     #     follow_up_features={"A": (transplant_date, "transplant_date")}
     # )
+    # rows.extend(transplant_rows)
     # print(f"Completed transplant for {pt_id}")
 
-    # # Immunosuppressed disease: process each 6-month block
+    # Immunosuppressed disease: process each 6-month block
+    # Use LLM if no structured: no
+    # Note: immunosuppressed_disease feature needs option_from_structured method implemented
     # for block_index, block_records in immunosuppressed_blocks.items():
-    #     process_feature_single_block(
-    #         block_records, immunosuppressed_disease, rows
+    #     block_rows = process_feature_single_block(
+    #         block_records, immunosuppressed_disease,
+    #         fallback_to_llm=False  # Don't fall back to LLM if no structured data
     #     )
+    #     rows.extend(block_rows)
     # print(f"Completed immunosuppressed disease for {pt_id}")
 
     # === Features using outcome window (after outcome_window_start_date) ===
 
     # Cancer cancer: process each 3-month block using structured data from dia table
     # Follow-up features will use LLM only
+    # Use LLM if no structured: no
     for block_index, block_records in cancer_cancer_blocks.items():
-        process_feature_single_block(
-            block_records, cancer_cancer, rows,
+        block_rows = process_feature_single_block(
+            block_records, cancer_cancer,
             keywords=SPECIFIC_CANCERS,
             follow_up_features={"A": [
                 (cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
                 (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis"),
                 (cancer_maximum_stage, "cancer_maximum_stage")
             ]},
-            dia_records=outcome_dia_records  # Pass outcome dia_records for structured cancer detection
+            dia_records=outcome_dia_records,  # Pass outcome dia_records for structured cancer detection
+            fallback_to_llm=False  # Don't fall back to LLM if no structured data
         )
+        rows.extend(block_rows)
     print(f"Completed cancer cancer for {pt_id}")
 
-    # Cancer family any: process each 6-month block
-    for block_index, block_records in cancer_family_blocks.items():
-        process_feature_single_block(
-            block_records, cancer_family_any, rows,
-            keywords=SPECIFIC_CANCERS
-        )
-    print(f"Completed cancer family any for {pt_id}")
+    # # Cancer family any: process each 6-month block
+    # for block_index, block_records in cancer_family_blocks.items():
+    #     block_rows = process_feature_single_block(
+    #         block_records, cancer_family_any,
+    #         keywords=SPECIFIC_CANCERS
+    #     )
+    #     rows.extend(block_rows)
+    # print(f"Completed cancer family any for {pt_id}")
 
     # # === Features using treatment window (index_date to outcome_window_start_date) ===
 
     # # Antibiotics: every record
-    # process_feature_all_records(
-    #     treatment_window_records, antibiotics, rows,
+    # antibiotic_rows = process_feature_all_records(
+    #     treatment_window_records, antibiotics,
     #     follow_up_features={"A": (antibiotic_duration, "antibiotic_duration")}
     # )
+    # rows.extend(antibiotic_rows)
     # print(f"Completed antibiotics for {pt_id}")
 
     # Convert to DataFrame
