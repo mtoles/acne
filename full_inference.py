@@ -440,8 +440,9 @@ def process_feature_single_block(block_records, feature_cls, follow_up_features=
         record_text = best_record["Report_Text"]
 
         # Track which follow-up features have gotten a conclusive (non-unknown) answer
-        # Unknown answers are "E" or "F" for amount features
+        # Key is (follow_up_name, keyword) if per_keyword, else just follow_up_name
         follow_up_resolved = {}
+        per_keyword = getattr(feature_cls, 'short_circuit_per_keyword', False)
 
         # Process all keywords
         for kw in keywords:
@@ -464,8 +465,10 @@ def process_feature_single_block(block_records, feature_cls, follow_up_features=
                         follow_ups = [follow_ups]
 
                     for follow_up_cls, follow_up_name in follow_ups:
+                        # Build resolution key - per-keyword or global
+                        resolved_key = (follow_up_name, kw) if per_keyword else follow_up_name
                         # Skip if we already have a conclusive answer for this follow-up
-                        if follow_up_resolved.get(follow_up_name):
+                        if follow_up_resolved.get(resolved_key):
                             continue
 
                         # Try structured data first (from ALL records in block)
@@ -479,7 +482,7 @@ def process_feature_single_block(block_records, feature_cls, follow_up_features=
                                 "date": record_date,
                                 "prediction": follow_up_structured,
                             })
-                            follow_up_resolved[follow_up_name] = True
+                            follow_up_resolved[resolved_key] = True
                         else:
                             # Fall back to LLM on this chunk
                             follow_up_pred = call_llm(follow_up_cls, chunk, kw)
@@ -492,7 +495,7 @@ def process_feature_single_block(block_records, feature_cls, follow_up_features=
                             # Mark as resolved if we got a conclusive answer
                             inconclusive = getattr(follow_up_cls, 'inconclusive_values', set())
                             if follow_up_pred.upper() not in inconclusive:
-                                follow_up_resolved[follow_up_name] = True
+                                follow_up_resolved[resolved_key] = True
 
     return rows
 
@@ -509,13 +512,21 @@ def process_feature_all_records(records, feature_cls, follow_up_features=None):
 
     Returns:
         List of result row dictionaries
+
+    Note: If feature_cls.short_circuit_per_keyword is True, short-circuiting happens
+    independently for each keyword (e.g., for antibiotics where each keyword is a different drug).
     """
     rows = []
+    per_keyword = getattr(feature_cls, 'short_circuit_per_keyword', False)
 
     for record in records:
         record_date = record["Report_Date_Time"]
         record_text = record["Report_Text"]
-        
+
+        # Track which follow-up features have gotten a conclusive answer
+        # Key is (follow_up_name, keyword) if per_keyword, else just follow_up_name
+        follow_up_resolved = {}
+
         # Process all keywords
         for kw in feature_cls.keywords:
             chunks = get_chunks_by_keyword(record_text, kw)
@@ -528,15 +539,22 @@ def process_feature_all_records(records, feature_cls, follow_up_features=None):
                     "date": record_date,
                     "prediction": pred,
                 })
-                
+
                 # Handle follow-up features
                 if follow_up_features and pred.upper() in follow_up_features:
                     follow_ups = follow_up_features[pred.upper()]
                     # Support both single tuple and list of tuples
                     if isinstance(follow_ups, tuple):
                         follow_ups = [follow_ups]
-                    
+
                     for follow_up_cls, follow_up_name in follow_ups:
+                        # Build resolution key - per-keyword or global
+                        resolved_key = (follow_up_name, kw) if per_keyword else follow_up_name
+
+                        # Skip if we already have a conclusive answer for this follow-up
+                        if follow_up_resolved.get(resolved_key):
+                            continue
+
                         # Note: antibiotic_duration doesn't use keyword parameter
                         if follow_up_name == "antibiotic_duration":
                             follow_up_pred = call_llm(follow_up_cls, chunk)
@@ -548,6 +566,11 @@ def process_feature_all_records(records, feature_cls, follow_up_features=None):
                             "date": record_date,
                             "prediction": follow_up_pred,
                         })
+
+                        # Mark as resolved if we got a conclusive answer
+                        inconclusive = getattr(follow_up_cls, 'inconclusive_values', set())
+                        if follow_up_pred.upper() not in inconclusive:
+                            follow_up_resolved[resolved_key] = True
 
     return rows
 

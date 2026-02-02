@@ -800,6 +800,7 @@ class cancer_cancer(PtFeatureBase):
         "myelodysplastic",
     ]
     val_var = True
+    short_circuit_per_keyword = True  # Each cancer keyword is a different cancer type
 
     def pooling_fn(preds: list):
         if "A" in preds:
@@ -840,6 +841,7 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_earliest
     inconclusive_values = {"U", "X"}  # "Unknown date" and "No indication" are inconclusive
+    short_circuit_per_keyword = True
 
 
 class cancer_stage_at_diagnosis(PtFeatureBase):
@@ -865,6 +867,7 @@ class cancer_stage_at_diagnosis(PtFeatureBase):
     synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
     val_var = True
     inconclusive_values = {"E", "F"}  # "Unknown" and "No cancer" are inconclusive
+    short_circuit_per_keyword = True
 
     def pooling_fn(preds: list):
         # return latest stage
@@ -904,6 +907,7 @@ class cancer_maximum_stage(PtFeatureBase):
     synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
     val_var = True
     inconclusive_values = {"E", "F"}  # "Unknown" and "No cancer" are inconclusive
+    short_circuit_per_keyword = True
 
     def pooling_fn(preds: list):
         # return latest stage
@@ -1918,6 +1922,7 @@ class antibiotics(PtFeatureBase):
 
     options = ["A", "B"]
     val_var = True
+    short_circuit_per_keyword = True  # Each antibiotic keyword is a different drug
 
     def pooling_fn(preds: list):
         if "A" in preds:
@@ -1944,8 +1949,9 @@ class antibiotic_duration(PtFeatureBase):
 
     keywords = antibiotics.keywords
     val_var = True
-
     options = ["A", "B", "C", "D", "E", "F"]
+    inconclusive_values = {"A", "F"}  # "No indication" and "Taken but dates unknown" are inconclusive
+    short_circuit_per_keyword = True
 
     @classmethod
     def custom_forward(

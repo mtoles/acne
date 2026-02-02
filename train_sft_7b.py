@@ -601,11 +601,11 @@ def summarize_dataset(all_train_data, all_eval_data, datasets_dict, downsample_t
         print(f"\nDataset summary saved to: {summary_file}")
 
 
-def downsample_dataset(dataset, limit, label):
-    """Downsample dataset to specified limit."""
+def downsample_dataset(dataset, limit, label, seed):
+    """Downsample dataset to specified limit with random sampling."""
     if limit is not None and len(dataset) > limit:
-        print(f"\nDownsampling {label} dataset from {len(dataset)} to {limit} examples...")
-        return dataset.select(range(limit))
+        print(f"\nDownsampling {label} dataset from {len(dataset)} to {limit} examples (seed={seed})...")
+        return dataset.shuffle(seed=seed).select(range(limit))
     return dataset
 
 
@@ -830,11 +830,11 @@ class GenerationEvalCallback(TrainerCallback):
             model.train()
 
 
-def build_eval_callback(all_eval_data, downsample_eval, tokenizer, training_runs_dir, alpaca_prompt=ALPACA_PROMPT, data_source=None):
+def build_eval_callback(all_eval_data, downsample_eval, tokenizer, training_runs_dir, alpaca_prompt=ALPACA_PROMPT, data_source=None, seed=None):
     """Build evaluation callback from eval data."""
     eval_dataset_raw = Dataset.from_list(all_eval_data) if all_eval_data else None
     if eval_dataset_raw is not None and downsample_eval is not None and len(eval_dataset_raw) > downsample_eval:
-        eval_dataset_raw = eval_dataset_raw.select(range(downsample_eval))
+        eval_dataset_raw = eval_dataset_raw.shuffle(seed=seed).select(range(downsample_eval))
 
     if eval_dataset_raw is None:
         return None
@@ -1141,11 +1141,11 @@ def main():
     eval_dataset = Dataset.from_list(all_eval_data) if all_eval_data else None
 
     train_dataset = downsample_dataset(
-        train_dataset, dataset_config["downsample_train"], "train"
+        train_dataset, dataset_config["downsample_train"], "train", seed=dataset_config["random_state"]
     )
     if eval_dataset is not None:
         eval_dataset = downsample_dataset(
-            eval_dataset, dataset_config["downsample_eval"], "eval"
+            eval_dataset, dataset_config["downsample_eval"], "eval", seed=dataset_config["random_state"]
         )
 
     train_dataset, eval_dataset = format_datasets(train_dataset, eval_dataset, tokenizer)
