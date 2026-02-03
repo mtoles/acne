@@ -624,7 +624,10 @@ def process_pt(pt_id):
         cancer_hits = [x for x in structured_hits if x["pred"]=="A"]
         rows.extend(block_rows)
         # Follow-up features if any prediction is "A"
-        if any(row["prediction"].upper() == "A" for row in block_rows):
+        # if any(row["prediction"].upper() == "A" for row in block_rows):
+        for cancer_hit in cancer_hits:
+            icd = cancer_hit["Code"]
+            kws = get_cancer_keywords_from_icd(icd)
             for follow_up_cls, follow_up_name in [
                 (cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
                 (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis"),
