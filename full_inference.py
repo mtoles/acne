@@ -320,14 +320,21 @@ def process_single_block_structured(block_records, feature_cls, phy_records=None
     return rows, structured_hits
 
 
-def process_single_block_llm(block_records, feature_cls, keywords=None):
+def make_keyword_filter(keywords):
+    """Create a chunk filter that returns True if any keyword is present."""
+    def filter_fn(chunk):
+        return len(has_keyword(chunk, keywords)) > 0
+    return filter_fn
+
+
+def process_single_block_llm(block_records, feature_cls, chunk_filter_fn):
     """
     Process a feature for a single time block using LLM.
 
     Args:
         block_records: List of vis table record dictionaries for this time block
         feature_cls: Feature class (e.g., smoking_status)
-        keywords: Custom keywords list (defaults to feature_cls.keywords)
+        chunk_filter_fn: Function(chunk) -> bool. If True, process chunk with LLM.
 
     Returns:
         List of result row dictionaries
@@ -336,8 +343,7 @@ def process_single_block_llm(block_records, feature_cls, keywords=None):
 
     rows = []
 
-    if keywords is None:
-        keywords = feature_cls.keywords
+    keywords = feature_cls.keywords
 
     best_record, keyword_count = select_record_with_most_keywords(block_records, keywords)
 
@@ -353,8 +359,8 @@ def process_single_block_llm(block_records, feature_cls, keywords=None):
 
         chunks = chunk_text(record_text)
         for chunk in chunks:
-            found_kws = has_keyword(chunk, keywords)
-            if found_kws:
+            if chunk_filter_fn(chunk):
+                found_kws = has_keyword(chunk, keywords)
                 for kw in found_kws:
                     pred = call_llm(feature_cls, chunk, kw)
                     rows.append({
@@ -498,7 +504,7 @@ def process_pt(pt_id):
         block_phy_records = filter_records_by_date_range(phy_records, start_date=block_start_date, end_date=block_end_date)
         block_rows, structured_hits = process_single_block_structured(block_records, smoking_status, phy_records=block_phy_records)
         if not block_rows:
-            block_rows = process_single_block_llm(block_records, smoking_status)
+            block_rows = process_single_block_llm(block_records, smoking_status, make_keyword_filter(smoking_status.keywords))
         rows.extend(block_rows)
         # Follow-up: smoking_amount if any prediction is "C"
         if block_rows:
@@ -506,7 +512,7 @@ def process_pt(pt_id):
             if pooled_value == "C":
                 follow_up_rows, follow_up_structured_hits = process_single_block_structured(block_records, smoking_amount, phy_records=block_phy_records)
                 if not follow_up_rows:
-                    follow_up_rows = process_single_block_llm(block_records, smoking_amount)
+                    follow_up_rows = process_single_block_llm(block_records, smoking_amount, make_keyword_filter(smoking_amount.keywords))
                 for row in follow_up_rows:
                     row["feature_name"] = "smoking_amount"
                 rows.extend(follow_up_rows)
@@ -522,7 +528,7 @@ def process_pt(pt_id):
         block_phy_records = filter_records_by_date_range(phy_records, start_date=block_start_date, end_date=block_end_date)
         block_rows, structured_hits = process_single_block_structured(block_records, alcohol_status, phy_records=block_phy_records)
         if not block_rows:
-            block_rows = process_single_block_llm(block_records, alcohol_status)
+            block_rows = process_single_block_llm(block_records, alcohol_status, make_keyword_filter(alcohol_status.keywords))
         rows.extend(block_rows)
         # Follow-up: alcohol_amount if any prediction is "A"
         if block_rows:
@@ -530,7 +536,7 @@ def process_pt(pt_id):
             if pooled_value == "A":
                 follow_up_rows, follow_up_structured_hits = process_single_block_structured(block_records, alcohol_amount, phy_records=block_phy_records)
                 if not follow_up_rows:
-                    follow_up_rows = process_single_block_llm(block_records, alcohol_amount)
+                    follow_up_rows = process_single_block_llm(block_records, alcohol_amount, make_keyword_filter(alcohol_amount.keywords))
                 for row in follow_up_rows:
                     row["feature_name"] = "alcohol_amount"
                 rows.extend(follow_up_rows)
@@ -576,17 +582,17 @@ def process_pt(pt_id):
             icd = cancer_hit["Code"]
             kws = get_kws_from_icd(icd)
             # Follow-ups use LLM (no structured data for these)
-            date_rows = process_single_block_llm(block_records, cancer_date_of_diagnosis, keywords=kws)
+            date_rows = process_single_block_llm(block_records, cancer_date_of_diagnosis, chunk_filter_fn=make_keyword_filter(kws))
             for row in date_rows:
                 row["feature_name"] = "cancer_date_of_diagnosis"
             rows.extend(date_rows)
 
-            stage_rows = process_single_block_llm(block_records, cancer_stage_at_diagnosis, keywords=CANCER_STAGE_SYNTHETIC_KEYWORDS)
+            stage_rows = process_single_block_llm(block_records, cancer_stage_at_diagnosis, chunk_filter_fn=make_keyword_filter(CANCER_STAGE_SYNTHETIC_KEYWORDS))
             for row in stage_rows:
                 row["feature_name"] = "cancer_stage_at_diagnosis"
             rows.extend(stage_rows)
 
-            max_stage_rows = process_single_block_llm(block_records, cancer_maximum_stage, keywords=CANCER_STAGE_SYNTHETIC_KEYWORDS)
+            max_stage_rows = process_single_block_llm(block_records, cancer_maximum_stage, chunk_filter_fn=make_keyword_filter(CANCER_STAGE_SYNTHETIC_KEYWORDS))
             for row in max_stage_rows:
                 row["feature_name"] = "cancer_maximum_stage"
             rows.extend(max_stage_rows)
@@ -594,7 +600,7 @@ def process_pt(pt_id):
 
     # Cancer family any: process each 6-month block (LLM only)
     for block_index, block_records in cancer_family_blocks.items():
-        block_rows = process_single_block_llm(block_records, cancer_family_any, keywords=SPECIFIC_CANCERS)
+        block_rows = process_single_block_llm(block_records, cancer_family_any, chunk_filter_fn=make_keyword_filter(SPECIFIC_CANCERS))
         rows.extend(block_rows)
     print(f"Completed cancer family any for {pt_id}")
 
