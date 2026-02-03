@@ -20,7 +20,7 @@ import json
 import threading
 import numpy as np
 import logging
-
+from kw_builder import get_kws_from_icd
 ### TODO: use the good queries we generated from testing
 
 random.seed(42)
@@ -151,6 +151,7 @@ def group_records_by_time_blocks(records, index_date, block_size_months=None, bl
     records_by_block = defaultdict(list)
     
     for record in records:
+        record = dict(record)
         record_date = record["Report_Date_Time"]
         record_date_dt = normalize_date(record_date)
         
@@ -158,13 +159,18 @@ def group_records_by_time_blocks(records, index_date, block_size_months=None, bl
             # Calculate which month block this record belongs to
             months_since_index = (record_date_dt.year - index_date_dt.year) * 12 + (record_date_dt.month - index_date_dt.month)
             block_index = months_since_index // block_size_months
+            block_start_date = index_date_dt + pd.DateOffset(months=block_index * block_size_months)
+            block_end_date = block_start_date + pd.DateOffset(months=block_size_months)
         elif block_size_weeks is not None:
             # Calculate which week block this record belongs to
             days_since_index = (record_date_dt - index_date_dt).days
             block_index = days_since_index // (block_size_weeks * 7)
+            block_start_date = index_date_dt + pd.Timedelta(weeks=block_index * block_size_weeks)
+            block_end_date = block_start_date + pd.Timedelta(weeks=block_size_weeks)
         else:
             raise ValueError("Either block_size_months or block_size_weeks must be provided")
-        
+        record["block_start_date"] = block_start_date
+        record["block_end_date"] = block_end_date
         records_by_block[block_index].append(record)
     
     return records_by_block
@@ -209,7 +215,12 @@ def filter_records_by_date_range(records, start_date=None, end_date=None):
     """
     filtered_records = []
     for record in records:
-        record_date = record["Report_Date_Time"]
+        if "Report_Date_Time" in record:
+            record_date = record["Report_Date_Time"]
+        elif "Date" in record:
+            record_date = record["Date"]
+        else:
+            raise ValueError("Record does not have a date field")
         record_date_dt = normalize_date(record_date)
         
         if start_date is not None:
@@ -429,7 +440,7 @@ def process_feature_all_records(records, feature_cls, follow_up_features=None):
     return rows
 
 
-def get_chunks_by_keyword(record: str, keyword: str, context_words: int = 1000) -> list[str]:
+def get_chunks_by_keyword(record: str, keyword: str, context_words: int = 200) -> list[str]:
     """Get chunk by keyword, including +/- context_words before and after the keyword."""
     
     chunks = []
@@ -555,7 +566,10 @@ def process_pt(pt_id):
     for block_index, block_records in smoking_blocks.items():
         _thread_local.block_id = f"smoking_{block_index}"
         _thread_local.block_dates = f"{min(r['Report_Date_Time'] for r in block_records)[:10]}~{max(r['Report_Date_Time'] for r in block_records)[:10]}" if block_records else ""
-        block_rows, structured_hits = process_single_block_structured(block_records, smoking_status, phy_records=phy_records)
+        block_start_date = block_records[0]["block_start_date"] if block_records else ""
+        block_end_date = block_records[0]["block_end_date"] if block_records else ""
+        block_phy_records = filter_records_by_date_range(phy_records, start_date=block_start_date, end_date=block_end_date)
+        block_rows, structured_hits = process_single_block_structured(block_records, smoking_status, phy_records=block_phy_records)
         if not block_rows:
             block_rows = process_single_block_llm(block_records, smoking_status)
         rows.extend(block_rows)
@@ -563,7 +577,7 @@ def process_pt(pt_id):
         if block_rows:
             pooled_value = smoking_status.pooling_fn([row["prediction"] for row in block_rows])
             if pooled_value == "C":
-                follow_up_rows, follow_up_structured_hits = process_single_block_structured(block_records, smoking_amount, phy_records=phy_records)
+                follow_up_rows, follow_up_structured_hits = process_single_block_structured(block_records, smoking_amount, phy_records=block_phy_records)
                 if not follow_up_rows:
                     follow_up_rows = process_single_block_llm(block_records, smoking_amount)
                 for row in follow_up_rows:
@@ -576,7 +590,10 @@ def process_pt(pt_id):
     for block_index, block_records in alcohol_blocks.items():
         _thread_local.block_id = f"alcohol_{block_index}"
         _thread_local.block_dates = f"{min(r['Report_Date_Time'] for r in block_records)[:10]}~{max(r['Report_Date_Time'] for r in block_records)[:10]}" if block_records else ""
-        block_rows, structured_hits = process_single_block_structured(block_records, alcohol_status, phy_records=phy_records)
+        block_start_date = block_records[0]["block_start_date"] if block_records else ""
+        block_end_date = block_records[0]["block_end_date"] if block_records else ""
+        block_phy_records = filter_records_by_date_range(phy_records, start_date=block_start_date, end_date=block_end_date)
+        block_rows, structured_hits = process_single_block_structured(block_records, alcohol_status, phy_records=block_phy_records)
         if not block_rows:
             block_rows = process_single_block_llm(block_records, alcohol_status)
         rows.extend(block_rows)
@@ -584,7 +601,7 @@ def process_pt(pt_id):
         if block_rows:
             pooled_value = alcohol_status.pooling_fn([row["prediction"] for row in block_rows])
             if pooled_value == "A":
-                follow_up_rows, follow_up_structured_hits = process_single_block_structured(block_records, alcohol_amount, phy_records=phy_records)
+                follow_up_rows, follow_up_structured_hits = process_single_block_structured(block_records, alcohol_amount, phy_records=block_phy_records)
                 if not follow_up_rows:
                     follow_up_rows = process_single_block_llm(block_records, alcohol_amount)
                 for row in follow_up_rows:
@@ -620,24 +637,32 @@ def process_pt(pt_id):
     for block_index, block_records in cancer_cancer_blocks.items():
         _thread_local.block_id = f"cancer_{block_index}"
         _thread_local.block_dates = f"{min(r['Report_Date_Time'] for r in block_records)[:10]}~{max(r['Report_Date_Time'] for r in block_records)[:10]}" if block_records else ""
-        block_rows, structured_hits = process_single_block_structured(block_records, cancer_cancer, dia_records=outcome_dia_records)
+        block_start_date = block_records[0]["block_start_date"] if block_records else ""
+        block_end_date = block_records[0]["block_end_date"] if block_records else ""
+        block_dia_records = filter_records_by_date_range(outcome_dia_records, start_date=block_start_date, end_date=block_end_date)
+        block_rows, structured_hits = process_single_block_structured(block_records, cancer_cancer, dia_records=block_dia_records)
         cancer_hits = [x for x in structured_hits if x["pred"]=="A"]
         rows.extend(block_rows)
         # Follow-up features if any prediction is "A"
         # if any(row["prediction"].upper() == "A" for row in block_rows):
         for cancer_hit in cancer_hits:
             icd = cancer_hit["Code"]
-            kws = get_cancer_keywords_from_icd(icd)
-            for follow_up_cls, follow_up_name in [
-                (cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
-                (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis"),
-                (cancer_maximum_stage, "cancer_maximum_stage")
-            ]:
-                # Follow-ups use LLM (no structured data for these)
-                follow_up_rows = process_single_block_llm(block_records, follow_up_cls)
-                for row in follow_up_rows:
-                    row["feature_name"] = follow_up_name
-                rows.extend(follow_up_rows)
+            kws = get_kws_from_icd(icd)
+            # Follow-ups use LLM (no structured data for these)
+            date_rows = process_single_block_llm(block_records, cancer_date_of_diagnosis, keywords=kws)
+            for row in date_rows:
+                row["feature_name"] = "cancer_date_of_diagnosis"
+            rows.extend(date_rows)
+
+            stage_rows = process_single_block_llm(block_records, cancer_stage_at_diagnosis, keywords=CANCER_STAGE_SYNTHETIC_KEYWORDS)
+            for row in stage_rows:
+                row["feature_name"] = "cancer_stage_at_diagnosis"
+            rows.extend(stage_rows)
+
+            max_stage_rows = process_single_block_llm(block_records, cancer_maximum_stage, keywords=CANCER_STAGE_SYNTHETIC_KEYWORDS)
+            for row in max_stage_rows:
+                row["feature_name"] = "cancer_maximum_stage"
+            rows.extend(max_stage_rows)
     print(f"Completed cancer cancer for {pt_id}")
 
     # Cancer family any: process each 6-month block (LLM only)
@@ -667,7 +692,7 @@ def process_pt(pt_id):
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--n_workers', type=int, default=1, help='Number of worker threads (default: 1)')
+parser.add_argument('--n-workers', type=int, default=1, help='Number of worker threads (default: 1)')
 parser.add_argument('--limit', type=int, default=None, help='Max number of patients to process (default: None, process all)')
 parser.add_argument('--dummy-llm', action='store_true', help='Use dummy LLM (sample from prevalence / random dates)')
 args = parser.parse_args()
