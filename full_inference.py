@@ -269,86 +269,7 @@ def _extract_and_pool_structured(feature_cls, block_records):
     return pooled
 
 
-def _process_follow_up_features_llm(follow_up_features, pred_value, record_text, keywords, record_date, rows):
-    """Process follow-up features using LLM for a given prediction."""
-    global _llm_windows_count, _per_patient_stats, _per_patient_stats_lock
-
-    if not follow_up_features or pred_value.upper() not in follow_up_features:
-        return
-
-    follow_ups = follow_up_features[pred_value.upper()]
-    # Support both single tuple and list of tuples
-    if isinstance(follow_ups, tuple):
-        follow_ups = [follow_ups]
-
-    for follow_up_cls, follow_up_name in follow_ups:
-        # Track LLM usage for follow-up feature
-        _llm_windows_count += 1
-        if hasattr(_thread_local, 'current_patient_id') and _thread_local.current_patient_id:
-            with _per_patient_stats_lock:
-                if _thread_local.current_patient_id not in _per_patient_stats:
-                    _per_patient_stats[_thread_local.current_patient_id] = {"structured": 0, "llm": 0}
-                _per_patient_stats[_thread_local.current_patient_id]["llm"] += 1
-
-        resolved = False
-        inconclusive = getattr(follow_up_cls, 'inconclusive_values', set())
-        for kw in keywords:
-            if resolved:
-                break
-            chunks = get_chunks_by_keyword(record_text, kw)
-            for chunk in chunks:
-                if resolved:
-                    break
-                follow_up_pred = call_llm(follow_up_cls, chunk, kw)
-                rows.append({
-                    "feature_name": follow_up_name,
-                    "keyword": kw,
-                    "date": record_date,
-                    "prediction": follow_up_pred,
-                })
-                if follow_up_pred.upper() not in inconclusive:
-                    resolved = True
-
-
-def _process_follow_up_features_structured(follow_up_features, pred_value, block_records, keywords, rows, phy_records=None):
-    """Process follow-up features using structured-then-LLM approach."""
-    if not follow_up_features or pred_value.upper() not in follow_up_features:
-        return
-
-    follow_ups = follow_up_features[pred_value.upper()]
-    # Support both single tuple and list of tuples
-    if isinstance(follow_ups, tuple):
-        follow_ups = [follow_ups]
-
-    for follow_up_cls, follow_up_name in follow_ups:
-        # Try structured data first (extract from phy_records and pool)
-        structured_records = phy_records if phy_records is not None else []
-        structured_value = _extract_and_pool_structured(follow_up_cls, structured_records)
-
-        if structured_value is not None:
-            # Structured data was conclusive
-            if block_records:
-                record_date = max(record["Report_Date_Time"] for record in block_records)
-            else:
-                record_date = None
-
-            rows.append({
-                "feature_name": follow_up_name,
-                "keyword": "STRUCTURED_DATA",
-                "date": record_date,
-                "prediction": structured_value,
-            })
-        else:
-            # Fall back to LLM processing
-            best_record, keyword_count = select_record_with_most_keywords(block_records, keywords)
-            if best_record and keyword_count > 0:
-                record_date = best_record["Report_Date_Time"]
-                record_text = best_record["Report_Text"]
-                _process_follow_up_features_llm({pred_value.upper(): (follow_up_cls, follow_up_name)},
-                                               pred_value, record_text, keywords, record_date, rows)
-
-
-def process_feature_single_block(block_records, feature_cls, follow_up_features=None, keywords=None, phy_records=None, dia_records=None, fallback_to_llm=True):
+def process_feature_single_block(block_records, feature_cls, keywords=None, phy_records=None, dia_records=None, fallback_to_llm=True):
     """
     Process a feature for a single time block.
 
@@ -358,10 +279,6 @@ def process_feature_single_block(block_records, feature_cls, follow_up_features=
     Args:
         block_records: List of vis table record dictionaries for this time block (for LLM)
         feature_cls: Feature class (e.g., smoking_status)
-        follow_up_features: Dict mapping prediction value to list of (feature_cls, feature_name) tuples
-                           e.g., {"C": [(smoking_amount, "smoking_amount")]}
-                           or {"A": [(cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
-                                     (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis")]}
         keywords: Custom keywords list (defaults to feature_cls.keywords)
         phy_records: List of phy table record dictionaries (for structured data extraction)
         dia_records: List of dia table record dictionaries (for diagnosis-based structured data extraction)
@@ -387,7 +304,7 @@ def process_feature_single_block(block_records, feature_cls, follow_up_features=
         structured_records = phy_records if phy_records is not None else []
     structured_value = _extract_and_pool_structured(feature_cls, structured_records)
 
-    # If structured data gave a conclusive answer, use it and process follow-ups
+    # If structured data gave a conclusive answer, use it
     if structured_value is not None:
         # Track structured window usage
         _structured_windows_count += 1
@@ -411,91 +328,36 @@ def process_feature_single_block(block_records, feature_cls, follow_up_features=
             "prediction": structured_value,
         })
 
-        # Process follow-up features using structured-then-LLM approach
-        # Note: Follow-up features for cancer should still use LLM (no dia_records passed)
-        _process_follow_up_features_structured(follow_up_features, structured_value, block_records, keywords, rows, phy_records=None)
+    # Structured data was None/inconclusive - fall back to LLM if enabled
+    elif fallback_to_llm:
+        # Find the record with the most keywords
+        best_record, keyword_count = select_record_with_most_keywords(block_records, keywords)
 
-        return rows  # Done processing - structured data was conclusive
+        # If we found a record with keywords, process it
+        if best_record and keyword_count > 0:
+            # Track LLM window usage (only if we actually process it)
+            _llm_windows_count += 1
+            if hasattr(_thread_local, 'current_patient_id') and _thread_local.current_patient_id:
+                with _per_patient_stats_lock:
+                    # Initialize stats for this patient if not already tracked
+                    if _thread_local.current_patient_id not in _per_patient_stats:
+                        _per_patient_stats[_thread_local.current_patient_id] = {"structured": 0, "llm": 0}
+                    _per_patient_stats[_thread_local.current_patient_id]["llm"] += 1
+            record_date = best_record["Report_Date_Time"]
+            record_text = best_record["Report_Text"]
 
-    # Structured data was None/inconclusive
-    # Only fall back to LLM if fallback_to_llm is True
-    if not fallback_to_llm:
-        return rows  # Don't fall back to LLM - just skip this feature
-
-    # Fall back to LLM processing
-    # Find the record with the most keywords
-    best_record, keyword_count = select_record_with_most_keywords(block_records, keywords)
-
-    # If we found a record with keywords, process it
-    if best_record and keyword_count > 0:
-        # Track LLM window usage (only if we actually process it)
-        _llm_windows_count += 1
-        if hasattr(_thread_local, 'current_patient_id') and _thread_local.current_patient_id:
-            with _per_patient_stats_lock:
-                # Initialize stats for this patient if not already tracked
-                if _thread_local.current_patient_id not in _per_patient_stats:
-                    _per_patient_stats[_thread_local.current_patient_id] = {"structured": 0, "llm": 0}
-                _per_patient_stats[_thread_local.current_patient_id]["llm"] += 1
-        record_date = best_record["Report_Date_Time"]
-        record_text = best_record["Report_Text"]
-
-        # Track which follow-up features have gotten a conclusive (non-unknown) answer
-        # Key is (follow_up_name, keyword) if per_keyword, else just follow_up_name
-        follow_up_resolved = {}
-        per_keyword = getattr(feature_cls, 'short_circuit_per_keyword', False)
-
-        # Process all keywords
-        for kw in keywords:
-            chunks = get_chunks_by_keyword(record_text, kw)
-            # Process all instances (chunks) of the keyword
-            for chunk in chunks:
-                pred = call_llm(feature_cls, chunk, kw)
-                rows.append({
-                    "feature_name": feature_cls.__name__,
-                    "keyword": kw,
-                    "date": record_date,
-                    "prediction": pred,
-                })
-
-                # Handle follow-up features using structured-then-LLM approach
-                if follow_up_features and pred.upper() in follow_up_features:
-                    follow_ups = follow_up_features[pred.upper()]
-                    # Support both single tuple and list of tuples
-                    if isinstance(follow_ups, tuple):
-                        follow_ups = [follow_ups]
-
-                    for follow_up_cls, follow_up_name in follow_ups:
-                        # Build resolution key - per-keyword or global
-                        resolved_key = (follow_up_name, kw) if per_keyword else follow_up_name
-                        # Skip if we already have a conclusive answer for this follow-up
-                        if follow_up_resolved.get(resolved_key):
-                            continue
-
-                        # Try structured data first (from ALL records in block)
-                        follow_up_structured = _extract_and_pool_structured(follow_up_cls, block_records)
-
-                        if follow_up_structured is not None:
-                            # Structured data was conclusive - use it
-                            rows.append({
-                                "feature_name": follow_up_name,
-                                "keyword": "STRUCTURED_DATA",
-                                "date": record_date,
-                                "prediction": follow_up_structured,
-                            })
-                            follow_up_resolved[resolved_key] = True
-                        else:
-                            # Fall back to LLM on this chunk
-                            follow_up_pred = call_llm(follow_up_cls, chunk, kw)
-                            rows.append({
-                                "feature_name": follow_up_name,
-                                "keyword": kw,
-                                "date": record_date,
-                                "prediction": follow_up_pred,
-                            })
-                            # Mark as resolved if we got a conclusive answer
-                            inconclusive = getattr(follow_up_cls, 'inconclusive_values', set())
-                            if follow_up_pred.upper() not in inconclusive:
-                                follow_up_resolved[resolved_key] = True
+            # Process all keywords
+            for kw in keywords:
+                chunks = get_chunks_by_keyword(record_text, kw)
+                # Process all instances (chunks) of the keyword
+                for chunk in chunks:
+                    pred = call_llm(feature_cls, chunk, kw)
+                    rows.append({
+                        "feature_name": feature_cls.__name__,
+                        "keyword": kw,
+                        "date": record_date,
+                        "prediction": pred,
+                    })
 
     return rows
 
@@ -699,60 +561,73 @@ def process_pt(pt_id):
     # Smoking status: process each 3-month block
     # Note: Extracts structured data from phy_records, pools using pooling_fn
     # Falls back to LLM if structured data is unavailable/inconclusive
-    # Follow-up features (smoking_amount) also use structured-then-LLM approach
     # Use LLM if no structured: yes
     for block_index, block_records in smoking_blocks.items():
         _thread_local.block_id = f"smoking_{block_index}"
         _thread_local.block_dates = f"{min(r['Report_Date_Time'] for r in block_records)[:10]}~{max(r['Report_Date_Time'] for r in block_records)[:10]}" if block_records else ""
         block_rows = process_feature_single_block(
             block_records, smoking_status,
-            follow_up_features={"C": (smoking_amount, "smoking_amount")},
             phy_records=phy_records
         )
         rows.extend(block_rows)
+        # Follow-up: smoking_amount if any prediction is "C"
+        if any(row["prediction"].upper() == "C" for row in block_rows):
+            follow_up_rows = process_feature_single_block(
+                block_records, smoking_amount,
+                phy_records=phy_records
+            )
+            for row in follow_up_rows:
+                row["feature_name"] = "smoking_amount"
+            rows.extend(follow_up_rows)
     print(f"Completed smoking status for {pt_id}")
 
     # Alcohol status: process each 3-month block
     # Note: Extracts structured data from phy_records, pools using pooling_fn
     # Falls back to LLM if structured data is unavailable/inconclusive
-    # Follow-up features (alcohol_amount) also use structured-then-LLM approach
     # Use LLM if no structured: yes
     for block_index, block_records in alcohol_blocks.items():
         _thread_local.block_id = f"alcohol_{block_index}"
         _thread_local.block_dates = f"{min(r['Report_Date_Time'] for r in block_records)[:10]}~{max(r['Report_Date_Time'] for r in block_records)[:10]}" if block_records else ""
         block_rows = process_feature_single_block(
             block_records, alcohol_status,
-            follow_up_features={"A": (alcohol_amount, "alcohol_amount")},
             phy_records=phy_records
         )
         rows.extend(block_rows)
+        # Follow-up: alcohol_amount if any prediction is "A"
+        if any(row["prediction"].upper() == "A" for row in block_rows):
+            follow_up_rows = process_feature_single_block(
+                block_records, alcohol_amount,
+                phy_records=phy_records
+            )
+            for row in follow_up_rows:
+                row["feature_name"] = "alcohol_amount"
+            rows.extend(follow_up_rows)
     print(f"Completed alcohol status for {pt_id}")
 
     # Transplant: every record
     # Use LLM if no structured: no
     # Note: transplant feature needs option_from_structured method implemented
-    # transplant_rows = process_feature_all_records(
-    #     all_records, transplant,
-    #     follow_up_features={"A": (transplant_date, "transplant_date")}
-    # )
-    # rows.extend(transplant_rows)
-    # print(f"Completed transplant for {pt_id}")
+    transplant_rows = process_feature_all_records(
+        all_records, transplant,
+        follow_up_features={"A": (transplant_date, "transplant_date")}
+    )
+    rows.extend(transplant_rows)
+    print(f"Completed transplant for {pt_id}")
 
     # Immunosuppressed disease: process each 6-month block
     # Use LLM if no structured: no
     # Note: immunosuppressed_disease feature needs option_from_structured method implemented
-    # for block_index, block_records in immunosuppressed_blocks.items():
-    #     block_rows = process_feature_single_block(
-    #         block_records, immunosuppressed_disease,
-    #         fallback_to_llm=False  # Don't fall back to LLM if no structured data
-    #     )
-    #     rows.extend(block_rows)
-    # print(f"Completed immunosuppressed disease for {pt_id}")
+    for block_index, block_records in immunosuppressed_blocks.items():
+        block_rows = process_feature_single_block(
+            block_records, immunosuppressed_disease,
+            fallback_to_llm=False  # Don't fall back to LLM if no structured data
+        )
+        rows.extend(block_rows)
+    print(f"Completed immunosuppressed disease for {pt_id}")
 
     # === Features using outcome window (after outcome_window_start_date) ===
 
     # Cancer cancer: process each 3-month block using structured data from dia table
-    # Follow-up features will use LLM only
     # Use LLM if no structured: no
     for block_index, block_records in cancer_cancer_blocks.items():
         _thread_local.block_id = f"cancer_{block_index}"
@@ -760,27 +635,36 @@ def process_pt(pt_id):
         block_rows = process_feature_single_block(
             block_records, cancer_cancer,
             keywords=SPECIFIC_CANCERS,
-            follow_up_features={"A": [
-                (cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
-                (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis"),
-                (cancer_maximum_stage, "cancer_maximum_stage")
-            ]},
             dia_records=outcome_dia_records,  # Pass outcome dia_records for structured cancer detection
             fallback_to_llm=False  # Don't fall back to LLM if no structured data
         )
         rows.extend(block_rows)
+        # Follow-up features if any prediction is "A"
+        if any(row["prediction"].upper() == "A" for row in block_rows):
+            for follow_up_cls, follow_up_name in [
+                (cancer_date_of_diagnosis, "cancer_date_of_diagnosis"),
+                (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis"),
+                (cancer_maximum_stage, "cancer_maximum_stage")
+            ]:
+                follow_up_rows = process_feature_single_block(
+                    block_records, follow_up_cls,
+                    dia_records=outcome_dia_records
+                )
+                for row in follow_up_rows:
+                    row["feature_name"] = follow_up_name
+                rows.extend(follow_up_rows)
     print(f"Completed cancer cancer for {pt_id}")
 
-    # # Cancer family any: process each 6-month block
-    # for block_index, block_records in cancer_family_blocks.items():
-    #     block_rows = process_feature_single_block(
-    #         block_records, cancer_family_any,
-    #         keywords=SPECIFIC_CANCERS
-    #     )
-    #     rows.extend(block_rows)
-    # print(f"Completed cancer family any for {pt_id}")
+    # Cancer family any: process each 6-month block
+    for block_index, block_records in cancer_family_blocks.items():
+        block_rows = process_feature_single_block(
+            block_records, cancer_family_any,
+            keywords=SPECIFIC_CANCERS
+        )
+        rows.extend(block_rows)
+    print(f"Completed cancer family any for {pt_id}")
 
-    # # === Features using treatment window (index_date to outcome_window_start_date) ===
+    # === Features using treatment window (index_date to outcome_window_start_date) ===
 
     # Antibiotics: every record
     antibiotic_rows = process_feature_all_records(
