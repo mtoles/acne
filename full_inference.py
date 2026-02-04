@@ -582,17 +582,26 @@ def process_pt(pt_id):
             icd = cancer_hit["Code"]
             kws = get_kws_from_icd(icd)
             # Follow-ups use LLM (no structured data for these)
-            date_rows = process_single_block_llm(block_records, cancer_date_of_diagnosis, chunk_filter_fn=make_keyword_filter(kws))
+            def cancer_date_filter(chunk):
+                has_kw = len(has_keyword(chunk, kws)) > 0
+                has_date = contains_date(chunk)
+                return has_kw and has_date
+            date_rows = process_single_block_llm(block_records, cancer_date_of_diagnosis, chunk_filter_fn=cancer_date_filter)
             for row in date_rows:
                 row["feature_name"] = "cancer_date_of_diagnosis"
             rows.extend(date_rows)
 
-            stage_rows = process_single_block_llm(block_records, cancer_stage_at_diagnosis, chunk_filter_fn=make_keyword_filter(CANCER_STAGE_SYNTHETIC_KEYWORDS))
+            def cancer_stage_filter(chunk):
+                # check if cancer kws are present
+                has_cancer_kw = len(has_keyword(chunk, kws)) > 0
+                has_stage_kw = len(has_keyword(chunk, CANCER_STAGE_SYNTHETIC_KEYWORDS)) > 0
+                return has_cancer_kw and has_stage_kw
+            stage_rows = process_single_block_llm(block_records, cancer_stage_at_diagnosis, chunk_filter_fn=cancer_stage_filter)
             for row in stage_rows:
                 row["feature_name"] = "cancer_stage_at_diagnosis"
             rows.extend(stage_rows)
 
-            max_stage_rows = process_single_block_llm(block_records, cancer_maximum_stage, chunk_filter_fn=make_keyword_filter(CANCER_STAGE_SYNTHETIC_KEYWORDS))
+            max_stage_rows = process_single_block_llm(block_records, cancer_maximum_stage, chunk_filter_fn=cancer_stage_filter)
             for row in max_stage_rows:
                 row["feature_name"] = "cancer_maximum_stage"
             rows.extend(max_stage_rows)

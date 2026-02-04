@@ -195,3 +195,56 @@ def get_dataset(
         print(f"    Eval: {len(eval_df)} ({len(natural_eval)} natural, {len(synthetic_eval)} synthetic)")
     
     return all_datasets
+
+
+def contains_date(text):
+    """
+    Checks if a string contains a date.
+    - Matches standard formats: 12/12/2023, 12-12-23, 12.12.23
+    - Matches textual formats: Jan 12, 12th January, May 2023
+    - EXCLUDES pure number lists separated only by spaces (e.g., "12 3 99")
+    """
+    if not text:
+        return False
+
+    # 1. Define Helpers
+    
+    # Word boundary (\b) prevents matching inside words (e.g. "maybe", "marching")
+    months = (
+        r'\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|'
+        r'jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b'
+    )
+    
+    suffix = r'(?:st|nd|rd|th)?'
+
+    # STRICT SEPARATOR: For numeric dates (e.g. 10/10/20)
+    # Must contain -, /, or . (optionally surrounded by whitespace)
+    # This excludes "12 12 12" because there is no symbol.
+    strict_sep = r'\s*[-/.]\s*'
+
+    # LOOSE SEPARATOR: For textual dates (e.g. Jan 10)
+    # Allows whitespace, commas, dashes, slashes, or dots.
+    loose_sep = r'(?:\s+|[-/.,]\s*)'
+
+    # 2. Define Patterns
+
+    # Pattern A: Numeric Only (e.g., 10/12/20, 2020-10-12, 1.1.2000)
+    # Uses strict_sep, so "12 3 99" returns False, but "12/3/99" returns True.
+    pattern_numeric = r'\b\d{1,4}' + strict_sep + r'\d{1,2}' + strict_sep + r'\d{2,4}\b'
+
+    # Pattern B: Month + Day + Optional Year (e.g., "Jan 12", "January 12th 2023")
+    pattern_md = months + loose_sep + r'\d{1,2}' + suffix + r'(?:' + loose_sep + r'\d{2,4})?\b'
+
+    # Pattern C: Day + Month + Optional Year (e.g., "12 Jan", "12th January 2023")
+    pattern_dm = r'\b\d{1,2}' + suffix + loose_sep + months + r'(?:' + loose_sep + r'\d{2,4})?\b'
+
+    # Pattern D: Month + Year (e.g., "May 2023", "Jan '23")
+    pattern_my = months + loose_sep + r"[']?\d{2,4}\b"
+
+    # 3. Combine and Search
+    full_pattern = f"({pattern_numeric}|{pattern_md}|{pattern_dm}|{pattern_my})"
+    
+    # Ignore case so "jan" matches "Jan" or "JAN"
+    match = re.search(full_pattern, text, re.IGNORECASE)
+
+    return bool(match)
