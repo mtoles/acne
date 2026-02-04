@@ -221,6 +221,10 @@ def build_arg_parser():
         default="default",
         help="Experiment name (creates subdirectory in training_runs)",
     )
+    parser.add_argument(
+        "--pretrain"
+        , action="store_true", help="If set, perform pretraining (no answers in prompts)"
+    )
     return parser
 
 
@@ -1147,7 +1151,9 @@ def main():
         eval_dataset = downsample_dataset(
             eval_dataset, dataset_config["downsample_eval"], "eval", seed=dataset_config["random_state"]
         )
-
+    # make response empty if pretraining
+    if args_cli.pretrain:
+        train_dataset = train_dataset.map(lambda x: {'output': ''})
     train_dataset, eval_dataset = format_datasets(train_dataset, eval_dataset, tokenizer)
 
     eval_callback = build_eval_callback(
