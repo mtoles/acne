@@ -357,8 +357,12 @@ def process_single_block_llm(block_records, feature_cls, chunk_filter_fn):
         record_date = best_record["Report_Date_Time"]
         record_text = best_record["Report_Text"]
 
+        inconclusive_values = getattr(feature_cls, 'inconclusive_values', set())
+        found_conclusive = False
         chunks = chunk_text(record_text)
         for chunk in chunks:
+            if found_conclusive:
+                break
             if chunk_filter_fn(chunk):
                 found_kws = has_keyword(chunk, keywords)
                 for kw in found_kws:
@@ -369,6 +373,9 @@ def process_single_block_llm(block_records, feature_cls, chunk_filter_fn):
                         "date": record_date,
                         "prediction": pred,
                     })
+                    if pred not in inconclusive_values:
+                        found_conclusive = True
+                        break
 
     return rows
 
@@ -594,7 +601,7 @@ def process_pt(pt_id):
             def cancer_stage_filter(chunk):
                 # check if cancer kws are present
                 has_cancer_kw = len(has_keyword(chunk, kws)) > 0
-                has_stage_kw = len(has_keyword(chunk, CANCER_STAGE_SYNTHETIC_KEYWORDS)) > 0
+                has_stage_kw = len(has_keyword(chunk, CANCER_STAGE_2_PART_KEYWORDS)) > 0
                 return has_cancer_kw and has_stage_kw
             stage_rows = process_single_block_llm(block_records, cancer_stage_at_diagnosis, chunk_filter_fn=cancer_stage_filter)
             for row in stage_rows:
@@ -615,19 +622,19 @@ def process_pt(pt_id):
 
     # === Features using treatment window (index_date to outcome_window_start_date) ===
 
-    # # Antibiotics: process all treatment window records as a single block
-    # antibiotic_rows = process_single_block_llm(treatment_window_records, antibiotics)
-    # rows.extend(antibiotic_rows)
+    # Antibiotics: process all treatment window records as a single block
+    antibiotic_rows = process_single_block_llm(treatment_window_records, antibiotics)
+    rows.extend(antibiotic_rows)
 
-    # # Antibiotic duration follow-up for positive antibiotic hits
-    # for row in antibiotic_rows:
-    #     if row["prediction"].upper() == "A":
-    #         duration_rows = process_single_block_llm(treatment_window_records, antibiotic_duration)
-    #         for duration_row in duration_rows:
-    #             duration_row["feature_name"] = "antibiotic_duration"
-    #         rows.extend(duration_rows)
-    #         break  # Only need to check duration once per patient
-    # print(f"Completed antibiotics for {pt_id}")
+    # Antibiotic duration follow-up for positive antibiotic hits
+    for row in antibiotic_rows:
+        if row["prediction"].upper() == "A":
+            duration_rows = process_single_block_llm(treatment_window_records, antibiotic_duration)
+            for duration_row in duration_rows:
+                duration_row["feature_name"] = "antibiotic_duration"
+            rows.extend(duration_rows)
+            break  # Only need to check duration once per patient
+    print(f"Completed antibiotics for {pt_id}")
 
     # Convert to DataFrame
     df = pd.DataFrame(rows)
