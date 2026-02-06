@@ -1,4 +1,3 @@
-
 from pt_features import *
 from utils import *
 from sqlalchemy import create_engine, text, inspect
@@ -20,8 +19,8 @@ import json
 import threading
 import numpy as np
 import logging
-from kw_builder import get_kws_from_icd
-### TODO: use the good queries we generated from testing
+from kw_builder import get_kws_from_icd, ICD_TO_TRANSPLANT_DESC, ICD9_TRANSPLANT_PROCEDURE_CODES, ICD10_TRANSPLANT_PROCEDURE_CODES, ICD9_DIAGNOSIS_CODES, ICD10_DIAGNOSIS_CODES
+from kw_builder import transplant_df as transplant_icd_df
 
 random.seed(42)
 
@@ -137,105 +136,107 @@ def normalize_date(date_value):
 def group_records_by_time_blocks(records, index_date, block_size_months=None, block_size_weeks=None):
     """
     Group records into time blocks from index_date.
-    
+
     Args:
-        records: List of record dictionaries with "Report_Date_Time" key
+        records: DataFrame with "Report_Date_Time" column
         index_date: Reference date for grouping
         block_size_months: Size of block in months (e.g., 3 for 3-month blocks)
         block_size_weeks: Size of block in weeks (e.g., 2 for 2-week blocks)
-    
+
     Returns:
-        Dictionary mapping block_index to list of records
+        Dictionary mapping block_index to DataFrame of records (with block_start_date, block_end_date columns)
     """
+    if records.empty:
+        return {}
+
     index_date_dt = normalize_date(index_date)
-    records_by_block = defaultdict(list)
-    
-    for record in records:
-        record = dict(record)
-        record_date = record["Report_Date_Time"]
-        record_date_dt = normalize_date(record_date)
-        
-        if block_size_months is not None:
-            # Calculate which month block this record belongs to
-            months_since_index = (record_date_dt.year - index_date_dt.year) * 12 + (record_date_dt.month - index_date_dt.month)
-            block_index = months_since_index // block_size_months
-            block_start_date = index_date_dt + pd.DateOffset(months=block_index * block_size_months)
-            block_end_date = block_start_date + pd.DateOffset(months=block_size_months)
-        elif block_size_weeks is not None:
-            # Calculate which week block this record belongs to
-            days_since_index = (record_date_dt - index_date_dt).days
-            block_index = days_since_index // (block_size_weeks * 7)
-            block_start_date = index_date_dt + pd.Timedelta(weeks=block_index * block_size_weeks)
-            block_end_date = block_start_date + pd.Timedelta(weeks=block_size_weeks)
-        else:
-            raise ValueError("Either block_size_months or block_size_weeks must be provided")
-        record["block_start_date"] = block_start_date
-        record["block_end_date"] = block_end_date
-        records_by_block[block_index].append(record)
-    
+    records = records.copy()
+
+    record_dates = records["Report_Date_Time"].apply(normalize_date)
+
+    if block_size_months is not None:
+        months_since_index = (record_dates.dt.year - index_date_dt.year) * 12 + (record_dates.dt.month - index_date_dt.month)
+        block_indices = months_since_index // block_size_months
+        records["_block_index"] = block_indices
+        records["block_start_date"] = block_indices.apply(lambda bi: index_date_dt + pd.DateOffset(months=int(bi) * block_size_months))
+        records["block_end_date"] = block_indices.apply(lambda bi: index_date_dt + pd.DateOffset(months=(int(bi) + 1) * block_size_months))
+    elif block_size_weeks is not None:
+        days_since_index = (record_dates - index_date_dt).dt.days
+        block_indices = days_since_index // (block_size_weeks * 7)
+        records["_block_index"] = block_indices
+        records["block_start_date"] = block_indices.apply(lambda bi: index_date_dt + pd.Timedelta(weeks=int(bi) * block_size_weeks))
+        records["block_end_date"] = block_indices.apply(lambda bi: index_date_dt + pd.Timedelta(weeks=(int(bi) + 1) * block_size_weeks))
+    else:
+        raise ValueError("Either block_size_months or block_size_weeks must be provided")
+
+    records_by_block = {}
+    for block_index, group in records.groupby("_block_index"):
+        records_by_block[block_index] = group.drop(columns=["_block_index"]).reset_index(drop=True)
+
     return records_by_block
 
 
 def select_record_with_most_keywords(records, keywords):
     """
     Select the record with the most keyword matches.
-    
+
     Args:
-        records: List of record dictionaries with "Report_Text" key
+        records: DataFrame with "Report_Text" column
         keywords: List of keywords to search for
-    
+
     Returns:
-        Tuple of (best_record, keyword_count) or (None, 0) if no keywords found
+        Tuple of (best_record_series, keyword_count) or (None, 0) if no keywords found
     """
     best_record = None
     max_keyword_count = 0
-    
-    for record in records:
+
+    for _, record in records.iterrows():
         record_text = record["Report_Text"].lower()
         keyword_count = sum(1 for kw in keywords if kw.lower() in record_text)
-        
+
         if keyword_count > max_keyword_count:
             max_keyword_count = keyword_count
             best_record = record
-    
+
     return best_record, max_keyword_count
 
 
 def filter_records_by_date_range(records, start_date=None, end_date=None):
     """
     Filter records by date range. Always includes start_date (>=) and excludes end_date (<).
-    
+
     Args:
-        records: List of record dictionaries with "Report_Date_Time" key
+        records: DataFrame with a date column ("Report_Date_Time", "Date", or "Medication_Date")
         start_date: Start date. If None, no lower bound. Always inclusive (>=).
         end_date: End date. If None, no upper bound. Always exclusive (<).
-    
+
     Returns:
-        Filtered list of records
+        Filtered DataFrame
     """
-    filtered_records = []
-    for record in records:
-        if "Report_Date_Time" in record:
-            record_date = record["Report_Date_Time"]
-        elif "Date" in record:
-            record_date = record["Date"]
-        else:
-            raise ValueError("Record does not have a date field")
-        record_date_dt = normalize_date(record_date)
-        
-        if start_date is not None:
-            start_date_dt = normalize_date(start_date)
-            if record_date_dt < start_date_dt:
-                continue
-        
-        if end_date is not None:
-            end_date_dt = normalize_date(end_date)
-            if record_date_dt >= end_date_dt:
-                continue
-        
-        filtered_records.append(record)
-    
-    return filtered_records
+    if records.empty:
+        return records.copy()
+
+    if "Report_Date_Time" in records.columns:
+        date_col = "Report_Date_Time"
+    elif "Date" in records.columns:
+        date_col = "Date"
+    elif "Medication_Date" in records.columns:
+        date_col = "Medication_Date"
+    else:
+        raise ValueError("Record does not have a date field")
+
+    dates = records[date_col].apply(normalize_date)
+    mask = pd.Series(True, index=records.index)
+
+    if start_date is not None:
+        start_date_dt = normalize_date(start_date)
+        mask = mask & (dates >= start_date_dt)
+
+    if end_date is not None:
+        end_date_dt = normalize_date(end_date)
+        mask = mask & (dates < end_date_dt)
+
+    return records[mask].reset_index(drop=True)
 
 
 def _extract_structured(feature_cls, block_records):
@@ -243,28 +244,22 @@ def _extract_structured(feature_cls, block_records):
 
     Args:
         feature_cls: Feature class with option_from_structured
-        block_records: List of record dictionaries
+        block_records: DataFrame of records
 
     Returns:
-        list: List of predictions (empty if no conclusive structured data)
+        list: List of prediction dicts (empty if no conclusive structured data)
     """
     if not hasattr(feature_cls, 'option_from_structured'):
         return []
 
     # Extract structured value from each record
     structured_hits = []
-    for record in block_records:
-        pred = feature_cls.option_from_structured([record])
+    for _, record in block_records.iterrows():
+        pred = feature_cls.option_from_structured([dict(record)])
         if pred is not None:
-            # structured_hits.append(pred)
             out_dict = dict(record)
             out_dict["pred"] = pred
             structured_hits.append(out_dict)
-
-
-    # # Filter out inconclusive values
-    # if hasattr(feature_cls, 'inconclusive_values'):
-    #     structured_hits = [p for p in structured_hits if p not in feature_cls.inconclusive_values]
 
     return structured_hits
 
@@ -278,7 +273,7 @@ def process_single_block_structured(block_records, feature_cls, phy_records=None
         feature_cls: Feature class (e.g., smoking_status)
         phy_records: List of phy table record dictionaries (for structured data extraction)
         dia_records: List of dia table record dictionaries (for diagnosis-based structured data extraction)
-
+        med_records: List of med table record dictionaries (for medication-based structured data extraction)
     Returns:
         List of result row dictionaries (empty if no structured data found)
     """
@@ -288,9 +283,9 @@ def process_single_block_structured(block_records, feature_cls, phy_records=None
 
     # For cancer_cancer, use dia_records; for other features, use phy_records
     if feature_cls.__name__ == "cancer_cancer":
-        structured_records = dia_records if dia_records is not None else []
+        structured_records = dia_records if dia_records is not None else pd.DataFrame()
     else:
-        structured_records = phy_records if phy_records is not None else []
+        structured_records = phy_records if phy_records is not None else pd.DataFrame()
     structured_hits = _extract_structured(feature_cls, structured_records)
 
     if structured_hits:
@@ -305,8 +300,8 @@ def process_single_block_structured(block_records, feature_cls, phy_records=None
                 _per_patient_stats[_thread_local.current_patient_id]["structured"] += 1
 
         # Use the most recent record date for the block
-        if block_records:
-            record_date = max(record["Report_Date_Time"] for record in block_records)
+        if not block_records.empty:
+            record_date = block_records["Report_Date_Time"].max()
         else:
             record_date = None
 
@@ -327,7 +322,7 @@ def make_keyword_filter(keywords):
     return filter_fn
 
 
-def process_single_block_llm(block_records, feature_cls, chunk_filter_fn):
+def process_single_block_llm(block_records, feature_cls, chunk_filter_fn, short_circuit=True):
     """
     Process a feature for a single time block using LLM.
 
@@ -347,7 +342,7 @@ def process_single_block_llm(block_records, feature_cls, chunk_filter_fn):
 
     best_record, keyword_count = select_record_with_most_keywords(block_records, keywords)
 
-    if best_record and keyword_count > 0:
+    if best_record is not None and keyword_count > 0:
         _llm_windows_count += 1
         if hasattr(_thread_local, 'current_patient_id') and _thread_local.current_patient_id:
             with _per_patient_stats_lock:
@@ -361,7 +356,7 @@ def process_single_block_llm(block_records, feature_cls, chunk_filter_fn):
         found_conclusive = False
         chunks = chunk_text(record_text)
         for chunk in chunks:
-            if found_conclusive:
+            if found_conclusive and short_circuit:
                 break
             if chunk_filter_fn(chunk):
                 found_kws = has_keyword(chunk, keywords)
@@ -446,37 +441,42 @@ def process_pt(pt_id):
         # Query vis table for LLM-based extraction (has Report_Text)
         query = text(f"SELECT * FROM vis WHERE EMPI = '{pt_id}'")
         result = conn.execute(query)
-        records = result.mappings().fetchall()
+        vis_records = pd.DataFrame(result.mappings().fetchall())
 
         # Query phy table for structured data extraction (has Concept_Name and Result)
         phy_query = text(f"SELECT * FROM phy WHERE EMPI = '{pt_id}'")
         phy_result = conn.execute(phy_query)
-        phy_records = phy_result.mappings().fetchall()
+        phy_records = pd.DataFrame(phy_result.mappings().fetchall())
 
         # Query dia table for diagnosis-based structured data extraction (has Code for ICD codes)
         dia_query = text(f"SELECT * FROM dia WHERE EMPI = '{pt_id}'")
         dia_result = conn.execute(dia_query)
-        dia_records = dia_result.mappings().fetchall()
+        dia_records = pd.DataFrame(dia_result.mappings().fetchall())
+
+        med_query = text(f"SELECT * FROM med WHERE EMPI = '{pt_id}'")
+        med_result = conn.execute(med_query)
+        med_records = pd.DataFrame(med_result.mappings().fetchall())
+
+        prc_query = text(f"SELECT * FROM prc WHERE EMPI = '{pt_id}'")
+        prc_result = conn.execute(prc_query)
+        prc_records = pd.DataFrame(prc_result.mappings().fetchall())
 
     ### Step 3: Define time windows and filter records ###
     # Window 1: All records (for smoking, alcohol, transplant, immunosuppressed_disease)
-    all_records = records
+    all_records = vis_records
 
     # Window 2: Records after outcome_window_start_date (for cancer features)
-    outcome_records = filter_records_by_date_range(records, start_date=outcome_window_start_date)
+    outcome_records = filter_records_by_date_range(vis_records, start_date=outcome_window_start_date)
 
     # Filter dia_records for outcome window (note: dia table uses "Date" field, not "Report_Date_Time")
-    outcome_dia_records = []
-    for record in dia_records:
-        record_date = record["Date"]
-        record_date_dt = normalize_date(record_date)
-        if record_date_dt >= normalize_date(outcome_window_start_date):
-            outcome_dia_records.append(record)
+    outcome_dia_records = filter_records_by_date_range(dia_records, start_date=outcome_window_start_date)
 
     # Window 3: Records between index_date and outcome_window_start_date (for antibiotics)
-    treatment_window_records = filter_records_by_date_range(records, start_date=index_date, end_date=outcome_window_start_date)
+    treatment_window_dia_records = filter_records_by_date_range(vis_records, start_date=index_date, end_date=outcome_window_start_date)
+    med_records = filter_records_by_date_range(med_records, start_date=index_date, end_date=outcome_window_start_date)
 
-    print(f"Total records: {len(all_records)}, Outcome window: {len(outcome_records)}, Treatment window: {len(treatment_window_records)}, Phy records: {len(phy_records)}, Dia records: {len(dia_records)}")
+
+    # print(f"Total records: {len(all_records)}, Outcome window: {len(outcome_records)}, Treatment window: {len(treatment_window_dia_records)}, Phy records: {len(phy_records)}, Dia records: {len(dia_records)}")
 
     ### Step 4: Calculate time blocks for each feature ###
     # Smoking status: 1 per 3 months
@@ -494,7 +494,8 @@ def process_pt(pt_id):
     # Cancer family any: 1 per 6 months
     cancer_family_blocks = group_records_by_time_blocks(outcome_records, index_date, block_size_months=6)
 
-    print(f"Time blocks - Smoking: {len(smoking_blocks)}, Alcohol: {len(alcohol_blocks)}, Immunosuppressed: {len(immunosuppressed_blocks)}, Cancer cancer: {len(cancer_cancer_blocks)}, Cancer family: {len(cancer_family_blocks)}")
+
+    # print(f"Time blocks - Smoking: {len(smoking_blocks)}, Alcohol: {len(alcohol_blocks)}, Immunosuppressed: {len(immunosuppressed_blocks)}, Cancer cancer: {len(cancer_cancer_blocks)}, Cancer family: {len(cancer_family_blocks)}")
 
     ### Step 5: Process features organized by time window ###
     rows = []
@@ -505,9 +506,9 @@ def process_pt(pt_id):
     # Try structured first, fall back to LLM if no structured data
     for block_index, block_records in smoking_blocks.items():
         _thread_local.block_id = f"smoking_{block_index}"
-        _thread_local.block_dates = f"{min(r['Report_Date_Time'] for r in block_records)[:10]}~{max(r['Report_Date_Time'] for r in block_records)[:10]}" if block_records else ""
-        block_start_date = block_records[0]["block_start_date"] if block_records else ""
-        block_end_date = block_records[0]["block_end_date"] if block_records else ""
+        _thread_local.block_dates = f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}" if not block_records.empty else ""
+        block_start_date = block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
+        block_end_date = block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
         block_phy_records = filter_records_by_date_range(phy_records, start_date=block_start_date, end_date=block_end_date)
         block_rows, structured_hits = process_single_block_structured(block_records, smoking_status, phy_records=block_phy_records)
         if not block_rows:
@@ -529,9 +530,9 @@ def process_pt(pt_id):
     # Try structured first, fall back to LLM if no structured data
     for block_index, block_records in alcohol_blocks.items():
         _thread_local.block_id = f"alcohol_{block_index}"
-        _thread_local.block_dates = f"{min(r['Report_Date_Time'] for r in block_records)[:10]}~{max(r['Report_Date_Time'] for r in block_records)[:10]}" if block_records else ""
-        block_start_date = block_records[0]["block_start_date"] if block_records else ""
-        block_end_date = block_records[0]["block_end_date"] if block_records else ""
+        _thread_local.block_dates = f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}" if not block_records.empty else ""
+        block_start_date = block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
+        block_end_date = block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
         block_phy_records = filter_records_by_date_range(phy_records, start_date=block_start_date, end_date=block_end_date)
         block_rows, structured_hits = process_single_block_structured(block_records, alcohol_status, phy_records=block_phy_records)
         if not block_rows:
@@ -549,15 +550,38 @@ def process_pt(pt_id):
                 rows.extend(follow_up_rows)
     print(f"Completed alcohol status for {pt_id}")
 
-    # # Transplant: every record
-    # # Use LLM if no structured: no
-    # # Note: transplant feature needs option_from_structured method implemented
-    # transplant_rows = process_feature_all_records(
-    #     all_records, transplant,
-    #     follow_up_features={"A": (transplant_date, "transplant_date")}
-    # )
-    # rows.extend(transplant_rows)
-    # print(f"Completed transplant for {pt_id}")
+    # Transplant: every record
+    # Use LLM if no structured: no
+    # Note: transplant feature needs option_from_structured method implemented
+    transplant_df_slices = []
+    
+    # transplant procedure codes (icd9)
+    transplant_df_slices.append(prc_records[(prc_records["Code_Type"]=="ICD9") & (prc_records["Code"].isin(ICD9_TRANSPLANT_PROCEDURE_CODES))])
+
+    # transplant procedure codes (icd10)
+    transplant_df_slices.append(prc_records[(prc_records["Code_Type"]=="ICD10") & (prc_records["Code"].isin(ICD10_TRANSPLANT_PROCEDURE_CODES))])
+
+    # transplant diagnosis codes (icd9)
+    transplant_df_slices.append(dia_records[(dia_records["Code_Type"]=="ICD9") & (dia_records["Code"].isin(ICD9_DIAGNOSIS_CODES))])
+
+    # transplant diagnosis codes (icd10)
+    transplant_df_slices.append(dia_records[(dia_records["Code_Type"]=="ICD10") & (dia_records["Code"].isin(ICD10_DIAGNOSIS_CODES))])
+
+    # todo: 
+    transplant_structured_df = pd.concat(transplant_df_slices).drop_duplicates().reset_index(drop=True)
+    for _, record in transplant_structured_df.iterrows():
+        rows.append({
+            "feature_name": "transplant",
+            "keyword": "STRUCTURED_DATA",
+            "code": record["Code"],
+            "transplant_description": ICD_TO_TRANSPLANT_DESC[record["Code"]],
+            "transplant_code Type": record["Code_Type"],
+            "date": record["Date"],
+            "prediction": "A",
+        })
+
+
+    print(f"Completed transplant for {pt_id}")
 
     # # Immunosuppressed disease: process each 6-month block
     # # Use LLM if no structured: no
@@ -576,9 +600,9 @@ def process_pt(pt_id):
     # Structured only, no LLM fallback
     for block_index, block_records in cancer_cancer_blocks.items():
         _thread_local.block_id = f"cancer_{block_index}"
-        _thread_local.block_dates = f"{min(r['Report_Date_Time'] for r in block_records)[:10]}~{max(r['Report_Date_Time'] for r in block_records)[:10]}" if block_records else ""
-        block_start_date = block_records[0]["block_start_date"] if block_records else ""
-        block_end_date = block_records[0]["block_end_date"] if block_records else ""
+        _thread_local.block_dates = f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}" if not block_records.empty else ""
+        block_start_date = block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
+        block_end_date = block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
         block_dia_records = filter_records_by_date_range(outcome_dia_records, start_date=block_start_date, end_date=block_end_date)
         block_rows, structured_hits = process_single_block_structured(block_records, cancer_cancer, dia_records=block_dia_records)
         cancer_hits = [x for x in structured_hits if x["pred"]=="A"]
@@ -623,18 +647,24 @@ def process_pt(pt_id):
     # === Features using treatment window (index_date to outcome_window_start_date) ===
 
     # Antibiotics: process all treatment window records as a single block
-    antibiotic_rows = process_single_block_llm(treatment_window_records, antibiotics)
-    rows.extend(antibiotic_rows)
 
-    # Antibiotic duration follow-up for positive antibiotic hits
-    for row in antibiotic_rows:
-        if row["prediction"].upper() == "A":
-            duration_rows = process_single_block_llm(treatment_window_records, antibiotic_duration)
-            for duration_row in duration_rows:
-                duration_row["feature_name"] = "antibiotic_duration"
-            rows.extend(duration_rows)
-            break  # Only need to check duration once per patient
-    print(f"Completed antibiotics for {pt_id}")
+    # antibiotic_rows = process_single_block_llm(treatment_window_records, antibiotics, make_keyword_filter(antibiotics.keywords), short_circuit=False)
+    # rows.extend(antibiotic_rows)
+    abx_records = med_records[med_records["Code"].isin(ABX_CODES)]
+    for _, abx_record in abx_records.iterrows():
+        rows.append({
+            "feature_name": "antibiotics",
+            "keyword": "STRUCTURED_DATA",
+            "Medication_Description": abx_record["Medication"],
+            "Medication_Code": abx_record["Code"],
+            "Medication_Quantity": abx_record["Quantity"],
+            "date": abx_record["Medication_Date"],
+            "prediction": "A",
+        })
+
+    duration_rows = process_single_block_llm(treatment_window_dia_records, antibiotic_duration, make_keyword_filter(antibiotic_duration.keywords), short_circuit=False)
+
+    rows.extend(duration_rows)
 
     # Convert to DataFrame
     df = pd.DataFrame(rows)
@@ -650,6 +680,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--n-workers', type=int, default=1, help='Number of worker threads (default: 1)')
 parser.add_argument('--limit', type=int, default=None, help='Max number of patients to process (default: None, process all)')
 parser.add_argument('--dummy-llm', action='store_true', help='Use dummy LLM (sample from prevalence / random dates)')
+parser.add_argument('--target-empis', type=str, nargs='*', help='List of specific EMPIs to process (default: None, process all in cohort)')
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
 
@@ -668,6 +699,10 @@ pt_ids = cohort_data['matched_case_empis']
 # Apply limit if specified
 if args.limit is not None:
     pt_ids = pt_ids[:args.limit]
+    
+
+pt_ids = args.target_empis + pt_ids
+
 
 print(f"Processing {len(pt_ids)} matched case patients")
 

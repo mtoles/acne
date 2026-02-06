@@ -40,7 +40,7 @@ EXCLUDED_TRANSPLANTS = ["corneal", "skin graft", "hair", "osteochondral", "carti
 INCLUDED_TRANSPLANTS = ["liver", "kidney", "pancreas", "heart", "lung", "intestine", "middle ear", "skin", "bone", "bone marrow", "heart valve", "connective tissue", "vascular composite allograft"]
 CANCER_STAGE_SYNTHETIC_KEYWORDS = ["in situ", "non-invasive", "non invasive", "stage 0", "stage 1", "stage 2", "stage 3", "stage 4", "stage I", "stage II", "stage III", "stage IV", "metastatic"]
 
-CANCER_STAGE_2_PART_KEYWORDS = ["Stage 0", "Stage I", "Stage II", "Stage III", "Stage IV", "Stage 1", "Stage 2", "Stage 3", "Stage 4", "in situ", "non invasive", "non-invasive", "localized", "local", "confined to", "regional", "advanced", "metastatic", "metastasis", "mets", "distant", "disseminated", "nodal involvement", "node involvement", "node", "nodes", "nodal", "unstaged", "unknown stage", "TNM", "T0", "T1", "T2", "T3", "T4", "N0", "N1", "N2", "N3", "M0", "M1"]
+CANCER_STAGE_2_PART_KEYWORDS = ["stage", "in situ", "non invasive", "non-invasive", "localized", "local", "confined to ", "regional", "advanced", "metastatic", "metastasis", "mets", "distant", "disseminated", "nodal involvement", "node involvement", "node", "nodes", "nodal", "staging", "unstaged",  "TNM", "T0", "T1", "T2", "T3", "T4", "N0", "N1", "N2", "N3", "M0", "M1"] # dropped "stage x"
 # fmt: on
 
 KEYWORD_ADDITIONAL_INFO = defaultdict(
@@ -50,6 +50,9 @@ KEYWORD_ADDITIONAL_INFO = defaultdict(
         "doxycycline": "doxycycline (BE SURE TO INCLUDE doxycycline hyclate and doxycycline monohydrate, which are sometimes mentioned as doxycycline)",
     },
 )
+
+med_list_df = pd.read_csv("stores/abx_med_code_list.csv")
+ABX_CODES = med_list_df[med_list_df["a"] == 1]["MedicationID"].unique().tolist()
 
 # used for questions about meidcations
 ENTRY_FORMAT_STR = """Entries in this medical record typically adhere to the following format, though the header may be missing:
@@ -1941,6 +1944,11 @@ class antibiotic_duration(PtFeatureBase):
     options = ["A", "B", "C", "D", "E", "F"]
     inconclusive_values = {"A", "F"}  # "No indication" and "Taken but dates unknown" are inconclusive
     short_circuit_per_keyword = True
+
+    # def compute(dfs: dict):
+    #     df = dfs["Med"]
+    #     df = df[df["Code"].astype(float).isin(abx_codes)]
+
 
     @classmethod
     def custom_forward(
