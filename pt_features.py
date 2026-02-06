@@ -1,3 +1,4 @@
+import json
 import pandas as pd
 import re
 
@@ -42,6 +43,17 @@ CANCER_STAGE_SYNTHETIC_KEYWORDS = ["in situ", "non-invasive", "non invasive", "s
 
 CANCER_STAGE_2_PART_KEYWORDS = ["stage", "in situ", "non invasive", "non-invasive", "localized", "local", "confined to ", "regional", "advanced", "metastatic", "metastasis", "mets", "distant", "disseminated", "nodal involvement", "node involvement", "node", "nodes", "nodal", "staging", "unstaged",  "TNM", "T0", "T1", "T2", "T3", "T4", "N0", "N1", "N2", "N3", "M0", "M1"] # dropped "stage x"
 # fmt: on
+
+CONFOUNDING_DISEASE_CODES = {}
+with open("labeled_data/confounding_disease_codes.jsonl") as _f:
+    for _line in _f:
+        _row = json.loads(_line)
+        _code = _row.pop("code")
+        CONFOUNDING_DISEASE_CODES[_code] = _row
+
+CONFOUNDING_DISEASE_ICD9_CODES = {code: info for code, info in CONFOUNDING_DISEASE_CODES.items() if info['code_type'] == 'ICD9'}
+CONFOUNDING_DISEASE_ICD10_CODES = {code: info for code, info in CONFOUNDING_DISEASE_CODES.items() if info['code_type'] == 'ICD10'}
+
 
 KEYWORD_ADDITIONAL_INFO = defaultdict(
     lambda: None,
@@ -366,7 +378,9 @@ class smoking_amount(PtFeatureBase):
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = smoking_status.keywords
     val_var = True
-    inconclusive_values = {"F"}  # "No indication" is inconclusive; "Unknown quantity" is conclusive
+    inconclusive_values = {
+        "F"
+    }  # "No indication" is inconclusive; "Unknown quantity" is conclusive
 
     def pooling_fn(preds: list):
         # Get counts of A-D options
@@ -465,7 +479,9 @@ class alcohol_amount(PtFeatureBase):
     options = ["A", "B", "C", "D", "E", "F"]
     keywords = alcohol_status.keywords
     val_var = True
-    inconclusive_values = {"F"}  # "No indication" is inconclusive; "Unknown quantity" is conclusive
+    inconclusive_values = {
+        "F"
+    }  # "No indication" is inconclusive; "Unknown quantity" is conclusive
 
     def pooling_fn(preds: list):
         if "D" in preds:
@@ -754,10 +770,14 @@ class cancer_cancer(PtFeatureBase):
             code = record.get("Code", "")
             code_type = record.get("Code_Type", "")
             # Check ICD-9 codes
-            if code_type == "ICD9" and any(code.startswith(icd9) for icd9 in cancer_icd9s):
+            if code_type == "ICD9" and any(
+                code.startswith(icd9) for icd9 in cancer_icd9s
+            ):
                 return "A"
             # Check ICD-10 codes
-            if code_type == "ICD10" and any(code.startswith(icd10) for icd10 in cancer_icd10s):
+            if code_type == "ICD10" and any(
+                code.startswith(icd10) for icd10 in cancer_icd10s
+            ):
                 return "A"
 
         # No cancer codes found, but we have diagnosis data
@@ -832,7 +852,10 @@ class cancer_date_of_diagnosis(PtDateFeatureBase):
     synthetic_keywords = CANCER_STAGE_SYNTHETIC_KEYWORDS
     val_var = True
     pooling_fn = PtDateFeatureBase.pooling_fn_earliest
-    inconclusive_values = {"U", "X"}  # "Unknown date" and "No indication" are inconclusive
+    inconclusive_values = {
+        "U",
+        "X",
+    }  # "Unknown date" and "No indication" are inconclusive
     short_circuit_per_keyword = True
 
 
@@ -978,6 +1001,25 @@ class cancer_family_any(PtFeatureBase):
     options = ["A", "B"]
     keywords = cancer_cancer.keywords
     val_var = True
+    supplimental_kws = [
+    # parents
+    "parent", "mother", "father", "mom", "mum", "dad",
+    # children
+    "child", "son", "daughter", "kid",
+    # siblings
+    "sibling", "brother", "sister", "sib",
+    # grandparents
+    "grandparent", "grandmother", "grandfather",
+    "grandma", "grandmother", "grandpa", "grandfather",
+    # grandchildren
+    "grandchild", "grandson", "granddaughter",
+    # aunts / uncles
+    "aunt", "uncle",
+    # nieces / nephews
+    "niece", "nephew",
+    # cousins
+    "cousin"
+]
 
 
 class cancer_family_cancer_type(PtFeatureBase):
@@ -1942,13 +1984,15 @@ class antibiotic_duration(PtFeatureBase):
     keywords = antibiotics.keywords
     val_var = True
     options = ["A", "B", "C", "D", "E", "F"]
-    inconclusive_values = {"A", "F"}  # "No indication" and "Taken but dates unknown" are inconclusive
+    inconclusive_values = {
+        "A",
+        "F",
+    }  # "No indication" and "Taken but dates unknown" are inconclusive
     short_circuit_per_keyword = True
 
     # def compute(dfs: dict):
     #     df = dfs["Med"]
     #     df = df[df["Code"].astype(float).isin(abx_codes)]
-
 
     @classmethod
     def custom_forward(

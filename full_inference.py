@@ -22,6 +22,8 @@ import logging
 from kw_builder import get_kws_from_icd, ICD_TO_TRANSPLANT_DESC, ICD9_TRANSPLANT_PROCEDURE_CODES, ICD10_TRANSPLANT_PROCEDURE_CODES, ICD9_DIAGNOSIS_CODES, ICD10_DIAGNOSIS_CODES
 from kw_builder import transplant_df as transplant_icd_df
 
+
+
 random.seed(42)
 
 db = create_engine(db_url)
@@ -362,9 +364,15 @@ def process_single_block_llm(block_records, feature_cls, chunk_filter_fn, short_
                 found_kws = has_keyword(chunk, keywords)
                 for kw in found_kws:
                     pred = call_llm(feature_cls, chunk, kw)
+                    found_supp_kws = []
+                    if hasattr(feature_cls, "supplimental_kws"):
+                        for sf in feature_cls.supplimental_kws:
+                            if sf in chunk:
+                                found_supp_kws.append(sf)
                     rows.append({
                         "feature_name": feature_cls.__name__,
                         "keyword": kw,
+                        "supplimental_keywords": found_supp_kws,
                         "date": record_date,
                         "prediction": pred,
                     })
@@ -594,6 +602,33 @@ def process_pt(pt_id):
     #     rows.extend(block_rows)
     # print(f"Completed immunosuppressed disease for {pt_id}")
 
+    ### Diseases ###
+    # filter in only records in CONFOUNDING_DISEASE_CODES
+    confounding_disease_records = dia_records[dia_records["Code"].isin(CONFOUNDING_DISEASE_CODES.keys())]
+    for _, record in confounding_disease_records.iterrows():
+        if record["Code_Type"] == "ICD9":
+            icd_dict = CONFOUNDING_DISEASE_ICD9_CODES
+        elif record["Code_Type"] == "ICD10":
+            icd_dict = CONFOUNDING_DISEASE_ICD10_CODES
+        else:
+            continue
+        code = record["Code"]
+        if code not in icd_dict:
+            continue
+        disease_name = record["Diagnosis_Name"]
+        disease_type = icd_dict[code]["disease_type"]
+        disease_description = icd_dict[code]["description"]
+        rows.append({
+            "feature_name": "disease",
+            "keyword": "STRUCTURED_DATA",
+            "Code": record["Code"],
+            "disease": disease_name,
+            "disease_type": disease_type,
+            "date": record["Date"],
+            "prediction": "A",
+        })
+    
+
     # # === Features using outcome window (after outcome_window_start_date) ===
 
     # Cancer cancer: process each 3-month block using structured data from dia table
@@ -639,8 +674,12 @@ def process_pt(pt_id):
     print(f"Completed cancer cancer for {pt_id}")
 
     # Cancer family any: process each 6-month block (LLM only)
+    def cancer_family_filter(chunk):
+        has_cancer = len(has_keyword(chunk, SPECIFIC_CANCERS)) > 0
+        has_family = len(has_keyword(chunk, cancer_family_any.supplimental_kws)) > 0
+        return has_cancer and has_family
     for block_index, block_records in cancer_family_blocks.items():
-        block_rows = process_single_block_llm(block_records, cancer_family_any, chunk_filter_fn=make_keyword_filter(SPECIFIC_CANCERS))
+        block_rows = process_single_block_llm(block_records, cancer_family_any, chunk_filter_fn=cancer_family_filter)
         rows.extend(block_rows)
     print(f"Completed cancer family any for {pt_id}")
 
@@ -648,8 +687,6 @@ def process_pt(pt_id):
 
     # Antibiotics: process all treatment window records as a single block
 
-    # antibiotic_rows = process_single_block_llm(treatment_window_records, antibiotics, make_keyword_filter(antibiotics.keywords), short_circuit=False)
-    # rows.extend(antibiotic_rows)
     abx_records = med_records[med_records["Code"].isin(ABX_CODES)]
     for _, abx_record in abx_records.iterrows():
         rows.append({
@@ -680,7 +717,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--n-workers', type=int, default=1, help='Number of worker threads (default: 1)')
 parser.add_argument('--limit', type=int, default=None, help='Max number of patients to process (default: None, process all)')
 parser.add_argument('--dummy-llm', action='store_true', help='Use dummy LLM (sample from prevalence / random dates)')
-parser.add_argument('--target-empis', type=str, nargs='*', help='List of specific EMPIs to process (default: None, process all in cohort)')
+parser.add_argument('--target-empis', type=str, default=[], nargs='*', help='List of specific EMPIs to process (default: None, process all in cohort)')
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
 
