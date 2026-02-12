@@ -251,6 +251,36 @@ dem_df["index_date"] = dem_df["EMPI"].map(index_date_map)
 
 dem_df = dem_df[["EMPI", "took_abx", "index_date", "study_age", "study_sex", "study_race", "study_bmi", "study_bmi_category", "study_smoking_status", "study_alcohol_status"]]
 
+# Filter patients by visit note coverage requirements
+# Require: at least one visit note >5 years after index date AND >6 months before index date
+print("\nFiltering patients by visit note coverage...")
+all_empis_for_filter = dem_df["EMPI"].tolist()
+vis_date_batches = []
+with db.connect() as conn:
+    for i in tqdm(range(0, len(all_empis_for_filter), BATCH_SIZE), desc="Querying vis date ranges"):
+        batch = all_empis_for_filter[i:i + BATCH_SIZE]
+        empis_str = ",".join([f"'{str(e).replace(chr(39), chr(39)+chr(39))}'" for e in batch])
+        query = text(f"SELECT EMPI, MIN(Report_Date_Time) as earliest_visit, MAX(Report_Date_Time) as latest_visit FROM vis WHERE EMPI IN ({empis_str}) GROUP BY EMPI")
+        result = conn.execute(query)
+        batch_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+        vis_date_batches.append(batch_df)
+
+vis_dates_df = pd.concat(vis_date_batches, ignore_index=True) if vis_date_batches else pd.DataFrame()
+vis_dates_df["earliest_visit"] = pd.to_datetime(vis_dates_df["earliest_visit"])
+vis_dates_df["latest_visit"] = pd.to_datetime(vis_dates_df["latest_visit"])
+vis_dates_df["index_date"] = vis_dates_df["EMPI"].map(index_date_map)
+
+# At least one visit note more than 5 years after index date
+vis_dates_df["has_late_visit"] = vis_dates_df["latest_visit"] > (vis_dates_df["index_date"] + pd.Timedelta(days=5 * 365))
+# At least one visit note more than 6 months before index date
+vis_dates_df["has_early_visit"] = vis_dates_df["earliest_visit"] < (vis_dates_df["index_date"] - pd.Timedelta(days=183))
+
+qualifying_empis = set(vis_dates_df[vis_dates_df["has_late_visit"] & vis_dates_df["has_early_visit"]]["EMPI"])
+
+pre_filter_count = len(dem_df)
+dem_df = dem_df[dem_df["EMPI"].isin(qualifying_empis)].reset_index(drop=True)
+print(f"Visit coverage filter: {pre_filter_count} -> {len(dem_df)} patients")
+
 # Separate cases and controls
 print("\nPreparing for case-control matching...")
 cases_df = dem_df[dem_df["took_abx"] == True].copy()
