@@ -589,9 +589,11 @@ def process_pt(pt_id):
         outcome_records, index_date, block_size_months=3
     )
 
-    # Cancer family any: 1 per 6 months
+    # Cancer family any: earliest records to outcome window start, 1 per 6 months
     cancer_family_blocks = group_records_by_time_blocks(
-        outcome_records, index_date, block_size_months=6
+        filter_records_by_date_range(all_records, end_date=outcome_window_start_date),
+        index_date,
+        block_size_months=6,
     )
 
     ### Step 5: Process features organized by time window ###
@@ -699,19 +701,22 @@ def process_pt(pt_id):
                 rows.extend(follow_up_rows)
     print(f"Completed alcohol status for {pt_id}")
 
-    # Transplant: every record
+    # Transplant: earliest records to outcome window start
     # Use LLM if no structured: no
+    pre_outcome_dia_records = filter_records_by_date_range(
+        dia_records, end_date=outcome_window_start_date
+    )
     transplant_df_slices = []
     transplant_df_slices.append(
-        dia_records[
-            (dia_records["Code_Type"] == "ICD9")
-            & (dia_records["Code"].isin(ICD9_DIAGNOSIS_CODES))
+        pre_outcome_dia_records[
+            (pre_outcome_dia_records["Code_Type"] == "ICD9")
+            & (pre_outcome_dia_records["Code"].isin(ICD9_DIAGNOSIS_CODES))
         ]
     )
     transplant_df_slices.append(
-        dia_records[
-            (dia_records["Code_Type"] == "ICD10")
-            & (dia_records["Code"].isin(ICD10_DIAGNOSIS_CODES))
+        pre_outcome_dia_records[
+            (pre_outcome_dia_records["Code_Type"] == "ICD10")
+            & (pre_outcome_dia_records["Code"].isin(ICD10_DIAGNOSIS_CODES))
         ]
     )
     # todo:
