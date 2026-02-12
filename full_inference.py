@@ -11,7 +11,7 @@ import argparse
 import time
 import re
 import random
-from collections import defaultdict
+from collections import defaultdict, Counter
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,9 +19,15 @@ import json
 import threading
 import numpy as np
 import logging
-from kw_builder import get_kws_from_icd, ICD_TO_TRANSPLANT_DESC, ICD9_TRANSPLANT_PROCEDURE_CODES, ICD10_TRANSPLANT_PROCEDURE_CODES, ICD9_DIAGNOSIS_CODES, ICD10_DIAGNOSIS_CODES
+from kw_builder import (
+    get_kws_from_icd,
+    ICD_TO_TRANSPLANT_DESC,
+    ICD9_TRANSPLANT_PROCEDURE_CODES,
+    ICD10_TRANSPLANT_PROCEDURE_CODES,
+    ICD9_DIAGNOSIS_CODES,
+    ICD10_DIAGNOSIS_CODES,
+)
 from kw_builder import transplant_df as transplant_icd_df
-
 
 
 random.seed(42)
@@ -43,34 +49,54 @@ _per_patient_stats = {}
 _per_patient_stats_lock = threading.Lock()
 _thread_local = threading.local()
 
+# Global records directory (set before processing loop)
+_records_dir = None
+
+
+def _json_default(obj):
+    """JSON serializer for datetime and numpy objects."""
+    if isinstance(obj, (datetime, pd.Timestamp)):
+        return obj.isoformat()
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
 # Cache for prevalence distributions
 _prevalence_cache = {}
+
 
 def get_prevalence_distribution(feature_cls: PtFeatureBase):
     """Get prevalence distribution for a feature class from the Excel file."""
     feature_name = feature_cls.__name__
-    
+
     if feature_name in _prevalence_cache:
         return _prevalence_cache[feature_name]
-    
+
     excel_path = Path(f"labeled_data/mgb/{feature_name}/{feature_name}_chunks.xlsx")
-    
+
     df = pd.read_excel(excel_path)
-    
+
     # Filter out NaN and "DROP" values
     val_unified = df["val_unified"].dropna()
     val_unified = val_unified[val_unified != "DROP"]
-    
+
     # Compute value counts
     value_counts = val_unified.value_counts()
-    
+
     # Filter to only include values that are in feature_cls.options
-    valid_value_counts = {k: v for k, v in value_counts.items() if k in feature_cls.options}
-    
+    valid_value_counts = {
+        k: v for k, v in value_counts.items() if k in feature_cls.options
+    }
+
     # Create distribution dictionary
     distribution = {}
     total_count = sum(valid_value_counts.values())
-    
+
     if total_count > 0:
         for option in feature_cls.options:
             if option in valid_value_counts:
@@ -80,9 +106,10 @@ def get_prevalence_distribution(feature_cls: PtFeatureBase):
     else:
         # If no valid values found, fall back to uniform
         distribution = {k: 1.0 / len(feature_cls.options) for k in feature_cls.options}
-    
+
     _prevalence_cache[feature_name] = distribution
     return distribution
+
 
 def call_llm(feature_cls: PtFeatureBase, chunk: str, keyword: str = None) -> str:
     global _total_llm_calls
@@ -113,29 +140,34 @@ def call_llm(feature_cls: PtFeatureBase, chunk: str, keyword: str = None) -> str
             max_answer_tokens=feature_cls.max_tokens,
         )
         # print(f"{feature_cls.__name__}: {pred}")
-    
+
     _total_llm_calls += 1
     print(f"Total LLM calls: {_total_llm_calls}\r", end="", flush=True)
 
     # Log the call
-    empi = getattr(_thread_local, 'current_patient_id', '')
-    block_id = getattr(_thread_local, 'block_id', '')
-    block_dates = getattr(_thread_local, 'block_dates', '')
-    logging.getLogger('llm_calls').info(f"{empi}\t{block_id}\t{block_dates}\t{feature_cls.__name__}\t{keyword}\t{pred}")
+    empi = getattr(_thread_local, "current_patient_id", "")
+    block_id = getattr(_thread_local, "block_id", "")
+    block_dates = getattr(_thread_local, "block_dates", "")
+    logging.getLogger("llm_calls").info(
+        f"{empi}\t{block_id}\t{block_dates}\t{feature_cls.__name__}\t{keyword}\t{pred}"
+    )
 
     return pred
+
 
 def normalize_date(date_value):
     """Convert various date formats to datetime object."""
     # Handle ISO format: "2019-03-21 14:15:00.000000"
     try:
-        return pd.to_datetime(date_value, format='%Y-%m-%d %H:%M:%S.%f').to_pydatetime()
+        return pd.to_datetime(date_value, format="%Y-%m-%d %H:%M:%S.%f").to_pydatetime()
     except ValueError:
         # Handle date format: "6/1/2009"
-        return pd.to_datetime(date_value, format='%m/%d/%Y').to_pydatetime()
+        return pd.to_datetime(date_value, format="%m/%d/%Y").to_pydatetime()
 
 
-def group_records_by_time_blocks(records, index_date, block_size_months=None, block_size_weeks=None):
+def group_records_by_time_blocks(
+    records, index_date, block_size_months=None, block_size_weeks=None
+):
     """
     Group records into time blocks from index_date.
 
@@ -157,23 +189,39 @@ def group_records_by_time_blocks(records, index_date, block_size_months=None, bl
     record_dates = records["Report_Date_Time"].apply(normalize_date)
 
     if block_size_months is not None:
-        months_since_index = (record_dates.dt.year - index_date_dt.year) * 12 + (record_dates.dt.month - index_date_dt.month)
+        months_since_index = (record_dates.dt.year - index_date_dt.year) * 12 + (
+            record_dates.dt.month - index_date_dt.month
+        )
         block_indices = months_since_index // block_size_months
         records["_block_index"] = block_indices
-        records["block_start_date"] = block_indices.apply(lambda bi: index_date_dt + pd.DateOffset(months=int(bi) * block_size_months))
-        records["block_end_date"] = block_indices.apply(lambda bi: index_date_dt + pd.DateOffset(months=(int(bi) + 1) * block_size_months))
+        records["block_start_date"] = block_indices.apply(
+            lambda bi: index_date_dt + pd.DateOffset(months=int(bi) * block_size_months)
+        )
+        records["block_end_date"] = block_indices.apply(
+            lambda bi: index_date_dt
+            + pd.DateOffset(months=(int(bi) + 1) * block_size_months)
+        )
     elif block_size_weeks is not None:
         days_since_index = (record_dates - index_date_dt).dt.days
         block_indices = days_since_index // (block_size_weeks * 7)
         records["_block_index"] = block_indices
-        records["block_start_date"] = block_indices.apply(lambda bi: index_date_dt + pd.Timedelta(weeks=int(bi) * block_size_weeks))
-        records["block_end_date"] = block_indices.apply(lambda bi: index_date_dt + pd.Timedelta(weeks=(int(bi) + 1) * block_size_weeks))
+        records["block_start_date"] = block_indices.apply(
+            lambda bi: index_date_dt + pd.Timedelta(weeks=int(bi) * block_size_weeks)
+        )
+        records["block_end_date"] = block_indices.apply(
+            lambda bi: index_date_dt
+            + pd.Timedelta(weeks=(int(bi) + 1) * block_size_weeks)
+        )
     else:
-        raise ValueError("Either block_size_months or block_size_weeks must be provided")
+        raise ValueError(
+            "Either block_size_months or block_size_weeks must be provided"
+        )
 
     records_by_block = {}
     for block_index, group in records.groupby("_block_index"):
-        records_by_block[block_index] = group.drop(columns=["_block_index"]).reset_index(drop=True)
+        records_by_block[block_index] = group.drop(
+            columns=["_block_index"]
+        ).reset_index(drop=True)
 
     return records_by_block
 
@@ -251,7 +299,7 @@ def _extract_structured(feature_cls, block_records):
     Returns:
         list: List of prediction dicts (empty if no conclusive structured data)
     """
-    if not hasattr(feature_cls, 'option_from_structured'):
+    if not hasattr(feature_cls, "option_from_structured"):
         return []
 
     # Extract structured value from each record
@@ -266,7 +314,9 @@ def _extract_structured(feature_cls, block_records):
     return structured_hits
 
 
-def process_single_block_structured(block_records, feature_cls, phy_records=None, dia_records=None):
+def process_single_block_structured(
+    block_records, feature_cls, phy_records=None, dia_records=None
+):
     """
     Process a feature for a single time block using structured data only.
 
@@ -295,10 +345,16 @@ def process_single_block_structured(block_records, feature_cls, phy_records=None
         structured_value = feature_cls.pooling_fn([x["pred"] for x in structured_hits])
         # Track structured window usage
         _structured_windows_count += 1
-        if hasattr(_thread_local, 'current_patient_id') and _thread_local.current_patient_id:
+        if (
+            hasattr(_thread_local, "current_patient_id")
+            and _thread_local.current_patient_id
+        ):
             with _per_patient_stats_lock:
                 if _thread_local.current_patient_id not in _per_patient_stats:
-                    _per_patient_stats[_thread_local.current_patient_id] = {"structured": 0, "llm": 0}
+                    _per_patient_stats[_thread_local.current_patient_id] = {
+                        "structured": 0,
+                        "llm": 0,
+                    }
                 _per_patient_stats[_thread_local.current_patient_id]["structured"] += 1
 
         # Use the most recent record date for the block
@@ -307,24 +363,30 @@ def process_single_block_structured(block_records, feature_cls, phy_records=None
         else:
             record_date = None
 
-        rows.append({
-            "feature_name": feature_cls.__name__,
-            "keyword": "STRUCTURED_DATA",
-            "date": record_date,
-            "prediction": structured_value,
-        })
+        rows.append(
+            {
+                "feature_name": feature_cls.__name__,
+                "keyword": "STRUCTURED_DATA",
+                "date": record_date,
+                "prediction": structured_value,
+            }
+        )
 
     return rows, structured_hits
 
 
 def make_keyword_filter(keywords):
     """Create a chunk filter that returns True if any keyword is present."""
+
     def filter_fn(chunk):
         return len(has_keyword(chunk, keywords)) > 0
+
     return filter_fn
 
 
-def process_single_block_llm(block_records, feature_cls, chunk_filter_fn, short_circuit=True):
+def process_single_block_llm(
+    block_records, feature_cls, chunk_filter_fn, short_circuit=True
+):
     """
     Process a feature for a single time block using LLM.
 
@@ -342,19 +404,27 @@ def process_single_block_llm(block_records, feature_cls, chunk_filter_fn, short_
 
     keywords = feature_cls.keywords
 
-    best_record, keyword_count = select_record_with_most_keywords(block_records, keywords)
+    best_record, keyword_count = select_record_with_most_keywords(
+        block_records, keywords
+    )
 
     if best_record is not None and keyword_count > 0:
         _llm_windows_count += 1
-        if hasattr(_thread_local, 'current_patient_id') and _thread_local.current_patient_id:
+        if (
+            hasattr(_thread_local, "current_patient_id")
+            and _thread_local.current_patient_id
+        ):
             with _per_patient_stats_lock:
                 if _thread_local.current_patient_id not in _per_patient_stats:
-                    _per_patient_stats[_thread_local.current_patient_id] = {"structured": 0, "llm": 0}
+                    _per_patient_stats[_thread_local.current_patient_id] = {
+                        "structured": 0,
+                        "llm": 0,
+                    }
                 _per_patient_stats[_thread_local.current_patient_id]["llm"] += 1
         record_date = best_record["Report_Date_Time"]
         record_text = best_record["Report_Text"]
 
-        inconclusive_values = getattr(feature_cls, 'inconclusive_values', set())
+        inconclusive_values = getattr(feature_cls, "inconclusive_values", set())
         found_conclusive = False
         chunks = chunk_text(record_text)
         for chunk in chunks:
@@ -369,13 +439,15 @@ def process_single_block_llm(block_records, feature_cls, chunk_filter_fn, short_
                         for sf in feature_cls.supplimental_kws:
                             if sf in chunk:
                                 found_supp_kws.append(sf)
-                    rows.append({
-                        "feature_name": feature_cls.__name__,
-                        "keyword": kw,
-                        "supplimental_keywords": found_supp_kws,
-                        "date": record_date,
-                        "prediction": pred,
-                    })
+                    rows.append(
+                        {
+                            "feature_name": feature_cls.__name__,
+                            "keyword": kw,
+                            "supplimental_keywords": found_supp_kws,
+                            "date": record_date,
+                            "prediction": pred,
+                        }
+                    )
                     if pred not in inconclusive_values:
                         found_conclusive = True
                         break
@@ -383,38 +455,40 @@ def process_single_block_llm(block_records, feature_cls, chunk_filter_fn, short_
     return rows
 
 
-def get_chunks_by_keyword(record: str, keyword: str, context_words: int = 200) -> list[str]:
+def get_chunks_by_keyword(
+    record: str, keyword: str, context_words: int = 200
+) -> list[str]:
     """Get chunk by keyword, including +/- context_words before and after the keyword."""
-    
+
     chunks = []
     # Split record into words
     words = record.split()
-    
+
     # Create pattern for case-insensitive keyword search
     pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-    
+
     # Track positions where keyword was found to avoid overlaps
     matched_positions = []
-    
+
     # Find all occurrences of the keyword in the text
     for match in pattern.finditer(record):
         # Calculate approximate word position
-        text_before = record[:match.start()]
+        text_before = record[: match.start()]
         word_pos = len(text_before.split())
-        
+
         # Get context window
         start_pos = max(0, word_pos - context_words)
         end_pos = min(len(words), word_pos + context_words + 1)
-        
+
         # Extract chunk
         chunk_words = words[start_pos:end_pos]
-        chunk = ' '.join(chunk_words)
-        
+        chunk = " ".join(chunk_words)
+
         # Add chunk if it's not empty and contains the keyword
         if chunk and keyword.lower() in chunk.lower():
             chunks.append(chunk)
             matched_positions.append((start_pos, end_pos))
-    
+
     return chunks
 
 
@@ -426,7 +500,9 @@ def process_pt(pt_id):
     """
     ### Step 1: Determine index date and calculate time windows ###
     with db.connect() as conn:
-        query = text(f"SELECT * FROM dia WHERE EMPI = '{pt_id}' AND (Code LIKE '%L70.0%' OR Code LIKE '%L70.8%' OR Code LIKE '%L70.9%' OR Code LIKE '%L70.1%' OR Code LIKE '%706.1%' OR Code LIKE '%acne%') ORDER BY Date ASC LIMIT 1")
+        query = text(
+            f"SELECT * FROM dia WHERE EMPI = '{pt_id}' AND (Code LIKE '%L70.0%' OR Code LIKE '%L70.8%' OR Code LIKE '%L70.9%' OR Code LIKE '%L70.1%' OR Code LIKE '%706.1%' OR Code LIKE '%acne%') ORDER BY Date ASC LIMIT 1"
+        )
         result = conn.execute(query)
 
         fetched = result.mappings().fetchone()
@@ -474,36 +550,49 @@ def process_pt(pt_id):
     all_records = vis_records
 
     # Window 2: Records after outcome_window_start_date (for cancer features)
-    outcome_records = filter_records_by_date_range(vis_records, start_date=outcome_window_start_date)
+    outcome_records = filter_records_by_date_range(
+        vis_records, start_date=outcome_window_start_date
+    )
 
     # Filter dia_records for outcome window (note: dia table uses "Date" field, not "Report_Date_Time")
-    outcome_dia_records = filter_records_by_date_range(dia_records, start_date=outcome_window_start_date)
+    outcome_dia_records = filter_records_by_date_range(
+        dia_records, start_date=outcome_window_start_date
+    )
 
     # Window 3: Records between index_date and outcome_window_start_date (for antibiotics)
-    treatment_window_dia_records = filter_records_by_date_range(vis_records, start_date=index_date, end_date=outcome_window_start_date)
-    med_records = filter_records_by_date_range(med_records, start_date=index_date, end_date=outcome_window_start_date)
-
+    treatment_window_dia_records = filter_records_by_date_range(
+        vis_records, start_date=index_date, end_date=outcome_window_start_date
+    )
+    med_records = filter_records_by_date_range(
+        med_records, start_date=index_date, end_date=outcome_window_start_date
+    )
 
     # print(f"Total records: {len(all_records)}, Outcome window: {len(outcome_records)}, Treatment window: {len(treatment_window_dia_records)}, Phy records: {len(phy_records)}, Dia records: {len(dia_records)}")
 
     ### Step 4: Calculate time blocks for each feature ###
     # Smoking status: 1 per 3 months
-    smoking_blocks = group_records_by_time_blocks(all_records, index_date, block_size_months=3)
+    smoking_blocks = group_records_by_time_blocks(
+        filter_records_by_date_range(all_records, end_date=outcome_window_start_date),
+        index_date,
+        block_size_months=3,
+    )
 
     # Alcohol status: 1 per 3 months
-    alcohol_blocks = group_records_by_time_blocks(all_records, index_date, block_size_months=3)
-
-    # Immunosuppressed disease: 1 per 6 months
-    immunosuppressed_blocks = group_records_by_time_blocks(all_records, index_date, block_size_months=6)
+    alcohol_blocks = group_records_by_time_blocks(
+        filter_records_by_date_range(all_records, end_date=outcome_window_start_date),
+        index_date,
+        block_size_months=3,
+    )
 
     # Cancer cancer: 1 per 3 months
-    cancer_cancer_blocks = group_records_by_time_blocks(outcome_records, index_date, block_size_months=3)
+    cancer_cancer_blocks = group_records_by_time_blocks(
+        outcome_records, index_date, block_size_months=3
+    )
 
     # Cancer family any: 1 per 6 months
-    cancer_family_blocks = group_records_by_time_blocks(outcome_records, index_date, block_size_months=6)
-
-
-    # print(f"Time blocks - Smoking: {len(smoking_blocks)}, Alcohol: {len(alcohol_blocks)}, Immunosuppressed: {len(immunosuppressed_blocks)}, Cancer cancer: {len(cancer_cancer_blocks)}, Cancer family: {len(cancer_family_blocks)}")
+    cancer_family_blocks = group_records_by_time_blocks(
+        outcome_records, index_date, block_size_months=6
+    )
 
     ### Step 5: Process features organized by time window ###
     rows = []
@@ -514,21 +603,47 @@ def process_pt(pt_id):
     # Try structured first, fall back to LLM if no structured data
     for block_index, block_records in smoking_blocks.items():
         _thread_local.block_id = f"smoking_{block_index}"
-        _thread_local.block_dates = f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}" if not block_records.empty else ""
-        block_start_date = block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
-        block_end_date = block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
-        block_phy_records = filter_records_by_date_range(phy_records, start_date=block_start_date, end_date=block_end_date)
-        block_rows, structured_hits = process_single_block_structured(block_records, smoking_status, phy_records=block_phy_records)
+        _thread_local.block_dates = (
+            f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}"
+            if not block_records.empty
+            else ""
+        )
+        block_start_date = (
+            block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
+        )
+        block_end_date = (
+            block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
+        )
+        block_phy_records = filter_records_by_date_range(
+            phy_records, start_date=block_start_date, end_date=block_end_date
+        )
+        block_rows, structured_hits = process_single_block_structured(
+            block_records, smoking_status, phy_records=block_phy_records
+        )
         if not block_rows:
-            block_rows = process_single_block_llm(block_records, smoking_status, make_keyword_filter(smoking_status.keywords))
+            block_rows = process_single_block_llm(
+                block_records,
+                smoking_status,
+                make_keyword_filter(smoking_status.keywords),
+            )
         rows.extend(block_rows)
         # Follow-up: smoking_amount if any prediction is "C"
         if block_rows:
-            pooled_value = smoking_status.pooling_fn([row["prediction"] for row in block_rows])
+            pooled_value = smoking_status.pooling_fn(
+                [row["prediction"] for row in block_rows]
+            )
             if pooled_value == "C":
-                follow_up_rows, follow_up_structured_hits = process_single_block_structured(block_records, smoking_amount, phy_records=block_phy_records)
+                follow_up_rows, follow_up_structured_hits = (
+                    process_single_block_structured(
+                        block_records, smoking_amount, phy_records=block_phy_records
+                    )
+                )
                 if not follow_up_rows:
-                    follow_up_rows = process_single_block_llm(block_records, smoking_amount, make_keyword_filter(smoking_amount.keywords))
+                    follow_up_rows = process_single_block_llm(
+                        block_records,
+                        smoking_amount,
+                        make_keyword_filter(smoking_amount.keywords),
+                    )
                 for row in follow_up_rows:
                     row["feature_name"] = "smoking_amount"
                 rows.extend(follow_up_rows)
@@ -538,21 +653,47 @@ def process_pt(pt_id):
     # Try structured first, fall back to LLM if no structured data
     for block_index, block_records in alcohol_blocks.items():
         _thread_local.block_id = f"alcohol_{block_index}"
-        _thread_local.block_dates = f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}" if not block_records.empty else ""
-        block_start_date = block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
-        block_end_date = block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
-        block_phy_records = filter_records_by_date_range(phy_records, start_date=block_start_date, end_date=block_end_date)
-        block_rows, structured_hits = process_single_block_structured(block_records, alcohol_status, phy_records=block_phy_records)
+        _thread_local.block_dates = (
+            f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}"
+            if not block_records.empty
+            else ""
+        )
+        block_start_date = (
+            block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
+        )
+        block_end_date = (
+            block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
+        )
+        block_phy_records = filter_records_by_date_range(
+            phy_records, start_date=block_start_date, end_date=block_end_date
+        )
+        block_rows, structured_hits = process_single_block_structured(
+            block_records, alcohol_status, phy_records=block_phy_records
+        )
         if not block_rows:
-            block_rows = process_single_block_llm(block_records, alcohol_status, make_keyword_filter(alcohol_status.keywords))
+            block_rows = process_single_block_llm(
+                block_records,
+                alcohol_status,
+                make_keyword_filter(alcohol_status.keywords),
+            )
         rows.extend(block_rows)
         # Follow-up: alcohol_amount if any prediction is "A"
         if block_rows:
-            pooled_value = alcohol_status.pooling_fn([row["prediction"] for row in block_rows])
+            pooled_value = alcohol_status.pooling_fn(
+                [row["prediction"] for row in block_rows]
+            )
             if pooled_value == "A":
-                follow_up_rows, follow_up_structured_hits = process_single_block_structured(block_records, alcohol_amount, phy_records=block_phy_records)
+                follow_up_rows, follow_up_structured_hits = (
+                    process_single_block_structured(
+                        block_records, alcohol_amount, phy_records=block_phy_records
+                    )
+                )
                 if not follow_up_rows:
-                    follow_up_rows = process_single_block_llm(block_records, alcohol_amount, make_keyword_filter(alcohol_amount.keywords))
+                    follow_up_rows = process_single_block_llm(
+                        block_records,
+                        alcohol_amount,
+                        make_keyword_filter(alcohol_amount.keywords),
+                    )
                 for row in follow_up_rows:
                     row["feature_name"] = "alcohol_amount"
                 rows.extend(follow_up_rows)
@@ -560,51 +701,43 @@ def process_pt(pt_id):
 
     # Transplant: every record
     # Use LLM if no structured: no
-    # Note: transplant feature needs option_from_structured method implemented
     transplant_df_slices = []
-    
-    # transplant procedure codes (icd9)
-    transplant_df_slices.append(prc_records[(prc_records["Code_Type"]=="ICD9") & (prc_records["Code"].isin(ICD9_TRANSPLANT_PROCEDURE_CODES))])
-
-    # transplant procedure codes (icd10)
-    transplant_df_slices.append(prc_records[(prc_records["Code_Type"]=="ICD10") & (prc_records["Code"].isin(ICD10_TRANSPLANT_PROCEDURE_CODES))])
-
-    # transplant diagnosis codes (icd9)
-    transplant_df_slices.append(dia_records[(dia_records["Code_Type"]=="ICD9") & (dia_records["Code"].isin(ICD9_DIAGNOSIS_CODES))])
-
-    # transplant diagnosis codes (icd10)
-    transplant_df_slices.append(dia_records[(dia_records["Code_Type"]=="ICD10") & (dia_records["Code"].isin(ICD10_DIAGNOSIS_CODES))])
-
-    # todo: 
-    transplant_structured_df = pd.concat(transplant_df_slices).drop_duplicates().reset_index(drop=True)
+    transplant_df_slices.append(
+        dia_records[
+            (dia_records["Code_Type"] == "ICD9")
+            & (dia_records["Code"].isin(ICD9_DIAGNOSIS_CODES))
+        ]
+    )
+    transplant_df_slices.append(
+        dia_records[
+            (dia_records["Code_Type"] == "ICD10")
+            & (dia_records["Code"].isin(ICD10_DIAGNOSIS_CODES))
+        ]
+    )
+    # todo:
+    transplant_structured_df = (
+        pd.concat(transplant_df_slices).drop_duplicates().reset_index(drop=True)
+    )
     for _, record in transplant_structured_df.iterrows():
-        rows.append({
-            "feature_name": "transplant",
-            "keyword": "STRUCTURED_DATA",
-            "code": record["Code"],
-            "transplant_description": ICD_TO_TRANSPLANT_DESC[record["Code"]],
-            "transplant_code Type": record["Code_Type"],
-            "date": record["Date"],
-            "prediction": "A",
-        })
-
+        rows.append(
+            {
+                "feature_name": "transplant",
+                "keyword": "STRUCTURED_DATA",
+                "code": record["Code"],
+                "transplant_description": ICD_TO_TRANSPLANT_DESC[record["Code"]],
+                "transplant_code Type": record["Code_Type"],
+                "date": record["Date"],
+                "prediction": "A",
+            }
+        )
 
     print(f"Completed transplant for {pt_id}")
 
-    # # Immunosuppressed disease: process each 6-month block
-    # # Use LLM if no structured: no
-    # # Note: immunosuppressed_disease feature needs option_from_structured method implemented
-    # for block_index, block_records in immunosuppressed_blocks.items():
-    #     block_rows = process_feature_single_block(
-    #         block_records, immunosuppressed_disease,
-    #         fallback_to_llm=False  # Don't fall back to LLM if no structured data
-    #     )
-    #     rows.extend(block_rows)
-    # print(f"Completed immunosuppressed disease for {pt_id}")
-
     ### Diseases ###
     # filter in only records in CONFOUNDING_DISEASE_CODES
-    confounding_disease_records = dia_records[dia_records["Code"].isin(CONFOUNDING_DISEASE_CODES.keys())]
+    confounding_disease_records = filter_records_by_date_range(
+        dia_records, end_date=outcome_window_start_date
+    )[dia_records["Code"].isin(CONFOUNDING_DISEASE_CODES.keys())]
     for _, record in confounding_disease_records.iterrows():
         if record["Code_Type"] == "ICD9":
             icd_dict = CONFOUNDING_DISEASE_ICD9_CODES
@@ -618,16 +751,17 @@ def process_pt(pt_id):
         disease_name = record["Diagnosis_Name"]
         disease_type = icd_dict[code]["disease_type"]
         disease_description = icd_dict[code]["description"]
-        rows.append({
-            "feature_name": "disease",
-            "keyword": "STRUCTURED_DATA",
-            "Code": record["Code"],
-            "disease": disease_name,
-            "disease_type": disease_type,
-            "date": record["Date"],
-            "prediction": "A",
-        })
-    
+        rows.append(
+            {
+                "feature_name": "disease",
+                "keyword": "STRUCTURED_DATA",
+                "Code": record["Code"],
+                "disease": disease_name,
+                "disease_type": disease_type,
+                "date": record["Date"],
+                "prediction": "A",
+            }
+        )
 
     # # === Features using outcome window (after outcome_window_start_date) ===
 
@@ -635,24 +769,42 @@ def process_pt(pt_id):
     # Structured only, no LLM fallback
     for block_index, block_records in cancer_cancer_blocks.items():
         _thread_local.block_id = f"cancer_{block_index}"
-        _thread_local.block_dates = f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}" if not block_records.empty else ""
-        block_start_date = block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
-        block_end_date = block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
-        block_dia_records = filter_records_by_date_range(outcome_dia_records, start_date=block_start_date, end_date=block_end_date)
-        block_rows, structured_hits = process_single_block_structured(block_records, cancer_cancer, dia_records=block_dia_records)
-        cancer_hits = [x for x in structured_hits if x["pred"]=="A"]
+        _thread_local.block_dates = (
+            f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}"
+            if not block_records.empty
+            else ""
+        )
+        block_start_date = (
+            block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
+        )
+        block_end_date = (
+            block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
+        )
+        block_dia_records = filter_records_by_date_range(
+            outcome_dia_records, start_date=block_start_date, end_date=block_end_date
+        )
+        block_rows, structured_hits = process_single_block_structured(
+            block_records, cancer_cancer, dia_records=block_dia_records
+        )
+        cancer_hits = [x for x in structured_hits if x["pred"] == "A"]
         rows.extend(block_rows)
         # Follow-up features if any prediction is "A"
         # if any(row["prediction"].upper() == "A" for row in block_rows):
         for cancer_hit in cancer_hits:
             icd = cancer_hit["Code"]
             kws = get_kws_from_icd(icd)
+
             # Follow-ups use LLM (no structured data for these)
             def cancer_date_filter(chunk):
                 has_kw = len(has_keyword(chunk, kws)) > 0
                 has_date = contains_date(chunk)
                 return has_kw and has_date
-            date_rows = process_single_block_llm(block_records, cancer_date_of_diagnosis, chunk_filter_fn=cancer_date_filter)
+
+            date_rows = process_single_block_llm(
+                block_records,
+                cancer_date_of_diagnosis,
+                chunk_filter_fn=cancer_date_filter,
+            )
             for row in date_rows:
                 row["feature_name"] = "cancer_date_of_diagnosis"
             rows.extend(date_rows)
@@ -662,12 +814,19 @@ def process_pt(pt_id):
                 has_cancer_kw = len(has_keyword(chunk, kws)) > 0
                 has_stage_kw = len(has_keyword(chunk, CANCER_STAGE_2_PART_KEYWORDS)) > 0
                 return has_cancer_kw and has_stage_kw
-            stage_rows = process_single_block_llm(block_records, cancer_stage_at_diagnosis, chunk_filter_fn=cancer_stage_filter)
+
+            stage_rows = process_single_block_llm(
+                block_records,
+                cancer_stage_at_diagnosis,
+                chunk_filter_fn=cancer_stage_filter,
+            )
             for row in stage_rows:
                 row["feature_name"] = "cancer_stage_at_diagnosis"
             rows.extend(stage_rows)
 
-            max_stage_rows = process_single_block_llm(block_records, cancer_maximum_stage, chunk_filter_fn=cancer_stage_filter)
+            max_stage_rows = process_single_block_llm(
+                block_records, cancer_maximum_stage, chunk_filter_fn=cancer_stage_filter
+            )
             for row in max_stage_rows:
                 row["feature_name"] = "cancer_maximum_stage"
             rows.extend(max_stage_rows)
@@ -678,8 +837,11 @@ def process_pt(pt_id):
         has_cancer = len(has_keyword(chunk, SPECIFIC_CANCERS)) > 0
         has_family = len(has_keyword(chunk, cancer_family_any.supplimental_kws)) > 0
         return has_cancer and has_family
+
     for block_index, block_records in cancer_family_blocks.items():
-        block_rows = process_single_block_llm(block_records, cancer_family_any, chunk_filter_fn=cancer_family_filter)
+        block_rows = process_single_block_llm(
+            block_records, cancer_family_any, chunk_filter_fn=cancer_family_filter
+        )
         rows.extend(block_rows)
     print(f"Completed cancer family any for {pt_id}")
 
@@ -689,35 +851,79 @@ def process_pt(pt_id):
 
     abx_records = med_records[med_records["Code"].isin(ABX_CODES)]
     for _, abx_record in abx_records.iterrows():
-        rows.append({
-            "feature_name": "antibiotics",
-            "keyword": "STRUCTURED_DATA",
-            "Medication_Description": abx_record["Medication"],
-            "Medication_Code": abx_record["Code"],
-            "Medication_Quantity": abx_record["Quantity"],
-            "date": abx_record["Medication_Date"],
-            "prediction": "A",
-        })
+        rows.append(
+            {
+                "feature_name": "antibiotics",
+                "keyword": "STRUCTURED_DATA",
+                "Medication_Description": abx_record["Medication"],
+                "Medication_Code": abx_record["Code"],
+                "Medication_Quantity": abx_record["Quantity"],
+                "date": abx_record["Medication_Date"],
+                "prediction": "A",
+            }
+        )
 
-    duration_rows = process_single_block_llm(treatment_window_dia_records, antibiotic_duration, make_keyword_filter(antibiotic_duration.keywords), short_circuit=False)
+    duration_rows = process_single_block_llm(
+        treatment_window_dia_records,
+        antibiotic_duration,
+        make_keyword_filter(antibiotic_duration.keywords),
+        short_circuit=False,
+    )
 
     rows.extend(duration_rows)
 
-    # Convert to DataFrame
-    df = pd.DataFrame(rows)
+    # Save per-patient JSONL
+    if rows:
+        jsonl_path = _records_dir / f"{pt_id}.jsonl"
+        with open(jsonl_path, "w") as f:
+            for row in rows:
+                json.dump(row, f, default=_json_default)
+                f.write("\n")
+
+    # Build lightweight stats
+    feature_counts = Counter()
+    structured_feature_counts = Counter()
+    llm_feature_counts = Counter()
+    for row in rows:
+        feature_counts[row["feature_name"]] += 1
+        if row["keyword"] == "STRUCTURED_DATA":
+            structured_feature_counts[row["feature_name"]] += 1
+        else:
+            llm_feature_counts[row["feature_name"]] += 1
 
     # Clear current patient ID
     _thread_local.current_patient_id = None
 
-    return df
-            
+    return {
+        "feature_counts": feature_counts,
+        "structured_feature_counts": structured_feature_counts,
+        "llm_feature_counts": llm_feature_counts,
+        "total_rows": len(rows),
+    }
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--n-workers', type=int, default=1, help='Number of worker threads (default: 1)')
-parser.add_argument('--limit', type=int, default=None, help='Max number of patients to process (default: None, process all)')
-parser.add_argument('--dummy-llm', action='store_true', help='Use dummy LLM (sample from prevalence / random dates)')
-parser.add_argument('--target-empis', type=str, default=[], nargs='*', help='List of specific EMPIs to process (default: None, process all in cohort)')
+parser.add_argument(
+    "--n-workers", type=int, default=1, help="Number of worker threads (default: 1)"
+)
+parser.add_argument(
+    "--limit",
+    type=int,
+    default=None,
+    help="Max number of patients to process (default: None, process all)",
+)
+parser.add_argument(
+    "--dummy-llm",
+    action="store_true",
+    help="Use dummy LLM (sample from prevalence / random dates)",
+)
+parser.add_argument(
+    "--target-empis",
+    type=str,
+    default=[],
+    nargs="*",
+    help="List of specific EMPIs to process (default: None, process all in cohort)",
+)
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
 
@@ -727,16 +933,16 @@ print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 # Load EMPIs from cohort JSON (matched cases only)
 cohort_json_path = Path("cohort/empis.json")
 print(f"Loading matched case EMPIs from {cohort_json_path}")
-with open(cohort_json_path, 'r') as f:
+with open(cohort_json_path, "r") as f:
     cohort_data = json.load(f)
 
 # Use only matched cases
-pt_ids = cohort_data['matched_case_empis']
+pt_ids = cohort_data["matched_case_empis"]
 
 # Apply limit if specified
 if args.limit is not None:
-    pt_ids = pt_ids[:args.limit]
-    
+    pt_ids = pt_ids[: args.limit]
+
 
 pt_ids = args.target_empis + pt_ids
 
@@ -744,59 +950,65 @@ pt_ids = args.target_empis + pt_ids
 print(f"Processing {len(pt_ids)} matched case patients")
 
 # Create output directory with timestamp
-timestamp_str = start_time.strftime('%Y%m%d_%H%M%S')
+timestamp_str = start_time.strftime("%Y%m%d_%H%M%S")
 output_dir = Path(f"full_inference_out/{timestamp_str}")
 output_dir.mkdir(parents=True, exist_ok=True)
 
+# Create records directory for per-EMPI JSONL files
+_records_dir = Path("full_inference_out/records")
+_records_dir.mkdir(parents=True, exist_ok=True)
+
 # Set up LLM call logging
-llm_logger = logging.getLogger('llm_calls')
+llm_logger = logging.getLogger("llm_calls")
 llm_logger.setLevel(logging.INFO)
-llm_handler = logging.FileHandler(output_dir / 'llm_calls.log')
-llm_handler.setFormatter(logging.Formatter('%(message)s'))
+llm_handler = logging.FileHandler(output_dir / "llm_calls.log")
+llm_handler.setFormatter(logging.Formatter("%(message)s"))
 llm_logger.addHandler(llm_handler)
 llm_logger.info("empi\tblock_id\tblock_dates\tfeature\tkeyword\tanswer")
 
-pt_dfs = []
-index_dates = []
+agg_feature_counts = Counter()
+agg_structured_feature_counts = Counter()
+agg_llm_feature_counts = Counter()
+agg_total_rows = 0
+patients_processed = 0
 
 if args.n_workers > 1:
     with ThreadPoolExecutor(max_workers=args.n_workers) as executor:
         futures = {executor.submit(process_pt, pt_id): pt_id for pt_id in pt_ids}
         for future in tqdm(as_completed(futures), total=len(pt_ids)):
-            pt_df = future.result()
-            if pt_df is not None:
-                pt_dfs.append(pt_df)
+            stats = future.result()
+            if stats is not None:
+                agg_feature_counts += stats["feature_counts"]
+                agg_structured_feature_counts += stats["structured_feature_counts"]
+                agg_llm_feature_counts += stats["llm_feature_counts"]
+                agg_total_rows += stats["total_rows"]
+                patients_processed += 1
 else:
     for pt_id in tqdm(pt_ids):
-        pt_df = process_pt(pt_id)
-        if pt_df is not None:
-            pt_dfs.append(pt_df)
+        stats = process_pt(pt_id)
+        if stats is not None:
+            agg_feature_counts += stats["feature_counts"]
+            agg_structured_feature_counts += stats["structured_feature_counts"]
+            agg_llm_feature_counts += stats["llm_feature_counts"]
+            agg_total_rows += stats["total_rows"]
+            patients_processed += 1
 print()
 
-pt_df = pd.concat(pt_dfs)
-
-# Save DataFrame as JSONL
-if len(pt_df) > 0:
-    jsonl_path = output_dir / "results.jsonl"
-    with open(jsonl_path, 'w') as f:
-        for _, row in pt_df.iterrows():
-            json.dump(row.to_dict(), f)
-            f.write('\n')
-    print(f"\nSaved results to {jsonl_path}")
-
 # Plot histogram of feature frequencies
-if len(pt_df) > 0:
-    feature_counts = pt_df["feature_name"].value_counts().sort_index()
+if agg_total_rows > 0:
+    feature_counts = pd.Series(agg_feature_counts).sort_index()
 
     plt.figure(figsize=(12, 6))
     plt.bar(range(len(feature_counts)), feature_counts.values)
-    plt.xticks(range(len(feature_counts)), feature_counts.index, rotation=45, ha='right')
+    plt.xticks(
+        range(len(feature_counts)), feature_counts.index, rotation=45, ha="right"
+    )
     plt.xlabel("Feature Name")
     plt.ylabel("Frequency")
     plt.title("Frequency of Each Feature")
     plt.tight_layout()
     histogram_path = output_dir / "feature_frequency_histogram.png"
-    plt.savefig(histogram_path, dpi=150, bbox_inches='tight')
+    plt.savefig(histogram_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"Saved histogram to {histogram_path}")
     print(f"\nFeature frequencies:")
@@ -812,94 +1024,131 @@ if total_windows > 0:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
     # Pie chart 1: Windows breakdown (Structured vs LLM)
-    window_labels = ['Structured Data', 'LLM']
+    window_labels = ["Structured Data", "LLM"]
     window_sizes = [_structured_windows_count, _llm_windows_count]
-    window_colors = ['#2ecc71', '#3498db']
+    window_colors = ["#2ecc71", "#3498db"]
     window_explode = (0.05, 0.05)
 
-    ax1.pie(window_sizes, explode=window_explode, labels=window_labels, colors=window_colors,
-            autopct='%1.1f%%', shadow=False, startangle=90)
-    ax1.set_title(f'Windows Processing Breakdown\n(Total: {total_windows} windows)')
+    ax1.pie(
+        window_sizes,
+        explode=window_explode,
+        labels=window_labels,
+        colors=window_colors,
+        autopct="%1.1f%%",
+        shadow=False,
+        startangle=90,
+    )
+    ax1.set_title(f"Windows Processing Breakdown\n(Total: {total_windows} windows)")
 
     # Pie chart 2: Extraction method by feature
-    # Count structured vs LLM for each feature
-    structured_features = pt_df[pt_df["keyword"] == "STRUCTURED_DATA"]["feature_name"].value_counts()
-    llm_features = pt_df[pt_df["keyword"] != "STRUCTURED_DATA"]["feature_name"].value_counts()
+    extraction_counts = {"Structured Only": 0, "LLM Only": 0, "Mixed (Both)": 0}
 
-    # Create breakdown by extraction method
-    extraction_counts = {
-        'Structured Only': 0,
-        'LLM Only': 0,
-        'Mixed (Both)': 0
-    }
-
-    all_features = set(structured_features.index) | set(llm_features.index)
+    all_features = set(agg_structured_feature_counts.keys()) | set(
+        agg_llm_feature_counts.keys()
+    )
     for feature in all_features:
-        has_structured = feature in structured_features.index and structured_features[feature] > 0
-        has_llm = feature in llm_features.index and llm_features[feature] > 0
+        has_structured = agg_structured_feature_counts[feature] > 0
+        has_llm = agg_llm_feature_counts[feature] > 0
 
         if has_structured and has_llm:
-            extraction_counts['Mixed (Both)'] += 1
+            extraction_counts["Mixed (Both)"] += 1
         elif has_structured:
-            extraction_counts['Structured Only'] += 1
+            extraction_counts["Structured Only"] += 1
         else:
-            extraction_counts['LLM Only'] += 1
+            extraction_counts["LLM Only"] += 1
 
     method_labels = list(extraction_counts.keys())
     method_sizes = list(extraction_counts.values())
-    method_colors = ['#2ecc71', '#3498db', '#f39c12']
+    method_colors = ["#2ecc71", "#3498db", "#f39c12"]
     method_explode = (0.05, 0.05, 0.05)
 
     # Only plot if we have data
     if sum(method_sizes) > 0:
-        ax2.pie(method_sizes, explode=method_explode, labels=method_labels, colors=method_colors,
-                autopct='%1.1f%%', shadow=False, startangle=90)
-        ax2.set_title(f'Features by Extraction Method\n(Total: {sum(method_sizes)} features)')
+        ax2.pie(
+            method_sizes,
+            explode=method_explode,
+            labels=method_labels,
+            colors=method_colors,
+            autopct="%1.1f%%",
+            shadow=False,
+            startangle=90,
+        )
+        ax2.set_title(
+            f"Features by Extraction Method\n(Total: {sum(method_sizes)} features)"
+        )
     else:
-        ax2.text(0.5, 0.5, 'No feature data', ha='center', va='center', transform=ax2.transAxes)
+        ax2.text(
+            0.5,
+            0.5,
+            "No feature data",
+            ha="center",
+            va="center",
+            transform=ax2.transAxes,
+        )
 
     plt.tight_layout()
     pie_chart_path = output_dir / "llm_breakdown_pie_charts.png"
-    plt.savefig(pie_chart_path, dpi=150, bbox_inches='tight')
+    plt.savefig(pie_chart_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"Saved LLM breakdown pie charts to {pie_chart_path}")
 
     # Create a third pie chart showing total extractions (structured vs LLM)
     plt.figure(figsize=(8, 8))
-    structured_count = len(pt_df[pt_df["keyword"] == "STRUCTURED_DATA"])
-    llm_count = len(pt_df[pt_df["keyword"] != "STRUCTURED_DATA"])
+    structured_count = sum(agg_structured_feature_counts.values())
+    llm_count = sum(agg_llm_feature_counts.values())
 
-    extraction_labels = ['Structured Data Extractions', 'LLM Extractions']
+    extraction_labels = ["Structured Data Extractions", "LLM Extractions"]
     extraction_sizes = [structured_count, llm_count]
-    extraction_colors = ['#2ecc71', '#3498db']
+    extraction_colors = ["#2ecc71", "#3498db"]
     extraction_explode = (0.05, 0.05)
 
-    plt.pie(extraction_sizes, explode=extraction_explode, labels=extraction_labels,
-            colors=extraction_colors, autopct='%1.1f%%', shadow=False, startangle=90)
-    plt.title(f'Total Extractions Breakdown\n(Total: {structured_count + llm_count} extractions)')
+    plt.pie(
+        extraction_sizes,
+        explode=extraction_explode,
+        labels=extraction_labels,
+        colors=extraction_colors,
+        autopct="%1.1f%%",
+        shadow=False,
+        startangle=90,
+    )
+    plt.title(
+        f"Total Extractions Breakdown\n(Total: {structured_count + llm_count} extractions)"
+    )
     plt.tight_layout()
 
     extraction_pie_path = output_dir / "total_extractions_pie_chart.png"
-    plt.savefig(extraction_pie_path, dpi=150, bbox_inches='tight')
+    plt.savefig(extraction_pie_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"Saved total extractions pie chart to {extraction_pie_path}")
 
     # Create pie chart showing LLM calls by feature name
-    llm_df = pt_df[pt_df["keyword"] != "STRUCTURED_DATA"]
-    if len(llm_df) > 0:
-        feature_counts = llm_df["feature_name"].value_counts()
+    if agg_llm_feature_counts:
+        llm_feature_series = pd.Series(agg_llm_feature_counts).sort_values(
+            ascending=False
+        )
 
         plt.figure(figsize=(10, 10))
-        colors = plt.cm.Set3(np.linspace(0, 1, len(feature_counts)))
-        labels = [f"{name}\n({count:,})" for name, count in zip(feature_counts.index, feature_counts.values)]
+        colors = plt.cm.Set3(np.linspace(0, 1, len(llm_feature_series)))
+        labels = [
+            f"{name}\n({count:,})"
+            for name, count in zip(llm_feature_series.index, llm_feature_series.values)
+        ]
 
-        plt.pie(feature_counts.values, labels=labels, colors=colors,
-                autopct='%1.1f%%', shadow=False, startangle=90)
-        plt.title(f'LLM Calls by Feature\n(Total: {len(llm_df):,} calls)')
+        plt.pie(
+            llm_feature_series.values,
+            labels=labels,
+            colors=colors,
+            autopct="%1.1f%%",
+            shadow=False,
+            startangle=90,
+        )
+        plt.title(
+            f"LLM Calls by Feature\n(Total: {sum(llm_feature_series.values):,} calls)"
+        )
         plt.tight_layout()
 
         feature_pie_path = output_dir / "llm_calls_by_feature_pie.png"
-        plt.savefig(feature_pie_path, dpi=150, bbox_inches='tight')
+        plt.savefig(feature_pie_path, dpi=150, bbox_inches="tight")
         plt.close()
         print(f"Saved LLM calls by feature pie chart to {feature_pie_path}")
 else:
@@ -910,17 +1159,19 @@ total_time = end_time - start_time
 
 # Save runtime info to markdown file
 runtime_info_path = output_dir / "runtime_info.md"
-with open(runtime_info_path, 'w') as f:
+with open(runtime_info_path, "w") as f:
     f.write(f"# Runtime Information\n\n")
     f.write(f"- **Start time**: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
     f.write(f"- **End time**: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
     f.write(f"- **Total time**: {total_time}\n")
     f.write(f"- **Number of workers**: {args.n_workers}\n")
-    f.write(f"- **Patient limit**: {args.limit if args.limit is not None else 'None (all)'}\n")
+    f.write(
+        f"- **Patient limit**: {args.limit if args.limit is not None else 'None (all)'}\n"
+    )
     f.write(f"- **Dummy LLM**: {args.dummy_llm}\n")
-    f.write(f"- **Number of patients processed**: {len(pt_ids)}\n")
-    if len(pt_df) > 0:
-        f.write(f"- **Total rows in results**: {len(pt_df)}\n")
+    f.write(f"- **Number of patients processed**: {patients_processed}\n")
+    if agg_total_rows > 0:
+        f.write(f"- **Total rows in results**: {agg_total_rows}\n")
 
     # Add window processing statistics
     f.write(f"\n## Window Processing Breakdown\n\n")
@@ -929,38 +1180,43 @@ with open(runtime_info_path, 'w') as f:
         structured_pct = (_structured_windows_count / total_windows) * 100
         llm_pct = (_llm_windows_count / total_windows) * 100
         f.write(f"- **Total windows processed**: {total_windows}\n")
-        f.write(f"- **Windows processed via structured data**: {_structured_windows_count} ({structured_pct:.1f}%)\n")
-        f.write(f"- **Windows processed via LLM**: {_llm_windows_count} ({llm_pct:.1f}%)\n")
+        f.write(
+            f"- **Windows processed via structured data**: {_structured_windows_count} ({structured_pct:.1f}%)\n"
+        )
+        f.write(
+            f"- **Windows processed via LLM**: {_llm_windows_count} ({llm_pct:.1f}%)\n"
+        )
     else:
         f.write(f"- No windows processed\n")
 
     # Add extraction-level statistics
-    if len(pt_df) > 0:
-        f.write(f"\n## Extraction-Level Breakdown\n\n")
-        structured_count = len(pt_df[pt_df["keyword"] == "STRUCTURED_DATA"])
-        llm_count = len(pt_df[pt_df["keyword"] != "STRUCTURED_DATA"])
+    if agg_total_rows > 0:
+        structured_count = sum(agg_structured_feature_counts.values())
+        llm_count = sum(agg_llm_feature_counts.values())
         total_extractions = structured_count + llm_count
 
+        f.write(f"\n## Extraction-Level Breakdown\n\n")
         if total_extractions > 0:
             structured_extraction_pct = (structured_count / total_extractions) * 100
             llm_extraction_pct = (llm_count / total_extractions) * 100
             f.write(f"- **Total extractions**: {total_extractions}\n")
-            f.write(f"- **Structured data extractions**: {structured_count} ({structured_extraction_pct:.1f}%)\n")
+            f.write(
+                f"- **Structured data extractions**: {structured_count} ({structured_extraction_pct:.1f}%)\n"
+            )
             f.write(f"- **LLM extractions**: {llm_count} ({llm_extraction_pct:.1f}%)\n")
 
         # Feature breakdown by extraction method
         f.write(f"\n## Features by Extraction Method\n\n")
-        structured_features = pt_df[pt_df["keyword"] == "STRUCTURED_DATA"]["feature_name"].value_counts()
-        llm_features = pt_df[pt_df["keyword"] != "STRUCTURED_DATA"]["feature_name"].value_counts()
-
-        all_features = set(structured_features.index) | set(llm_features.index)
+        all_features = set(agg_structured_feature_counts.keys()) | set(
+            agg_llm_feature_counts.keys()
+        )
         structured_only = []
         llm_only = []
         mixed = []
 
         for feature in all_features:
-            has_structured = feature in structured_features.index and structured_features[feature] > 0
-            has_llm = feature in llm_features.index and llm_features[feature] > 0
+            has_structured = agg_structured_feature_counts[feature] > 0
+            has_llm = agg_llm_feature_counts[feature] > 0
 
             if has_structured and has_llm:
                 mixed.append(feature)
@@ -991,16 +1247,18 @@ with open(runtime_info_path, 'w') as f:
     if _per_patient_stats:
         # Take first 10 patients (in order they were added to dict)
         first_10_patients = list(_per_patient_stats.items())[:10]
-        f.write(f"\n## Per-Patient Breakdown (First {len(first_10_patients)} Patients)\n\n")
+        f.write(
+            f"\n## Per-Patient Breakdown (First {len(first_10_patients)} Patients)\n\n"
+        )
         f.write(f"| Patient ID | Structured | LLM | Total | Structured % |\n")
         f.write(f"|------------|------------|-----|-------|-------------|\n")
         for pt_id, stats in first_10_patients:
             total = stats["structured"] + stats["llm"]
             pct = (stats["structured"] / total * 100) if total > 0 else 0
-            f.write(f"| {pt_id} | {stats['structured']} | {stats['llm']} | {total} | {pct:.1f}% |\n")
+            f.write(
+                f"| {pt_id} | {stats['structured']} | {stats['llm']} | {total} | {pct:.1f}% |\n"
+            )
 
 print(f"\nEnd time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
 print(f"Total time: {total_time}")
 print(f"Saved runtime info to {runtime_info_path}")
-
-
