@@ -7,10 +7,12 @@ import json
 from pathlib import Path
 import numpy as np
 import argparse
+from itertools import combinations
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Create matched case-control cohort for antibiotic study")
 parser.add_argument("--n-limit", type=int, default=None, help="Limit to first N patients (N/2 cases, N/2 controls). Default: None (use all)")
+parser.add_argument("--min-match-features", type=int, default=6, help="Minimum number of matching features (out of 6: sex, race, BMI, smoking, alcohol, age±5). Default: 6 (exact match on all)")
 args = parser.parse_args()
 
 N_LIMIT = args.n_limit  # use first N/2 from each cohort for quick test; set to None for full run
@@ -46,36 +48,65 @@ print("Connecting to database...")
 db = create_engine(db_url)
 
 print("Loading antibiotic medication list...")
-med_list_df = pd.read_csv("stores/abx_med_code_list.csv")
-med_list = med_list_df[med_list_df["a"] == 1]["MedicationID"]
-abx_list = list(med_list.unique())
+med_list_df = pd.read_csv("labeled_data/abx_med_code_list_v2.csv")
+# med_list = med_list_df[med_list_df["a"] == 1]["MedicationID"]
+med_list = med_list_df[med_list_df["include_consensus"] == True][["Medication", "Code_Type", "Code"]]
+abx_pairs = med_list[["Code_Type", "Code"]].drop_duplicates()
+abx_filter_sql = " OR ".join(
+    f"(Code_Type = '{row['Code_Type']}' AND Code = '{row['Code']}')"
+    for _, row in abx_pairs.iterrows()
+)
 
-# Get distinct EMPIs only, not all med records
-print("Querying for patients who took antibiotics...")
+# Step 1: Get all patients with acne diagnosis and their earliest acne date (= index date)
+print("Querying acne diagnosis dates...")
 with db.connect() as conn:
-    # Get EMPIs who took ABX (medication IDs are in Code column)
-    abx_list_str = ",".join([f"'{str(x)}'" for x in abx_list])
-    query = text(f"SELECT DISTINCT EMPI FROM med WHERE Code IN ({abx_list_str})")
-    result = conn.execute(query)
-    took_abx_empis = pd.Series([row[0] for row in result.fetchall()]).unique()
-
-    print("Querying for patients who did not take antibiotics...")
-    # Get EMPIs who did not take ABX using LEFT JOIN (SQLite-compatible)
-    query = text(f"""
-        SELECT DISTINCT m.EMPI
-        FROM med m
-        LEFT JOIN (
-            SELECT DISTINCT EMPI
-            FROM med
-            WHERE Code IN ({abx_list_str})
-        ) abx ON m.EMPI = abx.EMPI
-        WHERE abx.EMPI IS NULL
+    query = text("""
+        SELECT EMPI, MIN(Date) as acne_date FROM dia
+        WHERE Code LIKE '%L70.0%' OR Code LIKE '%L70.8%' OR Code LIKE '%L70.9%'
+            OR Code LIKE '%L70.1%' OR Code LIKE '%706.1%' OR Code LIKE '%acne%'
+        GROUP BY EMPI
     """)
     result = conn.execute(query)
-    no_abx_empis = pd.Series([row[0] for row in result.fetchall()]).unique()
+    acne_dates_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
-print(f"Found {len(took_abx_empis)} patients who took ABX")
-print(f"Found {len(no_abx_empis)} patients who did not take ABX")
+acne_dates_df["acne_date"] = pd.to_datetime(acne_dates_df["acne_date"])
+print(f"Found {len(acne_dates_df)} patients with acne diagnosis")
+
+# Step 2: Get ABX medication records for acne patients
+print("Querying antibiotic records for acne patients...")
+acne_empis = acne_dates_df["EMPI"].tolist()
+abx_med_batches = []
+with db.connect() as conn:
+    for i in tqdm(range(0, len(acne_empis), BATCH_SIZE), desc="Querying ABX med records"):
+        batch = acne_empis[i:i + BATCH_SIZE]
+        empis_str = ",".join([f"'{str(e).replace(chr(39), chr(39)+chr(39))}'" for e in batch])
+        query = text(f"SELECT EMPI, Medication_Date FROM med WHERE EMPI IN ({empis_str}) AND ({abx_filter_sql})")
+        result = conn.execute(query)
+        batch_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+        abx_med_batches.append(batch_df)
+
+abx_med_df = pd.concat(abx_med_batches, ignore_index=True) if abx_med_batches else pd.DataFrame(columns=["EMPI", "Medication_Date"])
+abx_med_df["Medication_Date"] = pd.to_datetime(abx_med_df["Medication_Date"])
+
+# Step 3: Determine took_abx = had ABX within [acne_date, acne_date + 1 year)
+abx_with_acne = abx_med_df.merge(acne_dates_df, on="EMPI")
+abx_with_acne["in_window"] = (
+    (abx_with_acne["Medication_Date"] >= abx_with_acne["acne_date"]) &
+    (abx_with_acne["Medication_Date"] < abx_with_acne["acne_date"] + pd.Timedelta(days=365))
+)
+
+took_abx_in_window = set(abx_with_acne[abx_with_acne["in_window"]]["EMPI"].unique())
+took_abx_any_time = set(abx_med_df["EMPI"].unique())
+took_abx_outside_window_only = took_abx_any_time - took_abx_in_window
+
+all_acne_empis = set(acne_dates_df["EMPI"].unique())
+took_abx_empis = np.array(sorted(took_abx_in_window))
+no_abx_empis = np.array(sorted(all_acne_empis - took_abx_in_window))
+
+print(f"Patients with acne diagnosis: {len(all_acne_empis)}")
+print(f"  Took ABX within treatment window (cases): {len(took_abx_empis)}")
+print(f"  Did not take ABX within treatment window (controls): {len(no_abx_empis)}")
+print(f"  Had ABX but only outside treatment window (reclassified as control): {len(took_abx_outside_window_only)} ({len(took_abx_outside_window_only)/len(all_acne_empis)*100:.1f}%)")
 
 # Downsample BEFORE querying dem/phy tables
 if N_LIMIT is not None:
@@ -84,30 +115,11 @@ if N_LIMIT is not None:
     no_abx_empis = no_abx_empis[:n_each]
     print(f"Limited to {n_each} cases and {n_each} controls ({N_LIMIT} pts total)")
 
-# Get index dates for cases (first antibiotic date)
-print("Determining index dates for cases...")
-with db.connect() as conn:
-    abx_list_str = ",".join([f"'{str(x)}'" for x in abx_list])
-    empis_str = ",".join([f"'{str(e).replace(chr(39), chr(39)+chr(39))}'" for e in took_abx_empis])
-    query = text(f"""
-        SELECT EMPI, MIN(Medication_Date) as index_date
-        FROM med
-        WHERE EMPI IN ({empis_str}) AND Code IN ({abx_list_str})
-        GROUP BY EMPI
-    """)
-    result = conn.execute(query)
-    index_dates_df = pd.DataFrame(result.fetchall(), columns=result.keys())
-
-index_dates_df["index_date"] = pd.to_datetime(index_dates_df["index_date"])
-
-# For controls, use the median index date from cases
-median_index_date = index_dates_df["index_date"].median()
-print(f"Median index date for cases: {median_index_date}")
-
-# Create index date mapping for all patients
-index_date_map = index_dates_df.set_index("EMPI")["index_date"].to_dict()
-for empi in no_abx_empis:
-    index_date_map[empi] = median_index_date
+# Index date = acne diagnosis date for all patients
+acne_date_map = acne_dates_df.set_index("EMPI")["acne_date"].to_dict()
+index_date_map = {}
+for empi in list(took_abx_empis) + list(no_abx_empis):
+    index_date_map[empi] = acne_date_map[empi]
 
 # Get demographic info for both cohorts using batched queries
 print("Querying demographic data...")
@@ -237,14 +249,8 @@ dem_df["study_alcohol_status"] = dem_df["EMPI"].map(alcohol_by_empi).fillna("Unk
 # Free up memory
 del phy_df, bmi_df
 
-print(f"Smoking status values: {dem_df['study_smoking_status'].value_counts().to_dict()}")
-print(f"Alcohol status values: {dem_df['study_alcohol_status'].value_counts().to_dict()}")
-print(f"Patients with same status: {(dem_df['study_smoking_status'] == dem_df['study_alcohol_status']).sum()} / {len(dem_df)}")
 
 print(dem_df.head())
-
-print(f"Patients who took ABX: {len(took_abx_empis)}")
-print(f"Patients who did not take ABX: {len(no_abx_empis)}")
 
 # Add index date to dem_df for reference
 dem_df["index_date"] = dem_df["EMPI"].map(index_date_map)
@@ -273,13 +279,15 @@ vis_dates_df["index_date"] = vis_dates_df["EMPI"].map(index_date_map)
 # At least one visit note more than 5 years after index date
 vis_dates_df["has_late_visit"] = vis_dates_df["latest_visit"] > (vis_dates_df["index_date"] + pd.Timedelta(days=5 * 365))
 # At least one visit note more than 6 months before index date
-vis_dates_df["has_early_visit"] = vis_dates_df["earliest_visit"] < (vis_dates_df["index_date"] - pd.Timedelta(days=183))
+# vis_dates_df["has_early_visit"] = vis_dates_df["earliest_visit"] < (vis_dates_df["index_date"] - pd.Timedelta(days=183))
 
-qualifying_empis = set(vis_dates_df[vis_dates_df["has_late_visit"] & vis_dates_df["has_early_visit"]]["EMPI"])
+qualifying_empis = set(vis_dates_df[vis_dates_df["has_late_visit"]]["EMPI"])
 
 pre_filter_count = len(dem_df)
 dem_df = dem_df[dem_df["EMPI"].isin(qualifying_empis)].reset_index(drop=True)
 print(f"Visit coverage filter: {pre_filter_count} -> {len(dem_df)} patients")
+print(f"Patients who took ABX: {(dem_df['took_abx'] == True).sum()}")
+print(f"Patients who did not take ABX: {(dem_df['took_abx'] == False).sum()}")
 
 # Separate cases and controls
 print("\nPreparing for case-control matching...")
@@ -290,198 +298,84 @@ controls_df = dem_df[dem_df["took_abx"] == False].copy()
 cases_df = cases_df.sort_values("EMPI").reset_index(drop=True)
 controls_df = controls_df.reset_index(drop=True)
 
-# Create index for faster lookups
-print("Creating matching index...")
-controls_df["original_idx"] = controls_df.index
-used_control_indices = set()
+# Matching features: 5 categorical + age (±5 years)
+MATCH_CATEGORICAL_FEATURES = ["study_sex", "study_race", "study_bmi_category", "study_smoking_status", "study_alcohol_status"]
+
+def build_key_from_features(row, feature_list):
+    return "_".join(str(row[f]) for f in feature_list)
+
 matches_list = []
-
-# More efficient matching using pre-computed control groups
-# Group controls by characteristics for faster matching
-print("Pre-indexing controls by matching criteria...")
-# Build match key row-by-row to ensure consistent formatting (excluding age - matched separately with ±5 year range)
-def build_match_key(row):
-    return (
-        str(row["study_sex"]).lower() + "_" +
-        str(row["study_race"]) + "_" +
-        str(row["study_bmi_category"]) + "_" +
-        str(row["study_smoking_status"]) + "_" +
-        str(row["study_alcohol_status"])
-    )
-
-controls_df["match_key"] = controls_df.apply(build_match_key, axis=1)
-
-# Group controls by match key for faster lookup
-controls_by_key = {}
-for idx, row in controls_df.iterrows():
-    key = row["match_key"]
-    if key not in controls_by_key:
-        controls_by_key[key] = []
-    controls_by_key[key].append(idx)
-
-# Efficient matching
-print("Matching cases to controls...")
-
-# Diagnostic: Print sample keys
-print("\nDiagnostic - Sample match keys:")
-print(f"Total unique control keys: {len(controls_by_key)}")
-if len(controls_df) > 0:
-    sample_control = controls_df.iloc[0]
-    sample_control_key = sample_control["match_key"]
-    print(f"Sample control key: '{sample_control_key}'")
-    print(f"  sex={sample_control['study_sex']}, race={sample_control['study_race']}, bmi={sample_control['study_bmi_category']}, smoking={sample_control['study_smoking_status']}, alcohol={sample_control['study_alcohol_status']}, age={sample_control['study_age']}")
-if len(cases_df) > 0:
-    sample_case = cases_df.iloc[0]
-    sample_case_key = (
-        str(sample_case["study_sex"]).lower() + "_" +
-        str(sample_case["study_race"]) + "_" +
-        str(sample_case["study_bmi_category"]) + "_" +
-        str(sample_case["study_smoking_status"]) + "_" +
-        str(sample_case["study_alcohol_status"])
-    )
-    print(f"Sample case key: '{sample_case_key}'")
-    print(f"  sex={sample_case['study_sex']}, race={sample_case['study_race']}, bmi={sample_case['study_bmi_category']}, smoking={sample_case['study_smoking_status']}, alcohol={sample_case['study_alcohol_status']}, age={sample_case['study_age']}")
-print()
-
-for case_idx, case_row in tqdm(cases_df.iterrows(), total=len(cases_df), desc="Matching cases"):
-    # Build match key for this case (excluding age - matched separately)
-    case_key = (
-        str(case_row["study_sex"]).lower() + "_" +
-        str(case_row["study_race"]) + "_" +
-        str(case_row["study_bmi_category"]) + "_" +
-        str(case_row["study_smoking_status"]) + "_" +
-        str(case_row["study_alcohol_status"])
-    )
-
-    # Get candidate controls with same key
-    candidate_indices = controls_by_key.get(case_key, [])
-
-    # Find first available control within ±5 year age range
-    for ctrl_idx in candidate_indices:
-        if ctrl_idx in used_control_indices:
-            continue
-
-        control_row = controls_df.iloc[ctrl_idx]
-
-        # Check age match (±5 years)
-        if abs(control_row["study_age"] - case_row["study_age"]) <= 5:
-            matches_list.append((case_row["EMPI"], control_row["EMPI"]))
-            used_control_indices.add(ctrl_idx)
-            break
-
-# Print match statistics
-matched_count = len(matches_list)
+used_control_indices = set()
 total_cases = len(cases_df)
 
-# Diagnostic: Analyze unmatched cases
-print("\nDiagnostic - Analyzing unmatched cases:")
-matched_case_empis = {pair[0] for pair in matches_list}
-unmatched_cases = cases_df[~cases_df["EMPI"].isin(matched_case_empis)]
-if len(unmatched_cases) > 0:
-    print(f"Total unmatched cases: {len(unmatched_cases)}")
+print(f"\nMatching cases to controls (min features: {args.min_match_features}/6)...")
 
-    # Analyze reasons for non-matching
-    no_key_match = 0
-    no_age_match = 0
-    all_used = 0
+for n_required in range(6, args.min_match_features - 1, -1):
+    matched_case_empis_set = {pair[0] for pair in matches_list}
+    unmatched_cases = cases_df[~cases_df["EMPI"].isin(matched_case_empis_set)]
 
-    for idx, case in unmatched_cases.iterrows():
-        case_key = (
-            str(case["study_sex"]).lower() + "_" +
-            str(case["study_race"]) + "_" +
-            str(case["study_bmi_category"]) + "_" +
-            str(case["study_smoking_status"]) + "_" +
-            str(case["study_alcohol_status"])
-        )
-        candidate_indices = controls_by_key.get(case_key, [])
+    if len(unmatched_cases) == 0:
+        print(f"  Round {n_required}/6: all cases already matched, skipping")
+        break
 
-        if len(candidate_indices) == 0:
-            no_key_match += 1
-        else:
-            # Check if any are available within age range
-            found_age_match = False
-            found_unused = False
+    round_matches = 0
+
+    # Generate all feature subsets for this round
+    # Each subset is (list_of_categorical_features, check_age_bool)
+    subsets = []
+    for include_age in [True, False]:
+        n_cat = n_required - (1 if include_age else 0)
+        if n_cat < 0 or n_cat > len(MATCH_CATEGORICAL_FEATURES):
+            continue
+        for cat_subset in combinations(MATCH_CATEGORICAL_FEATURES, n_cat):
+            subsets.append((list(cat_subset), include_age))
+
+    for cat_features, check_age in subsets:
+        # Refresh unmatched cases (may have changed from previous subset)
+        matched_case_empis_set = {pair[0] for pair in matches_list}
+        unmatched_cases = cases_df[~cases_df["EMPI"].isin(matched_case_empis_set)]
+
+        if len(unmatched_cases) == 0:
+            break
+
+        # Build control index for this feature subset (only available controls)
+        controls_by_key = {}
+        for idx, row in controls_df.iterrows():
+            if idx in used_control_indices:
+                continue
+            key = build_key_from_features(row, cat_features)
+            if key not in controls_by_key:
+                controls_by_key[key] = []
+            controls_by_key[key].append(idx)
+
+        for case_idx, case_row in unmatched_cases.iterrows():
+            case_key = build_key_from_features(case_row, cat_features)
+            if case_key not in controls_by_key:
+                continue
+            candidate_indices = controls_by_key[case_key]
+
             for ctrl_idx in candidate_indices:
-                if ctrl_idx not in used_control_indices:
-                    found_unused = True
-                    ctrl = controls_df.iloc[ctrl_idx]
-                    if abs(ctrl["study_age"] - case["study_age"]) <= 5:
-                        found_age_match = True
-                        break
+                if ctrl_idx in used_control_indices:
+                    continue
 
-            if not found_unused:
-                all_used += 1
-            elif not found_age_match:
-                no_age_match += 1
+                if check_age:
+                    if abs(controls_df.iloc[ctrl_idx]["study_age"] - case_row["study_age"]) > 5:
+                        continue
 
-    print(f"\nUnmatched reasons breakdown:")
-    print(f"  No controls with matching key: {no_key_match} ({no_key_match/len(unmatched_cases)*100:.1f}%)")
-    print(f"  No unused controls within ±5 year age range: {no_age_match} ({no_age_match/len(unmatched_cases)*100:.1f}%)")
-    print(f"  All matching controls already used: {all_used} ({all_used/len(unmatched_cases)*100:.1f}%)")
+                matches_list.append((case_row["EMPI"], controls_df.iloc[ctrl_idx]["EMPI"]))
+                used_control_indices.add(ctrl_idx)
+                round_matches += 1
+                break
 
-    # Sample unmatched cases
-    print(f"\nSample unmatched cases (showing up to 20):")
-    for i, (idx, case) in enumerate(unmatched_cases.head(20).iterrows()):
-        case_key = (
-            str(case["study_sex"]).lower() + "_" +
-            str(case["study_race"]) + "_" +
-            str(case["study_bmi_category"]) + "_" +
-            str(case["study_smoking_status"]) + "_" +
-            str(case["study_alcohol_status"])
-        )
-        available_controls = len(controls_by_key.get(case_key, []))
-        available_in_age_range = 0
-        available_unused = 0
-        for ctrl_idx in controls_by_key.get(case_key, []):
-            ctrl = controls_df.iloc[ctrl_idx]
-            if ctrl_idx not in used_control_indices:
-                available_unused += 1
-                if abs(ctrl["study_age"] - case["study_age"]) <= 5:
-                    available_in_age_range += 1
-        print(f"  #{i+1}: key='{case_key}', age={case['study_age']}")
-        print(f"      Total controls w/ key: {available_controls}, Unused: {available_unused}, Unused in age range: {available_in_age_range}")
-print()
+    total_matched = len(matches_list)
+    print(f"  Round {n_required}/6: {round_matches} new matches, {total_matched}/{total_cases} total ({total_matched/total_cases*100:.1f}%)")
+
+matched_count = len(matches_list)
 unmatched_count = total_cases - matched_count
 unmatched_percentage = (unmatched_count / total_cases) * 100 if total_cases > 0 else 0
 
 print(f"\nMatched {matched_count} out of {total_cases} cases ({100 - unmatched_percentage:.2f}%)")
 print(f"Unmatched: {unmatched_count} cases ({unmatched_percentage:.2f}%)")
-
-# Verification test: Prove no possible matches remain for unmatched cases
-print("\n" + "="*80)
-print("VERIFICATION TEST: Checking that no possible matches remain")
-print("="*80)
-unmatched_cases = cases_df[~cases_df["EMPI"].isin(matched_case_empis)]
-impossible_matches_found = 0
-
-for idx, case in unmatched_cases.iterrows():
-    case_key = (
-        str(case["study_sex"]).lower() + "_" +
-        str(case["study_race"]) + "_" +
-        str(case["study_bmi_category"]) + "_" +
-        str(case["study_smoking_status"]) + "_" +
-        str(case["study_alcohol_status"])
-    )
-    candidate_indices = controls_by_key.get(case_key, [])
-
-    # Check if there are any unused controls with this key and within age range
-    for ctrl_idx in candidate_indices:
-        if ctrl_idx not in used_control_indices:
-            ctrl = controls_df.iloc[ctrl_idx]
-            if abs(ctrl["study_age"] - case["study_age"]) <= 5:
-                impossible_matches_found += 1
-                print(f"ERROR: Found unused control for unmatched case!")
-                print(f"  Case EMPI: {case['EMPI']}, Age: {case['study_age']}, Key: {case_key}")
-                print(f"  Control idx: {ctrl_idx}, Age: {ctrl['study_age']}")
-                break
-
-if impossible_matches_found == 0:
-    print(f"✓ VERIFIED: All {len(unmatched_cases)} unmatched cases have NO unused controls with matching characteristics and ±5 year age range")
-    print(f"  This confirms the matching algorithm achieved optimal results.")
-else:
-    print(f"✗ FAILED: Found {impossible_matches_found} unmatched cases with available controls!")
-    print(f"  This indicates a bug in the matching algorithm.")
-print("="*80 + "\n")
 
 # Save EMPIs to JSON format in cohort directory
 print("\nSaving results...")
@@ -494,15 +388,15 @@ matched_control_empis = [pair[1] for pair in matches_list]
 
 # Create JSON structure
 empis_data = {
-    "all_empis": sorted([str(e) for e in set(took_abx_empis.tolist() + no_abx_empis.tolist())]),
-    "case_empis": sorted([str(e) for e in took_abx_empis.tolist()]),
-    "control_empis": sorted([str(e) for e in no_abx_empis.tolist()]),
+    "all_empis": sorted([str(e) for e in dem_df["EMPI"].tolist()]),
+    "case_empis": sorted([str(e) for e in cases_df["EMPI"].tolist()]),
+    "control_empis": sorted([str(e) for e in controls_df["EMPI"].tolist()]),
     "matched_case_empis": sorted([str(e) for e in matched_case_empis]),
     "matched_control_empis": sorted([str(e) for e in matched_control_empis]),
     "matched_pairs": [[str(pair[0]), str(pair[1])] for pair in matches_list],
     "stats": {
         "total_cases": int(total_cases),
-        "total_controls": len(no_abx_empis),
+        "total_controls": len(controls_df),
         "matched_count": matched_count,
         "unmatched_count": unmatched_count,
         "match_percentage": float(100 - unmatched_percentage)
@@ -538,7 +432,7 @@ tmp_dir = Path("tmp")
 tmp_dir.mkdir(exist_ok=True)
 
 # Get matched patients only
-matched_empis = set(matched_case_empis + matched_control_empis)
+matched_empis = list(set(matched_case_empis)) + list(set(matched_control_empis)) 
 matched_dem_df = dem_df[dem_df["EMPI"].isin(matched_empis)]
 
 # Variables to plot

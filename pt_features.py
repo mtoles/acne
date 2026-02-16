@@ -44,6 +44,8 @@ CANCER_STAGE_SYNTHETIC_KEYWORDS = ["in situ", "non-invasive", "non invasive", "s
 CANCER_STAGE_2_PART_KEYWORDS = ["stage", "in situ", "non invasive", "non-invasive", "localized", "local", "confined to ", "regional", "advanced", "metastatic", "metastasis", "mets", "distant", "disseminated", "nodal involvement", "node involvement", "node", "nodes", "nodal", "staging", "unstaged",  "TNM", "T0", "T1", "T2", "T3", "T4", "N0", "N1", "N2", "N3", "M0", "M1"] # dropped "stage x"
 # fmt: on
 
+ABX_SUBSTRINGS = ["tetracy", "tetra", "cycline", "doxy", "mino", "minocycl", "adoxa", "brodspec", "cleeravue", "declomycin", "doryx", "dynacin", "minocin", "nuzyra", "sumycin", "vibramycin", "trimethoprim sulfamethoxazole", "tmp", "smx", "bactrim", "septra", "smz", "sulfameth", "trimeth", "co-trim", "sxt", "amoxicillin", "amoxicot", "amoxil", "amox", "dispermox", "moxatag", "moxilin", "trimox", "cephalex", "keflex", "bio-cef", "panixine", "azith", "zithro", "z-pak", "zpak", "z pak", "zmax", "z-max", "z max"]
+
 CONFOUNDING_DISEASE_CODES = {}
 with open("labeled_data/confounding_disease_codes.jsonl") as _f:
     for _line in _f:
@@ -63,8 +65,8 @@ KEYWORD_ADDITIONAL_INFO = defaultdict(
     },
 )
 
-med_list_df = pd.read_csv("stores/abx_med_code_list.csv")
-ABX_CODES = med_list_df[med_list_df["a"] == 1]["MedicationID"].unique().tolist()
+med_list_df = pd.read_csv("labeled_data/abx_med_code_list_v2.csv")
+ABX_CODES = [str(x) for x in med_list_df[med_list_df["include_consensus"] == True]["MedicationID"].unique()]
 
 # used for questions about meidcations
 ENTRY_FORMAT_STR = """Entries in this medical record typically adhere to the following format, though the header may be missing:

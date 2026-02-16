@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=0,1 exec -a "kill me if you need gpu" vllm serve Qwen/Qwen2.5-72B-Instruct-AWQ --pipeline-parallel-size 2 --gpu-memory-utilization 0.9 --max_model_len 9000
+CUDA_VISIBLE_DEVICES=0,1,2,3 vllm serve Qwen/Qwen2.5-72B-Instruct-AWQ --pipeline-parallel-size 2 --tensor-parallel 2 --gpu-memory-utilization 0.9 --max_model_len 9000
 
 # #!/bin/bash
 

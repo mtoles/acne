@@ -498,6 +498,12 @@ def process_pt(pt_id):
     Return None if the patient can't be processed (e.g. no acne diagnosis)
     dates are in mm/dd/yyyy format
     """
+    # Skip if already processed
+    jsonl_path = _records_dir / f"{pt_id}.jsonl"
+    if jsonl_path.exists():
+        print(f"Skipping {pt_id} (already has {jsonl_path})")
+        return None
+
     ### Step 1: Determine index date and calculate time windows ###
     with db.connect() as conn:
         query = text(
@@ -517,8 +523,8 @@ def process_pt(pt_id):
     # Set current patient ID for tracking (only after confirming they have acne diagnosis)
     _thread_local.current_patient_id = pt_id
 
-    print(f"Index date: {index_date}")
-    print(f"Outcome window starts: {outcome_window_start_date}")
+    # print(f"Index date: {index_date}")
+    # print(f"Outcome window starts: {outcome_window_start_date}")
 
     ### Step 2: Get all records for patient ###
     with db.connect() as conn:
@@ -649,7 +655,7 @@ def process_pt(pt_id):
                 for row in follow_up_rows:
                     row["feature_name"] = "smoking_amount"
                 rows.extend(follow_up_rows)
-    print(f"Completed smoking status for {pt_id}")
+    # print(f"Completed smoking status for {pt_id}")
 
     # Alcohol status: process each 3-month block
     # Try structured first, fall back to LLM if no structured data
@@ -699,7 +705,7 @@ def process_pt(pt_id):
                 for row in follow_up_rows:
                     row["feature_name"] = "alcohol_amount"
                 rows.extend(follow_up_rows)
-    print(f"Completed alcohol status for {pt_id}")
+    # print(f"Completed alcohol status for {pt_id}")
 
     # Transplant: earliest records to outcome window start
     # Use LLM if no structured: no
@@ -736,13 +742,16 @@ def process_pt(pt_id):
             }
         )
 
-    print(f"Completed transplant for {pt_id}")
+    # print(f"Completed transplant for {pt_id}")
 
     ### Diseases ###
     # filter in only records in CONFOUNDING_DISEASE_CODES
-    confounding_disease_records = filter_records_by_date_range(
+    pre_outcome_dia_for_diseases = filter_records_by_date_range(
         dia_records, end_date=outcome_window_start_date
-    )[dia_records["Code"].isin(CONFOUNDING_DISEASE_CODES.keys())]
+    )
+    confounding_disease_records = pre_outcome_dia_for_diseases[
+        pre_outcome_dia_for_diseases["Code"].isin(CONFOUNDING_DISEASE_CODES.keys())
+    ]
     for _, record in confounding_disease_records.iterrows():
         if record["Code_Type"] == "ICD9":
             icd_dict = CONFOUNDING_DISEASE_ICD9_CODES
@@ -835,7 +844,7 @@ def process_pt(pt_id):
             for row in max_stage_rows:
                 row["feature_name"] = "cancer_maximum_stage"
             rows.extend(max_stage_rows)
-    print(f"Completed cancer cancer for {pt_id}")
+    # print(f"Completed cancer cancer for {pt_id}")
 
     # Cancer family any: process each 6-month block (LLM only)
     def cancer_family_filter(chunk):
@@ -848,7 +857,7 @@ def process_pt(pt_id):
             block_records, cancer_family_any, chunk_filter_fn=cancer_family_filter
         )
         rows.extend(block_rows)
-    print(f"Completed cancer family any for {pt_id}")
+    # print(f"Completed cancer family any for {pt_id}")
 
     # === Features using treatment window (index_date to outcome_window_start_date) ===
 
@@ -941,18 +950,18 @@ print(f"Loading matched case EMPIs from {cohort_json_path}")
 with open(cohort_json_path, "r") as f:
     cohort_data = json.load(f)
 
-# Use only matched cases
-pt_ids = cohort_data["matched_case_empis"]
+# Load matched case and control EMPIs, cases first
+matched_case_empis = cohort_data["matched_case_empis"]
+matched_control_empis = cohort_data["matched_control_empis"]
+pt_ids = matched_case_empis + matched_control_empis
 
 # Apply limit if specified
 if args.limit is not None:
     pt_ids = pt_ids[: args.limit]
 
-
 pt_ids = args.target_empis + pt_ids
 
-
-print(f"Processing {len(pt_ids)} matched case patients")
+print(f"Processing {len(matched_case_empis)} matched cases + {len(matched_control_empis)} matched controls = {len(pt_ids)} patients")
 
 # Create output directory with timestamp
 timestamp_str = start_time.strftime("%Y%m%d_%H%M%S")
