@@ -50,7 +50,7 @@ db = create_engine(db_url)
 print("Loading antibiotic medication list...")
 med_list_df = pd.read_csv("labeled_data/abx_med_code_list_v2.csv")
 # med_list = med_list_df[med_list_df["a"] == 1]["MedicationID"]
-med_list = med_list_df[med_list_df["include_consensus"] == True][["Medication", "Code_Type", "Code"]]
+med_list = med_list_df[med_list_df["include_final"] == True][["Medication", "Code_Type", "Code"]]
 abx_pairs = med_list[["Code_Type", "Code"]].drop_duplicates()
 abx_filter_sql = " OR ".join(
     f"(Code_Type = '{row['Code_Type']}' AND Code = '{row['Code']}')"
@@ -88,11 +88,11 @@ with db.connect() as conn:
 abx_med_df = pd.concat(abx_med_batches, ignore_index=True) if abx_med_batches else pd.DataFrame(columns=["EMPI", "Medication_Date"])
 abx_med_df["Medication_Date"] = pd.to_datetime(abx_med_df["Medication_Date"])
 
-# Step 3: Determine took_abx = had ABX within [acne_date, acne_date + 1 year)
+# Step 3: Determine took_abx = had ABX within [acne_date, acne_date + 2 years)
 abx_with_acne = abx_med_df.merge(acne_dates_df, on="EMPI")
 abx_with_acne["in_window"] = (
     (abx_with_acne["Medication_Date"] >= abx_with_acne["acne_date"]) &
-    (abx_with_acne["Medication_Date"] < abx_with_acne["acne_date"] + pd.Timedelta(days=365))
+    (abx_with_acne["Medication_Date"] < abx_with_acne["acne_date"] + pd.Timedelta(days= 365 * 2))
 )
 
 took_abx_in_window = set(abx_with_acne[abx_with_acne["in_window"]]["EMPI"].unique())

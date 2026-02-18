@@ -891,7 +891,11 @@ def process_pt(pt_id):
         jsonl_path = _records_dir / f"{pt_id}.jsonl"
         with open(jsonl_path, "w") as f:
             for row in rows:
-                json.dump(row, f, default=_json_default)
+                out_row = dict(row)
+                out_row["prediction"] = prediction_to_description(
+                    out_row["feature_name"], out_row["prediction"]
+                )
+                json.dump(out_row, f, default=_json_default)
                 f.write("\n")
 
     # Build lightweight stats

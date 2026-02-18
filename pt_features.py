@@ -66,7 +66,7 @@ KEYWORD_ADDITIONAL_INFO = defaultdict(
 )
 
 med_list_df = pd.read_csv("labeled_data/abx_med_code_list_v2.csv")
-ABX_CODES = [str(x) for x in med_list_df[med_list_df["include_consensus"] == True]["MedicationID"].unique()]
+ABX_CODES = [str(x) for x in med_list_df[med_list_df["include_final"] == 1]["Code"].unique()]
 
 # used for questions about meidcations
 ENTRY_FORMAT_STR = """Entries in this medical record typically adhere to the following format, though the header may be missing:
@@ -201,6 +201,43 @@ def find_best_prompt_from_prompt_iteration_labels(class_name: str, **kwargs) -> 
             pass
 
     return str(best_prompt)
+
+
+def _build_option_descriptions():
+    """Build a dict mapping class_name -> {letter: description} from the Excel Response Options column."""
+    excel_path = "labeled_data/LLM Adjustment Tracking.xlsx"
+    df = pd.read_excel(excel_path, sheet_name="Prompt Tuning")
+    result = {}
+    for _, row in df.drop_duplicates("Data Point").iterrows():
+        class_name = row["Data Point"]
+        response_options = row["Response Options"]
+        if pd.isna(response_options):
+            continue
+        descriptions = {}
+        # Parse "A. Yes, B. No" or "A. Stage 0, B. Stage I, ..." format
+        # Split on ", " followed by a letter and period (to avoid splitting within descriptions)
+        parts = re.split(r",\s+(?=[A-Z]\.)", str(response_options))
+        for part in parts:
+            part = part.strip()
+            if len(part) >= 3 and part[0].isalpha() and part[1] == '.' and part[2] == ' ':
+                descriptions[part[0]] = part[3:]
+        if descriptions:
+            result[class_name] = descriptions
+    return result
+
+
+OPTION_DESCRIPTIONS = _build_option_descriptions()
+# "disease" is a special structured-only feature not in the Excel
+OPTION_DESCRIPTIONS["disease"] = {"A": "Yes", "B": "No"}
+
+
+def prediction_to_description(class_name, prediction):
+    """Convert a letter prediction to its description using the Excel Response Options.
+    Returns the original prediction if no mapping is found (e.g. for date features).
+    """
+    if class_name in OPTION_DESCRIPTIONS and prediction in OPTION_DESCRIPTIONS[class_name]:
+        return OPTION_DESCRIPTIONS[class_name][prediction]
+    return prediction
 
 
 ### Patient Features ###
@@ -702,7 +739,7 @@ class military(PtFeatureBase):
 
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for military service status."""
+        raise NotImplementedError("military.query not implemented - use find_best_prompt_from_prompt_iteration_labels")
 
     keywords = [
         "military",
@@ -719,7 +756,7 @@ class military(PtFeatureBase):
 class military_years(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for military years of service."""
+        raise NotImplementedError("military_years.query not implemented - use find_best_prompt_from_prompt_iteration_labels")
 
     keywords = military.keywords
     # val_var = True
@@ -728,7 +765,7 @@ class military_years(PtFeatureBase):
 class military_retirement_date(PtDateFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for military retirement date."""
+        raise NotImplementedError("military_retirement_date.query not implemented - use find_best_prompt_from_prompt_iteration_labels")
 
     keywords = military.keywords
     pooling_fn = PtDateFeatureBase.pooling_fn_latest
@@ -737,7 +774,7 @@ class military_retirement_date(PtDateFeatureBase):
 class military_agent_orange(PtFeatureBase):
     @classmethod
     def query(cls, **kwargs):
-        """Return the query for Agent Orange exposure."""
+        raise NotImplementedError("military_agent_orange.query not implemented - use find_best_prompt_from_prompt_iteration_labels")
 
     options = ["A", "B"]
     keywords = ["agent orange"]
