@@ -10,9 +10,9 @@ from datetime import datetime
 import argparse
 import json
 
-from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase
+from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase, PtNumericFeatureBase
 from models import MrModel, DummyModel
-from utils import get_dataset
+from utils import get_dataset, compute_numeric_pct_error
 import re
 
 tqdm.pandas()  # Enable tqdm for pandas operations
@@ -36,8 +36,8 @@ def parse_args():
     parser.add_argument(
         "--inference_type",
         choices=["logit", "cot"],
-        default="logit",
-        help="Type of inference to use: logit (default) or cot (chain of thought)",
+        default="cot",
+        help="Type of inference to use: logit or cot (chain of thought, default)",
     )
     parser.add_argument(
         "--downsample",
@@ -201,9 +201,9 @@ def generate_error_analysis_md(feature_name, target_cls, chunk_df, ground_truth,
     print(f"Generated error analysis: {md_file_path}")
 
 
-def process_file(file_path, inference_type, downsample=None, data_source=None, prompts_by_feature=None):
-    print(f"\nProcessing {file_path}")
-    feature_name = file_path.stem.replace("_chunks", "")
+def process_file(file_path, inference_type, downsample=None, data_source=None, prompts_by_feature=None, feature_name_override=None):
+    feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
+    print(f"\nProcessing {feature_name}")
 
     # Create feature directory structure: preds/model_id/timestamp/feature_name
     preds_dir = Path("preds")
@@ -214,13 +214,23 @@ def process_file(file_path, inference_type, downsample=None, data_source=None, p
     feature_dir = timestamp_dir / feature_name
     feature_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build feature metadata from the class attributes
+    target_cls = PtFeaturesMeta.registry[feature_name]
+    feature_metadata = {}
+    if getattr(target_cls, "data_source_feature", None) or getattr(target_cls, "gt_column", "val_unified") != "val_unified":
+        feature_metadata[feature_name] = {
+            "data_source_feature": getattr(target_cls, "data_source_feature", None) or feature_name,
+            "gt_column": getattr(target_cls, "gt_column", "val_unified"),
+        }
+
     # Use get_dataset to load and split the data
     datasets = get_dataset(
         data_source=data_source or "mgb",
         feature_names=[feature_name],
         train_split=0.5,  # 50% for eval, 50% for train
         downsample=downsample,
-        random_state=42
+        random_state=42,
+        feature_metadata=feature_metadata,
     )
     
     if feature_name not in datasets:
@@ -242,9 +252,8 @@ def process_file(file_path, inference_type, downsample=None, data_source=None, p
     print(f"Train set: {len(train_df)} examples ({train_natural_count} natural, {train_synthetic_count} synthetic)")
     print(f"Eval set: {len(eval_df)} examples ({eval_natural_count} natural, {eval_synthetic_count} synthetic)")
 
-    target_cls = PtFeaturesMeta.registry[feature_name]
-
     # Get prompts for this feature (organized by tuner)
+    # Always use the feature's own name for prompt lookup (each feature has its own row in the spreadsheet)
     feature_prompts_by_tuner = prompts_by_feature[feature_name]
 
     # Store accuracy over time for this feature, organized by tuner and split
@@ -286,7 +295,7 @@ def process_file(file_path, inference_type, downsample=None, data_source=None, p
                     chunk_args.append((i, chunk, found_kw, target_cls, inference_type, formatted_prompt))
 
                 # Process chunks concurrently with progress bar
-                with ThreadPoolExecutor(max_workers=100) as executor:
+                with ThreadPoolExecutor(max_workers=8) as executor:
                     # Submit all tasks
                     future_to_index = {
                         executor.submit(process_single_chunk, args): args[0] for args in chunk_args
@@ -307,45 +316,79 @@ def process_file(file_path, inference_type, downsample=None, data_source=None, p
 
                 # Calculate validation metrics
                 ground_truth = chunk_df["val_unified"]
-                
+
                 # The prediction column is the feature class name (same as feature_name)
                 pred_column = feature_name
+
+                is_numeric_feature = issubclass(target_cls, PtNumericFeatureBase)
+
+                # For numeric features, normalize both predictions and ground truth to strings
+                # (val_unified may contain ints/floats from Excel, predictions are strings)
+                if is_numeric_feature:
+                    def normalize_numeric(val):
+                        val_str = str(val).strip()
+                        if val_str.upper() == "F":
+                            return "F"
+                        try:
+                            return str(int(float(val_str)))
+                        except (ValueError, TypeError):
+                            return val_str
+                    chunk_df[pred_column] = chunk_df[pred_column].apply(normalize_numeric)
+                    chunk_df["val_unified"] = chunk_df["val_unified"].apply(normalize_numeric)
+                    ground_truth = chunk_df["val_unified"]
 
                 # Separate natural and synthetic data
                 natural_df = chunk_df[chunk_df["is_synthetic"] == False]
                 synthetic_df = chunk_df[chunk_df["is_synthetic"] == True]
-                
+
                 # Calculate accuracy for combined, natural, and synthetic
                 predictions = chunk_df[pred_column]
                 natural_predictions = natural_df[pred_column] if len(natural_df) > 0 else pd.Series(dtype=object)
                 synthetic_predictions = synthetic_df[pred_column] if len(synthetic_df) > 0 else pd.Series(dtype=object)
                 natural_ground_truth = natural_df["val_unified"] if len(natural_df) > 0 else pd.Series(dtype=object)
                 synthetic_ground_truth = synthetic_df["val_unified"] if len(synthetic_df) > 0 else pd.Series(dtype=object)
-                
+
                 # Combined stats
                 correct_combined = (predictions == ground_truth).sum()
                 total_combined = len(predictions)
                 accuracy_combined = correct_combined / total_combined if total_combined > 0 else 0
-                
+
                 # Natural stats
                 correct_natural = (natural_predictions == natural_ground_truth).sum() if len(natural_df) > 0 else 0
                 total_natural = len(natural_df)
                 accuracy_natural = correct_natural / total_natural if total_natural > 0 else 0
-                
+
                 # Synthetic stats
                 correct_synthetic = (synthetic_predictions == synthetic_ground_truth).sum() if len(synthetic_df) > 0 else 0
                 total_synthetic = len(synthetic_df)
                 accuracy_synthetic = correct_synthetic / total_synthetic if total_synthetic > 0 else 0
 
                 # Store accuracy for this prompt version
-                accuracy_over_time.append({
+                acc_entry = {
                     "prompt_number": prompt_num,
                     "combined": accuracy_combined,
                     "natural": accuracy_natural,
                     "synthetic": accuracy_synthetic
-                })
+                }
+
+                # For numeric features, compute average percent error
+                if is_numeric_feature:
+                    pct_errors = [compute_numeric_pct_error(p, g) for p, g in zip(predictions, ground_truth)]
+                    avg_pct_error = sum(pct_errors) / len(pct_errors) if pct_errors else 0.0
+                    acc_entry["avg_pct_error"] = avg_pct_error
+
+                # Collect errors for the last prompt on eval set (for summary display)
+                error_mask = predictions != ground_truth
+                acc_entry["errors"] = [
+                    {"pred": str(predictions.iloc[i]), "gt": str(ground_truth.iloc[i]), "chunk": str(chunk_df["chunk"].iloc[i])[:200]}
+                    for i in range(len(predictions)) if error_mask.iloc[i]
+                ]
+
+                accuracy_over_time.append(acc_entry)
 
                 print(f"Prompt #{prompt_num} ({tuner_name}, {split_name}) - Combined accuracy: {accuracy_combined:.3f} ({correct_combined}/{total_combined})")
+                if is_numeric_feature:
+                    print(f"Prompt #{prompt_num} ({tuner_name}, {split_name}) - Avg percent error: {avg_pct_error:.1f}%")
                 if total_natural > 0:
                     print(f"Prompt #{prompt_num} ({tuner_name}, {split_name}) - Natural accuracy: {accuracy_natural:.3f} ({correct_natural}/{total_natural})")
                 if total_synthetic > 0:
@@ -407,34 +450,42 @@ def main():
             excel_files.extend(chunk_files)
 
     excel_files = sorted(excel_files)
-    
-    # Filter features if specified
+
+    # Build list of (feature_name, file_path) pairs to process
+    # This handles both file-based features and features that map to another feature's file
+    features_to_process = []
+
     if target_features is not None:
-        # Convert target_features to a set for faster lookup
         target_features_set = set(target_features)
-        # Filter excel_files to only include specified features
-        filtered_files = []
+        # Map file feature names to file paths
+        file_feature_to_path = {}
+        for file_path in excel_files:
+            file_feature_to_path[file_path.stem.replace("_chunks", "")] = file_path
+
+        for feat_name in target_features:
+            target_cls = PtFeaturesMeta.registry[feat_name]
+            source_feature = getattr(target_cls, "data_source_feature", None) or feat_name
+            if source_feature in file_feature_to_path:
+                features_to_process.append((feat_name, file_feature_to_path[source_feature]))
+            else:
+                print(f"Skipping {feat_name} (no data file found for source feature {source_feature})")
+
+        print(f"Filtered to {len(features_to_process)} features: {[f[0] for f in features_to_process]}")
+    else:
         for file_path in excel_files:
             feature_name = file_path.stem.replace("_chunks", "")
-            if feature_name in target_features_set:
-                filtered_files.append(file_path)
-            else:
-                print(f"Skipping {feature_name} (not in target features list)")
-        
-        excel_files = filtered_files
-        print(f"Filtered to {len(excel_files)} features: {[f.stem.replace('_chunks', '') for f in excel_files]}")
+            features_to_process.append((feature_name, file_path))
 
     all_results = {}
     accuracy_tracking = {}  # Track accuracy over time per feature
 
-    for file_path in excel_files:
-        feature_name = file_path.stem.replace("_chunks", "")
+    for feature_name, file_path in features_to_process:
         print(f"\n{'='*80}")
-        print(f"Processing {file_path.name}...")
+        print(f"Processing {feature_name}...")
         print(f"{'='*80}")
-        if "cancer_date_frequency" in file_path.name:
+        if "cancer_date_frequency" in feature_name:
             continue
-        results = process_file(file_path, inference_type, downsample, data_source=args.data_source, prompts_by_feature=prompts_by_feature)
+        results = process_file(file_path, inference_type, downsample, data_source=args.data_source, prompts_by_feature=prompts_by_feature, feature_name_override=feature_name)
         if results:
             all_results[feature_name] = results
             # Store accuracy over time for JSONL output
@@ -494,9 +545,26 @@ def main():
                         synthetic_acc = acc_info["synthetic"]
                         
                         acc_line = f"    Prompt #{prompt_num}: Combined={combined_acc:.3f}, Natural={natural_acc:.3f}, Synthetic={synthetic_acc:.3f}"
+                        if "avg_pct_error" in acc_info:
+                            acc_line += f", AvgPctError={acc_info['avg_pct_error']:.1f}%"
                         print(acc_line)
                         f.write(f"\n{acc_line}")
-            
+
+                    # Show first 5 errors from the last prompt version on eval set
+                    if split_name == "eval":
+                        # Use the last tuner's last prompt errors
+                        last_tuner = sorted(results["accuracy_over_time_by_split_and_tuner"][split_name].keys())[-1]
+                        last_prompt_info = results["accuracy_over_time_by_split_and_tuner"][split_name][last_tuner][-1]
+                        errors = last_prompt_info.get("errors", [])
+                        if errors:
+                            error_header = f"\n  First {min(5, len(errors))} eval errors (latest prompt, {last_tuner}):"
+                            print(error_header)
+                            f.write(f"\n{error_header}")
+                            for err in errors[:5]:
+                                err_line = f"    pred={err['pred']}, gt={err['gt']}, chunk={err['chunk']}"
+                                print(err_line)
+                                f.write(f"\n{err_line}")
+
             f.write("\n")
             print()
 

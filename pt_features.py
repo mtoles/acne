@@ -248,7 +248,7 @@ class PtFeaturesMeta(type):
 
     def __new__(mcs, name, bases, attrs):
         cls = super().__new__(mcs, name, bases, attrs)
-        if name not in ["PtFeatureBase", "LlmFeatureBase"]:
+        if name not in ["PtFeatureBase", "LlmFeatureBase", "PtDateFeatureBase", "PtNumericFeatureBase"]:
             PtFeaturesMeta.registry[name] = cls
         return cls
 
@@ -256,6 +256,8 @@ class PtFeaturesMeta(type):
 class PtFeatureBase(metaclass=PtFeaturesMeta):
     val_var = False  # whether the variable is checked in the validation study
     max_tokens = 1  # default max tokens for model prediction
+    gt_column = "val_unified"  # ground truth column name in the chunks xlsx
+    data_source_feature = None  # if set, load data from this feature's file instead of own name
 
     @classmethod
     def forward(cls, chunk: str, keyword: str, model, inference_type="logit", **kwargs):
@@ -282,7 +284,7 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
         else:
             query = cls.query(chunk=chunk, keyword=keyword, **kwargs)
 
-        if "custom_options" in kwargs and not isinstance(cls, PtDateFeatureBase):
+        if "custom_options" in kwargs and isinstance(cls.options, list):
             options = kwargs["custom_options"]
         else:
             options = cls.options
@@ -291,11 +293,18 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
         history = model.format_chunk_qs(q=query, chunk=chunk, options=options)
 
         if inference_type == "cot":
-            # Use chain of thought for multiple choice questions
+            # Use chain of thought (for any feature type)
             pred = model.predict_with_cot(
                 history,
                 options=options,
                 max_answer_tokens=cls.max_tokens,
+            )
+        elif isinstance(options, OptionType):
+            # Date/numeric types: use direct generation (logit trick not applicable)
+            pred = model.predict_single(
+                history,
+                max_tokens=cls.max_tokens,
+                options=options,
             )
         else:
             # Use logit trick for multiple choice questions (default)
@@ -323,6 +332,21 @@ class PtDateFeatureBase(PtFeatureBase):
 
     options = OptionType.DATE
     max_tokens = 8
+
+
+class PtNumericFeatureBase(PtFeatureBase):
+    options = OptionType.NUMERIC
+    max_tokens = 5  # enough for numbers up to 99999 or "F"
+
+    def pooling_fn(preds: list):
+        # Return the highest numeric value; ignore "F"
+        numeric_preds = []
+        for p in preds:
+            if p != "F":
+                numeric_preds.append(int(p))
+        if numeric_preds:
+            return str(max(numeric_preds))
+        return "F"
 
 
 class bmi(PtFeatureBase):
@@ -2021,17 +2045,13 @@ class antibiotic_duration(PtFeatureBase):
         )
 
     keywords = antibiotics.keywords
-    val_var = True
+    val_var = False
     options = ["A", "B", "C", "D", "E", "F"]
     inconclusive_values = {
         "A",
         "F",
     }  # "No indication" and "Taken but dates unknown" are inconclusive
     short_circuit_per_keyword = True
-
-    # def compute(dfs: dict):
-    #     df = dfs["Med"]
-    #     df = df[df["Code"].astype(float).isin(abx_codes)]
 
     @classmethod
     def custom_forward(
@@ -2072,7 +2092,6 @@ class antibiotic_duration(PtFeatureBase):
                 return model.predict_single_with_logit_trick(
                     count_doses_history, output_choices=["A", "B", "C", "D", "E", "F"]
                 )
-            # return retry_with_validation(model, count_doses_history, _count_validation)
 
         def _ask_based_on_pill_count():
             """Ask how many days the patient was on the antibiotic based on the number of pills prescribed, number of refills, and the frequency of the dose."""
@@ -2137,6 +2156,22 @@ class antibiotic_duration(PtFeatureBase):
         if "F" in preds:
             return "F"
         return "G"
+
+
+class antibiotic_duration_numeric(PtNumericFeatureBase):
+    @classmethod
+    def query(cls, **kwargs):
+        """Return the query for numeric antibiotic duration."""
+        return find_best_prompt_from_prompt_iteration_labels(
+            "antibiotic_duration_numeric", **kwargs
+        )
+
+    keywords = antibiotics.keywords
+    val_var = True
+    gt_column = "val_unified_numeric"
+    data_source_feature = "antibiotic_duration"
+    inconclusive_values = {"F"}
+    short_circuit_per_keyword = True
 
 
 class antibiotic_tetracyclines(PtFeatureBase):

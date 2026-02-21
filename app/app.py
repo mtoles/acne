@@ -11,9 +11,21 @@ import yaml
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from pt_features import PtFeaturesMeta
+from pt_features import PtFeaturesMeta, PtNumericFeatureBase
 from models import MrModel
-from utils import OptionType, get_dataset
+from utils import OptionType, get_dataset, compute_numeric_pct_error
+
+
+def build_feature_metadata(feature_name):
+    """Build feature_metadata dict for get_dataset from class attributes."""
+    target_cls = PtFeaturesMeta.registry[feature_name]
+    feature_metadata = {}
+    if getattr(target_cls, "data_source_feature", None) or getattr(target_cls, "gt_column", "val_unified") != "val_unified":
+        feature_metadata[feature_name] = {
+            "data_source_feature": getattr(target_cls, "data_source_feature", None) or feature_name,
+            "gt_column": getattr(target_cls, "gt_column", "val_unified"),
+        }
+    return feature_metadata
 
 app = Flask(__name__)
 
@@ -101,16 +113,17 @@ def get_dataset_size():
             data_source="mgb",
             feature_names=[feature_name],
             train_split=0.5,
-            random_state=42
+            random_state=42,
+            feature_metadata=build_feature_metadata(feature_name),
         )
-        
+
         if feature_name not in datasets:
             return jsonify({'error': f'Labeled data not found for {feature_name}'}), 404
-        
+
         # Get the train dataset and filter out DROP values
         train_df = datasets[feature_name]["train"].copy()
         train_df = train_df[train_df["val_unified"] != "DROP"]
-        
+
         return jsonify({'size': len(train_df)})
         
     except Exception as e:
@@ -155,12 +168,13 @@ def run_query():
             data_source="mgb",
             feature_names=[feature_name],
             train_split=0.5,
-            random_state=42
+            random_state=42,
+            feature_metadata=build_feature_metadata(feature_name),
         )
-        
+
         if feature_name not in datasets:
             return jsonify({'error': f'Labeled data not found for {feature_name}'}), 404
-        
+
         # Get the combined dataset (includes both natural and synthetic)
         annot_df = datasets[feature_name]["train"].copy()
         
@@ -236,11 +250,23 @@ def run_query():
         ground_truth = chunk_df["val_unified"]
         preds = chunk_df[pred_col]
         
+        # Normalize numeric predictions/gt for comparison
+        is_numeric_feature = issubclass(target_cls, PtNumericFeatureBase)
+        if is_numeric_feature:
+            preds = preds.apply(lambda x: str(int(float(x))) if str(x).strip().replace('.','',1).isdigit() else str(x).strip())
+            ground_truth = ground_truth.apply(lambda x: str(int(float(x))) if str(x).strip().replace('.','',1).isdigit() else str(x).strip())
+
         # Calculate metrics
         correct_mask = preds == ground_truth
         correct = correct_mask.sum()
         total = len(preds)
         accuracy = correct / total if total > 0 else 0
+
+        # Calculate avg percent error for numeric features
+        avg_pct_error = None
+        if is_numeric_feature and total > 0:
+            pct_errors = [compute_numeric_pct_error(p, g) for p, g in zip(preds, ground_truth)]
+            avg_pct_error = sum(pct_errors) / len(pct_errors)
         
         # Prepare results
         correct_results = []
@@ -273,14 +299,18 @@ def run_query():
         else:
             serialized_options = []
         
+        summary = {
+            'accuracy': f"{accuracy * 100:.2f}%",
+            'correct': int(correct),
+            'total': int(total),
+            'query': custom_query if custom_query else (target_cls.query(keyword="sample") if hasattr(target_cls, 'query') else ''),
+            'options': serialized_options
+        }
+        if avg_pct_error is not None:
+            summary['avg_pct_error'] = f"{avg_pct_error:.1f}%"
+
         return jsonify({
-            'summary': {
-                'accuracy': f"{accuracy * 100:.2f}%",
-                'correct': int(correct),
-                'total': int(total),
-                'query': custom_query if custom_query else (target_cls.query(keyword="sample") if hasattr(target_cls, 'query') else ''),
-                'options': serialized_options
-            },
+            'summary': summary,
             'correct': correct_results,
             'incorrect': incorrect_results
         })

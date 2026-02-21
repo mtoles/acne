@@ -115,18 +115,24 @@ def call_llm(feature_cls: PtFeatureBase, chunk: str, keyword: str = None) -> str
     global _total_llm_calls
 
     if DUMMY_LLM:
-        if not issubclass(feature_cls, PtDateFeatureBase):
-            # Sample according to prevalence distribution
-            distribution = get_prevalence_distribution(feature_cls)
-            options = list(distribution.keys())
-            weights = list(distribution.values())
-            pred = random.choices(options, weights=weights, k=1)[0]
-        else:
+        if issubclass(feature_cls, PtNumericFeatureBase):
+            # Return random days (0-180) or "F"
+            if random.random() < 0.15:
+                pred = "F"
+            else:
+                pred = str(random.randint(0, 180))
+        elif issubclass(feature_cls, PtDateFeatureBase):
             # return a date between 2000-01-01 and 2025-12-31
             year = random.randint(2000, 2025)
             month = random.randint(1, 12)
             day = random.randint(1, 28)
             pred = f"{year}{month:02d}{day:02d}"
+        else:
+            # Sample according to prevalence distribution
+            distribution = get_prevalence_distribution(feature_cls)
+            options = list(distribution.keys())
+            weights = list(distribution.values())
+            pred = random.choices(options, weights=weights, k=1)[0]
     else:
         if keyword is not None:
             query = feature_cls.query(chunk=chunk, keyword=keyword)
@@ -885,6 +891,15 @@ def process_pt(pt_id):
     )
 
     rows.extend(duration_rows)
+
+    duration_numeric_rows = process_single_block_llm(
+        treatment_window_dia_records,
+        antibiotic_duration_numeric,
+        make_keyword_filter(antibiotic_duration_numeric.keywords),
+        short_circuit=False,
+    )
+
+    rows.extend(duration_numeric_rows)
 
     # Save per-patient JSONL
     if rows:

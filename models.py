@@ -115,9 +115,15 @@ class MrModel:
             )
             response_text = response.choices[0].message.content
             if options == OptionType.DATE:
-                date = self.find_date(response_text) 
+                date = self.find_date(response_text)
                 if date:
                     return date
+                else:
+                    pass
+            elif options == OptionType.NUMERIC:
+                numeric = self.find_numeric(response_text)
+                if numeric is not None:
+                    return numeric
                 else:
                     pass
             elif isinstance(options, list): # choices
@@ -142,6 +148,17 @@ class MrModel:
         else:
             return None
 
+    def find_numeric(self, text: str):
+        """Extract an integer or 'F' from response text."""
+        text = text.strip()
+        if text.upper() == "F":
+            return "F"
+        # Look for an integer in the response
+        match = re.search(r'\d+', text)
+        if match:
+            return match.group(0)
+        return None
+
     def predict_with_cot(self, history: list[dict], options: Union[list[str], OptionType], max_answer_tokens: int, sample=False):
         clean_response = None
         attempts = 0
@@ -149,25 +166,37 @@ class MrModel:
             target_type = OptionType.CHOICES
         elif options == OptionType.DATE:
             target_type = OptionType.DATE
+        elif options == OptionType.NUMERIC:
+            target_type = OptionType.NUMERIC
         else:
             raise ValueError(f"Invalid options type: {options}")
 
         target_type_subprompt_map = {
             OptionType.CHOICES: f"### Instructions:\n\nBased on the thoughts, answer only with one of: {options}. Answer only a single letter of the answer, nothing else.",
             OptionType.DATE: f"### Instructions:\n\nBased on the thoughts, answer only with a date in the format of YYYYMMDD, nothing else.",
+            OptionType.NUMERIC: f"### Instructions:\n\nBased on the thoughts, answer only with an integer number of days, or 'F' if the duration cannot be determined. Answer only the number or F, nothing else.",
         }
 
-        while clean_response is None:
+        max_cot_attempts = 2
+        for attempt in range(max_cot_attempts):
             cot_prompt = "### Instructions:\n\nThink step by step, then answer the question."
             original_prompt = history[-1]["content"]
-            # history[-1]["content"] = original_prompt + cot_prompt
             cot_history = [{"role": "user", "content": original_prompt + cot_prompt}]
-            cot_response = self.predict_single(history=cot_history, max_tokens=None, options=None, sample=sample)
+            cot_response = self.predict_single(history=cot_history, max_tokens=1024, options=None, sample=sample)
             clean_prompt = f"{original_prompt}\n\n### Thoughts: {cot_response}\n\n{target_type_subprompt_map[target_type]}"
             clean_history = [{"role": "user", "content": clean_prompt}]
             clean_response = self.predict_single(history=clean_history, max_tokens=max_answer_tokens, options=options, sample=sample)
+            if clean_response is not None:
+                return clean_response
 
-        return clean_response
+        raise ValueError(
+            f"COT failed after {max_cot_attempts} attempts.\n"
+            f"  Target type: {target_type}\n"
+            f"  Options: {options}\n"
+            f"  Original prompt (first 500 chars): {original_prompt[:500]}\n"
+            f"  Last COT response (first 500 chars): {cot_response[:500]}\n"
+            f"  Last clean response: {clean_response}"
+        )
 
 class DummyModel:
     def __init__(self):
