@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument(
         "--inference_type",
         choices=["logit", "cot"],
-        default="logit",
+        default="cot",
         help="Type of inference to use: logit (default) or cot (chain of thought)",
     )
     parser.add_argument(
