@@ -12,7 +12,7 @@ import json
 
 from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase, PtNumericFeatureBase
 from models import MrModel, DummyModel
-from utils import get_dataset, compute_numeric_pct_error
+from utils import get_dataset, compute_numeric_pct_error, compute_numeric_abs_error
 import re
 
 tqdm.pandas()  # Enable tqdm for pandas operations
@@ -56,6 +56,11 @@ def parse_args():
         choices=["mgb", "mimic"],
         default="mgb",
         help="Data source to use: mgb (default) or mimic",
+    )
+    parser.add_argument(
+        "--best_prompt_only",
+        action="store_true",
+        help="Only run inference using the best prompt from the Excel sheet (skips prompt iteration)",
     )
     return parser.parse_args()
 
@@ -201,7 +206,7 @@ def generate_error_analysis_md(feature_name, target_cls, chunk_df, ground_truth,
     print(f"Generated error analysis: {md_file_path}")
 
 
-def process_file(file_path, inference_type, downsample=None, data_source=None, prompts_by_feature=None, feature_name_override=None):
+def process_file(file_path, inference_type, downsample=None, data_source=None, prompts_by_feature=None, feature_name_override=None, best_prompt_only=False):
     feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
     print(f"\nProcessing {feature_name}")
 
@@ -254,7 +259,12 @@ def process_file(file_path, inference_type, downsample=None, data_source=None, p
 
     # Get prompts for this feature (organized by tuner)
     # Always use the feature's own name for prompt lookup (each feature has its own row in the spreadsheet)
-    feature_prompts_by_tuner = prompts_by_feature[feature_name]
+    if best_prompt_only:
+        # Use a single entry with text=None so forward() calls cls.query() internally,
+        # which uses find_best_prompt_from_prompt_iteration_labels to pick the best prompt
+        feature_prompts_by_tuner = {"best": [{"number": 0, "text": None, "tuner": "best"}]}
+    else:
+        feature_prompts_by_tuner = prompts_by_feature[feature_name]
 
     # Store accuracy over time for this feature, organized by tuner and split
     accuracy_over_time_by_tuner = {}
@@ -290,8 +300,8 @@ def process_file(file_path, inference_type, downsample=None, data_source=None, p
                 for i, (chunk, found_kw) in enumerate(
                     zip(chunk_df["chunk"], chunk_df["found_keywords"])
                 ):
-                    # Format prompt with actual keyword
-                    formatted_prompt = format_prompt_with_keyword(prompt_text, found_kw)
+                    # Format prompt with actual keyword (None means use cls.query() via forward())
+                    formatted_prompt = format_prompt_with_keyword(prompt_text, found_kw) if prompt_text else None
                     chunk_args.append((i, chunk, found_kw, target_cls, inference_type, formatted_prompt))
 
                 # Process chunks concurrently with progress bar
@@ -371,11 +381,16 @@ def process_file(file_path, inference_type, downsample=None, data_source=None, p
                     "synthetic": accuracy_synthetic
                 }
 
-                # For numeric features, compute average percent error
+                # For numeric features, compute average percent error and average absolute error
                 if is_numeric_feature:
                     pct_errors = [compute_numeric_pct_error(p, g) for p, g in zip(predictions, ground_truth)]
                     avg_pct_error = sum(pct_errors) / len(pct_errors) if pct_errors else 0.0
                     acc_entry["avg_pct_error"] = avg_pct_error
+
+                    abs_errors = [compute_numeric_abs_error(p, g) for p, g in zip(predictions, ground_truth)]
+                    abs_errors_valid = [e for e in abs_errors if e is not None]
+                    avg_abs_error = sum(abs_errors_valid) / len(abs_errors_valid) if abs_errors_valid else None
+                    acc_entry["avg_abs_error"] = avg_abs_error
 
                 # Collect errors for the last prompt on eval set (for summary display)
                 error_mask = predictions != ground_truth
@@ -389,6 +404,8 @@ def process_file(file_path, inference_type, downsample=None, data_source=None, p
                 print(f"Prompt #{prompt_num} ({tuner_name}, {split_name}) - Combined accuracy: {accuracy_combined:.3f} ({correct_combined}/{total_combined})")
                 if is_numeric_feature:
                     print(f"Prompt #{prompt_num} ({tuner_name}, {split_name}) - Avg percent error: {avg_pct_error:.1f}%")
+                    if avg_abs_error is not None:
+                        print(f"Prompt #{prompt_num} ({tuner_name}, {split_name}) - Avg absolute error: {avg_abs_error:.1f} days")
                 if total_natural > 0:
                     print(f"Prompt #{prompt_num} ({tuner_name}, {split_name}) - Natural accuracy: {accuracy_natural:.3f} ({correct_natural}/{total_natural})")
                 if total_synthetic > 0:
@@ -424,13 +441,17 @@ def main():
     else:
         print("Running on all available features")
 
-    # Load prompt history
-    print("\nLoading prompt history from Excel file...")
-    prompts_by_feature = load_prompt_history()
-    print(f"Loaded prompts for {len(prompts_by_feature)} features")
-    for feature, prompts_by_tuner in prompts_by_feature.items():
-        tuner_info = ", ".join([f"{tuner}: {len(prompts)} versions" for tuner, prompts in prompts_by_tuner.items()])
-        print(f"  {feature}: {tuner_info}")
+    # Load prompt history (not needed in best_prompt_only mode)
+    if args.best_prompt_only:
+        print("\nUsing best prompt only (from find_best_prompt_from_prompt_iteration_labels)")
+        prompts_by_feature = {}
+    else:
+        print("\nLoading prompt history from Excel file...")
+        prompts_by_feature = load_prompt_history()
+        print(f"Loaded prompts for {len(prompts_by_feature)} features")
+        for feature, prompts_by_tuner in prompts_by_feature.items():
+            tuner_info = ", ".join([f"{tuner}: {len(prompts)} versions" for tuner, prompts in prompts_by_tuner.items()])
+            print(f"  {feature}: {tuner_info}")
 
     labeled_data_dir = Path(f"labeled_data/{args.data_source}")
 
@@ -485,7 +506,7 @@ def main():
         print(f"{'='*80}")
         if "cancer_date_frequency" in feature_name:
             continue
-        results = process_file(file_path, inference_type, downsample, data_source=args.data_source, prompts_by_feature=prompts_by_feature, feature_name_override=feature_name)
+        results = process_file(file_path, inference_type, downsample, data_source=args.data_source, prompts_by_feature=prompts_by_feature, feature_name_override=feature_name, best_prompt_only=args.best_prompt_only)
         if results:
             all_results[feature_name] = results
             # Store accuracy over time for JSONL output
@@ -547,6 +568,8 @@ def main():
                         acc_line = f"    Prompt #{prompt_num}: Combined={combined_acc:.3f}, Natural={natural_acc:.3f}, Synthetic={synthetic_acc:.3f}"
                         if "avg_pct_error" in acc_info:
                             acc_line += f", AvgPctError={acc_info['avg_pct_error']:.1f}%"
+                        if acc_info.get("avg_abs_error") is not None:
+                            acc_line += f", AvgAbsError={acc_info['avg_abs_error']:.1f}days"
                         print(acc_line)
                         f.write(f"\n{acc_line}")
 

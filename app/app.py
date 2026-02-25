@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pt_features import PtFeaturesMeta, PtNumericFeatureBase
 from models import MrModel
-from utils import OptionType, get_dataset, compute_numeric_pct_error
+from utils import OptionType, get_dataset, compute_numeric_pct_error, compute_numeric_abs_error
 
 
 def build_feature_metadata(feature_name):
@@ -61,9 +61,8 @@ def get_features():
     for name, cls in PtFeaturesMeta.registry.items():
         if hasattr(cls, 'query'):
             try:
-                # Try to get a sample query
-                sample_keyword = cls.keywords[0] if hasattr(cls, 'keywords') and cls.keywords else "sample"
-                query = cls.query(keyword=sample_keyword)
+                # Get query template with {keyword} placeholder so the UI shows a template
+                query = cls.query(keyword="{keyword}")
                 
                 # Handle options - convert OptionType to string for JSON serialization
                 options = cls.options if hasattr(cls, 'options') else []
@@ -196,7 +195,8 @@ def run_query():
             idx, chunk, found_kw = args
             kwargs = {}
             if custom_query and custom_query.strip():
-                kwargs['custom_query'] = custom_query
+                # Substitute {keyword} placeholder with the actual found keyword
+                kwargs['custom_query'] = custom_query.replace("{keyword}", found_kw)
             if custom_options:
                 kwargs['custom_options'] = custom_options
             
@@ -253,8 +253,19 @@ def run_query():
         # Normalize numeric predictions/gt for comparison
         is_numeric_feature = issubclass(target_cls, PtNumericFeatureBase)
         if is_numeric_feature:
-            preds = preds.apply(lambda x: str(int(float(x))) if str(x).strip().replace('.','',1).isdigit() else str(x).strip())
-            ground_truth = ground_truth.apply(lambda x: str(int(float(x))) if str(x).strip().replace('.','',1).isdigit() else str(x).strip())
+            def normalize_numeric(val):
+                val_str = str(val).strip()
+                if val_str.upper() == "F":
+                    return "F"
+                try:
+                    return str(int(float(val_str)))
+                except (ValueError, TypeError):
+                    return val_str
+            chunk_df[pred_col] = chunk_df[pred_col].apply(normalize_numeric)
+            chunk_df["val_unified"] = chunk_df["val_unified"].apply(normalize_numeric)
+
+        ground_truth = chunk_df["val_unified"]
+        preds = chunk_df[pred_col]
 
         # Calculate metrics
         correct_mask = preds == ground_truth
@@ -264,14 +275,18 @@ def run_query():
 
         # Calculate avg percent error for numeric features
         avg_pct_error = None
+        avg_abs_error = None
         if is_numeric_feature and total > 0:
             pct_errors = [compute_numeric_pct_error(p, g) for p, g in zip(preds, ground_truth)]
             avg_pct_error = sum(pct_errors) / len(pct_errors)
-        
+            abs_errors = [compute_numeric_abs_error(p, g) for p, g in zip(preds, ground_truth)]
+            abs_errors_valid = [e for e in abs_errors if e is not None]
+            avg_abs_error = sum(abs_errors_valid) / len(abs_errors_valid) if abs_errors_valid else None
+
         # Prepare results
         correct_results = []
         incorrect_results = []
-        
+
         for idx, row in chunk_df.iterrows():
             result = {
                 'chunk': row['chunk'],
@@ -279,7 +294,7 @@ def run_query():
                 'predicted_answer': row[pred_col],
                 'keyword': row['found_keywords']
             }
-            
+
             if row[pred_col] == row['val_unified']:
                 correct_results.append(result)
             else:
@@ -308,6 +323,8 @@ def run_query():
         }
         if avg_pct_error is not None:
             summary['avg_pct_error'] = f"{avg_pct_error:.1f}%"
+        if avg_abs_error is not None:
+            summary['avg_abs_error'] = f"{avg_abs_error:.1f} days"
 
         return jsonify({
             'summary': summary,

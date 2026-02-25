@@ -74,6 +74,23 @@ def compute_numeric_pct_error(pred, gt):
     return min(abs(pred_num - gt_num) / gt_num * 100, 100.0)
 
 
+def compute_numeric_abs_error(pred, gt):
+    """Compute absolute error (in days) for a single (pred, gt) pair for numeric features.
+    Returns None if either value is non-numeric."""
+    def to_numeric(val):
+        val_str = str(val).strip()
+        if val_str.upper() == "F":
+            return None
+        return int(float(val_str))
+
+    pred_num = to_numeric(pred)
+    gt_num = to_numeric(gt)
+
+    if pred_num is None or gt_num is None:
+        return None
+    return abs(pred_num - gt_num)
+
+
 def get_dataset(
     data_source: str,
     feature_names: Optional[List[str]] = None,

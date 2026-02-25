@@ -516,8 +516,8 @@
             if (feature) {
                 document.getElementById('query').value = feature.query;
                 
-                // Check if it's a date feature
-                if (feature.options === "date") {
+                // Check if it's a date or numeric feature
+                if (feature.options === "date" || feature.options === "numeric") {
                     optionsField.value = "";
                     optionsField.disabled = true;
                 } else {
