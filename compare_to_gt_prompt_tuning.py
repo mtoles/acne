@@ -62,6 +62,11 @@ def parse_args():
         action="store_true",
         help="Only run inference using the best prompt from the Excel sheet (skips prompt iteration)",
     )
+    parser.add_argument(
+        "--eval_only",
+        action="store_true",
+        help="Only run on the eval set (skip training set)",
+    )
     return parser.parse_args()
 
 
@@ -206,7 +211,7 @@ def generate_error_analysis_md(feature_name, target_cls, chunk_df, ground_truth,
     print(f"Generated error analysis: {md_file_path}")
 
 
-def process_file(file_path, inference_type, downsample=None, data_source=None, prompts_by_feature=None, feature_name_override=None, best_prompt_only=False):
+def process_file(file_path, inference_type, downsample=None, data_source=None, prompts_by_feature=None, feature_name_override=None, best_prompt_only=False, eval_only=False):
     feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
     print(f"\nProcessing {feature_name}")
 
@@ -269,8 +274,9 @@ def process_file(file_path, inference_type, downsample=None, data_source=None, p
     # Store accuracy over time for this feature, organized by tuner and split
     accuracy_over_time_by_tuner = {}
 
-    # Process both train and eval sets
-    for split_name, annot_df in [("train", train_df), ("eval", eval_df)]:
+    # Process train and/or eval sets
+    splits = [("eval", eval_df)] if eval_only else [("train", train_df), ("eval", eval_df)]
+    for split_name, annot_df in splits:
         print(f"\n{'='*80}")
         print(f"Processing {split_name.upper()} set for {feature_name}")
         print(f"{'='*80}")
@@ -416,9 +422,9 @@ def process_file(file_path, inference_type, downsample=None, data_source=None, p
     # Return results with accuracy over time organized by split and tuner
     return {
         "feature_name": feature_name,
-        "train_processed_chunks": len(train_df),
-        "train_natural_chunks": train_natural_count,
-        "train_synthetic_chunks": train_synthetic_count,
+        "train_processed_chunks": 0 if eval_only else len(train_df),
+        "train_natural_chunks": 0 if eval_only else train_natural_count,
+        "train_synthetic_chunks": 0 if eval_only else train_synthetic_count,
         "eval_processed_chunks": len(eval_df),
         "eval_natural_chunks": eval_natural_count,
         "eval_synthetic_chunks": eval_synthetic_count,
@@ -506,7 +512,7 @@ def main():
         print(f"{'='*80}")
         if "cancer_date_frequency" in feature_name:
             continue
-        results = process_file(file_path, inference_type, downsample, data_source=args.data_source, prompts_by_feature=prompts_by_feature, feature_name_override=feature_name, best_prompt_only=args.best_prompt_only)
+        results = process_file(file_path, inference_type, downsample, data_source=args.data_source, prompts_by_feature=prompts_by_feature, feature_name_override=feature_name, best_prompt_only=args.best_prompt_only, eval_only=args.eval_only)
         if results:
             all_results[feature_name] = results
             # Store accuracy over time for JSONL output

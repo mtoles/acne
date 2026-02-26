@@ -103,6 +103,20 @@ class MrModel:
             return "NA"
         return max(top_logprobs, key=lambda x: x.logprob).token
     
+    def _strip_think_tags(self, text: str, keep_content: bool = False) -> str:
+        """Strip <think>...</think> reasoning blocks from model output.
+
+        If keep_content=True, removes only the tags but keeps reasoning text.
+        If keep_content=False, removes both tags and content between them.
+        """
+        if keep_content:
+            return re.sub(r'</?think>', '', text).strip()
+        # Remove complete <think>...</think> blocks
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+        # Remove unclosed <think> tags (model hit token limit mid-thinking)
+        text = re.sub(r'<think>.*', '', text, flags=re.DOTALL)
+        return text.strip()
+
     def predict_single(self, history: list[dict], max_tokens: int, options: Optional[Union[list[str], OptionType]], sample=False, attempts=3):
         # TODO: test on dates
         for attempt in range(attempts):
@@ -114,6 +128,9 @@ class MrModel:
                 top_p=1.0
             )
             response_text = response.choices[0].message.content
+            # Strip <think>...</think> blocks for answer extraction (e.g. DeepSeek-R1, Qwen3)
+            # For free-form (options=None), keep content but strip tags
+            response_text = self._strip_think_tags(response_text, keep_content=(options is None))
             if options == OptionType.DATE:
                 date = self.find_date(response_text)
                 if date:
@@ -183,9 +200,11 @@ class MrModel:
             original_prompt = history[-1]["content"]
             cot_history = [{"role": "user", "content": original_prompt + cot_prompt}]
             cot_response = self.predict_single(history=cot_history, max_tokens=1024, options=None, sample=sample)
+            cot_response = self._strip_think_tags(cot_response, keep_content=True)
             clean_prompt = f"{original_prompt}\n\n### Thoughts: {cot_response}\n\n{target_type_subprompt_map[target_type]}"
             clean_history = [{"role": "user", "content": clean_prompt}]
-            clean_response = self.predict_single(history=clean_history, max_tokens=max_answer_tokens, options=options, sample=sample)
+            # Use higher max_tokens to accommodate models that wrap output in <think> tags
+            clean_response = self.predict_single(history=clean_history, max_tokens=max(max_answer_tokens, 200), options=options, sample=sample)
             if clean_response is not None:
                 return clean_response
 
