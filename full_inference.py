@@ -32,7 +32,7 @@ from kw_builder import transplant_df as transplant_icd_df
 
 random.seed(42)
 
-db = create_engine(db_url)
+db = create_engine(db_url, pool_size=100, max_overflow=200, pool_timeout=300)
 model_id = "Qwen/Qwen2.5-72B-Instruct-AWQ"
 model = MrModel(model_id=model_id)
 
@@ -160,15 +160,6 @@ def call_llm(feature_cls: PtFeatureBase, chunk: str, keyword: str = None) -> str
 
     return pred
 
-
-def normalize_date(date_value):
-    """Convert various date formats to datetime object."""
-    # Handle ISO format: "2019-03-21 14:15:00.000000"
-    try:
-        return pd.to_datetime(date_value, format="%Y-%m-%d %H:%M:%S.%f").to_pydatetime()
-    except ValueError:
-        # Handle date format: "6/1/2009"
-        return pd.to_datetime(date_value, format="%m/%d/%Y").to_pydatetime()
 
 
 def group_records_by_time_blocks(
@@ -442,9 +433,7 @@ def process_single_block_llm(
                     pred = call_llm(feature_cls, chunk, kw)
                     found_supp_kws = []
                     if hasattr(feature_cls, "supplimental_kws"):
-                        for sf in feature_cls.supplimental_kws:
-                            if sf in chunk:
-                                found_supp_kws.append(sf)
+                        found_supp_kws = has_keyword(chunk, feature_cls.supplimental_kws)
                     rows.append(
                         {
                             "feature_name": feature_cls.__name__,
@@ -882,15 +871,6 @@ def process_pt(pt_id):
                 "prediction": "A",
             }
         )
-
-    duration_rows = process_single_block_llm(
-        treatment_window_dia_records,
-        antibiotic_duration,
-        make_keyword_filter(antibiotic_duration.keywords),
-        short_circuit=False,
-    )
-
-    rows.extend(duration_rows)
 
     duration_numeric_rows = process_single_block_llm(
         treatment_window_dia_records,

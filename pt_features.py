@@ -318,17 +318,17 @@ class PtFeatureBase(metaclass=PtFeaturesMeta):
 class PtDateFeatureBase(PtFeatureBase):
     def pooling_fn_latest(preds: list):
         # return the most recent date
-        dates = [pd.to_datetime(pred, format="%Y%m%d") for pred in preds if pred != "X"]
+        dates = [pd.to_datetime(pred, format="%Y%m%d") for pred in preds if pred not in ("X", "U")]
         if not dates:
             return "X"
-        return dates.max().strftime("%Y-%m-%d")
+        return max(dates).strftime("%Y-%m-%d")
 
     def pooling_fn_earliest(preds: list):
         # return the earliest date
-        dates = [pd.to_datetime(pred, format="%Y%m%d") for pred in preds if pred != "X"]
+        dates = [pd.to_datetime(pred, format="%Y%m%d") for pred in preds if pred not in ("X", "U")]
         if not dates:
             return "X"
-        return dates.min().strftime("%Y-%m-%d")
+        return min(dates).strftime("%Y-%m-%d")
 
     options = OptionType.DATE
     max_tokens = 8
@@ -1062,18 +1062,17 @@ class cancer_family_any(PtFeatureBase):
         return prompt
 
     options = ["A", "B"]
-    keywords = cancer_cancer.keywords
+    keywords = SPECIFIC_CANCERS
     val_var = True
     supplimental_kws = [
     # parents
-    "parent", "mother", "father", "mom", "mum", "dad",
+    "parent", "mother", "father"
     # children
-    "child", "son", "daughter", "kid",
+    "child", "son", "daughter",
     # siblings
-    "sibling", "brother", "sister", "sib",
+    "sibling", "brother", "sister",
     # grandparents
     "grandparent", "grandmother", "grandfather",
-    "grandma", "grandmother", "grandpa", "grandfather",
     # grandchildren
     "grandchild", "grandson", "granddaughter",
     # aunts / uncles

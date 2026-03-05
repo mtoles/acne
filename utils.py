@@ -11,6 +11,16 @@ from typing import Dict, Optional, List
 CHUNKSIZE = 200  # Maximum words per chunk
 
 
+def normalize_date(date_value):
+    """Convert various date formats to datetime object."""
+    # Handle ISO format: "2019-03-21 14:15:00.000000"
+    try:
+        return pd.to_datetime(date_value, format="%Y-%m-%d %H:%M:%S.%f").to_pydatetime()
+    except ValueError:
+        # Handle date format: "6/1/2009"
+        return pd.to_datetime(date_value, format="%m/%d/%Y").to_pydatetime()
+
+
 def chunk_text(text) -> list[str]:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNKSIZE,
