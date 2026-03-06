@@ -625,8 +625,33 @@ def process_pt(pt_id):
 
     # === Features using all records ===
 
-    # Smoking status: process each 3-month block
-    # Try structured first, fall back to LLM if no structured data
+    # Smoking & alcohol: extract structured data from ALL pre-outcome phy records
+    # (independent of vis records, so we don't miss phy data in time periods without visits)
+    pre_outcome_phy_records = filter_records_by_date_range(
+        phy_records, end_date=outcome_window_start_date
+    )
+
+    # Smoking status: structured from phy
+    smoking_structured_hits = _extract_structured(smoking_status, pre_outcome_phy_records)
+    for hit in smoking_structured_hits:
+        rows.append({
+            "feature_name": "smoking_status",
+            "keyword": "STRUCTURED_DATA",
+            "date": hit["Date"],
+            "prediction": hit["pred"],
+        })
+    # Smoking amount follow-up: if any structured hit is "C" (current smoker)
+    if any(h["pred"] == "C" for h in smoking_structured_hits):
+        smoking_amount_hits = _extract_structured(smoking_amount, pre_outcome_phy_records)
+        for hit in smoking_amount_hits:
+            rows.append({
+                "feature_name": "smoking_amount",
+                "keyword": "STRUCTURED_DATA",
+                "date": hit["Date"],
+                "prediction": hit["pred"],
+            })
+
+    # Smoking status: LLM fallback on vis blocks without structured data
     for block_index, block_records in smoking_blocks.items():
         _thread_local.block_id = f"smoking_{block_index}"
         _thread_local.block_dates = (
@@ -634,53 +659,51 @@ def process_pt(pt_id):
             if not block_records.empty
             else ""
         )
-        block_start_date = (
-            block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
+        block_rows = process_single_block_llm(
+            block_records,
+            smoking_status,
+            make_keyword_filter(smoking_status.keywords),
+            short_circuit=True,
+            all_records=False,
         )
-        block_end_date = (
-            block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
-        )
-        block_phy_records = filter_records_by_date_range(
-            phy_records, start_date=block_start_date, end_date=block_end_date
-        )
-        block_rows, structured_hits = process_single_block_structured(
-            block_records, smoking_status, phy_records=block_phy_records
-        )
-        if not block_rows:
-            block_rows = process_single_block_llm(
-                block_records,
-                smoking_status,
-                make_keyword_filter(smoking_status.keywords),
-                short_circuit=True,
-                all_records=False,
-            )
         rows.extend(block_rows)
-        # Follow-up: smoking_amount if any prediction is "C"
         if block_rows:
             pooled_value = smoking_status.pooling_fn(
                 [row["prediction"] for row in block_rows]
             )
             if pooled_value == "C":
-                follow_up_rows, follow_up_structured_hits = (
-                    process_single_block_structured(
-                        block_records, smoking_amount, phy_records=block_phy_records
-                    )
+                follow_up_rows = process_single_block_llm(
+                    block_records,
+                    smoking_amount,
+                    make_keyword_filter(smoking_amount.keywords),
+                    short_circuit=True,
+                    all_records=False,
                 )
-                if not follow_up_rows:
-                    follow_up_rows = process_single_block_llm(
-                        block_records,
-                        smoking_amount,
-                        make_keyword_filter(smoking_amount.keywords),
-                        short_circuit=True,
-                        all_records=False,
-                    )
                 for row in follow_up_rows:
                     row["feature_name"] = "smoking_amount"
                 rows.extend(follow_up_rows)
-    # print(f"Completed smoking status for {pt_id}")
 
-    # Alcohol status: process each 3-month block
-    # Try structured first, fall back to LLM if no structured data
+    # Alcohol status: structured from phy
+    alcohol_structured_hits = _extract_structured(alcohol_status, pre_outcome_phy_records)
+    for hit in alcohol_structured_hits:
+        rows.append({
+            "feature_name": "alcohol_status",
+            "keyword": "STRUCTURED_DATA",
+            "date": hit["Date"],
+            "prediction": hit["pred"],
+        })
+    # Alcohol amount follow-up: if any structured hit is "A" (drinks alcohol)
+    if any(h["pred"] == "A" for h in alcohol_structured_hits):
+        alcohol_amount_hits = _extract_structured(alcohol_amount, pre_outcome_phy_records)
+        for hit in alcohol_amount_hits:
+            rows.append({
+                "feature_name": "alcohol_amount",
+                "keyword": "STRUCTURED_DATA",
+                "date": hit["Date"],
+                "prediction": hit["pred"],
+            })
+
+    # Alcohol status: LLM fallback on vis blocks
     for block_index, block_records in alcohol_blocks.items():
         _thread_local.block_id = f"alcohol_{block_index}"
         _thread_local.block_dates = (
@@ -688,50 +711,29 @@ def process_pt(pt_id):
             if not block_records.empty
             else ""
         )
-        block_start_date = (
-            block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
+        block_rows = process_single_block_llm(
+            block_records,
+            alcohol_status,
+            make_keyword_filter(alcohol_status.keywords),
+            short_circuit=True,
+            all_records=False,
         )
-        block_end_date = (
-            block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
-        )
-        block_phy_records = filter_records_by_date_range(
-            phy_records, start_date=block_start_date, end_date=block_end_date
-        )
-        block_rows, structured_hits = process_single_block_structured(
-            block_records, alcohol_status, phy_records=block_phy_records
-        )
-        if not block_rows:
-            block_rows = process_single_block_llm(
-                block_records,
-                alcohol_status,
-                make_keyword_filter(alcohol_status.keywords),
-                short_circuit=True,
-                all_records=False,
-            )
         rows.extend(block_rows)
-        # Follow-up: alcohol_amount if any prediction is "A"
         if block_rows:
             pooled_value = alcohol_status.pooling_fn(
                 [row["prediction"] for row in block_rows]
             )
             if pooled_value == "A":
-                follow_up_rows, follow_up_structured_hits = (
-                    process_single_block_structured(
-                        block_records, alcohol_amount, phy_records=block_phy_records
-                    )
+                follow_up_rows = process_single_block_llm(
+                    block_records,
+                    alcohol_amount,
+                    make_keyword_filter(alcohol_amount.keywords),
+                    short_circuit=True,
+                    all_records=False,
                 )
-                if not follow_up_rows:
-                    follow_up_rows = process_single_block_llm(
-                        block_records,
-                        alcohol_amount,
-                        make_keyword_filter(alcohol_amount.keywords),
-                        short_circuit=True,
-                        all_records=False,
-                    )
                 for row in follow_up_rows:
                     row["feature_name"] = "alcohol_amount"
                 rows.extend(follow_up_rows)
-    # print(f"Completed alcohol status for {pt_id}")
 
     # Transplant: earliest records to outcome window start
     # Use LLM if no structured: no
