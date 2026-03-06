@@ -27,7 +27,23 @@ from kw_builder import (
     ICD9_DIAGNOSIS_CODES,
     ICD10_DIAGNOSIS_CODES,
 )
-from kw_builder import transplant_df as transplant_icd_df
+from kw_builder import transplant_df as transplant_icd_df, cancer_df
+
+# === CANCER-ONLY MONKEY PATCH: ICD code -> cancer label mapping ===
+_ICD_TO_CANCER_LABEL = {}
+for _code_group, _row in cancer_df.iterrows():
+    _label = _row["ICD Label / Group"]
+    for _code in str(_code_group).split(", "):
+        _ICD_TO_CANCER_LABEL[_code.strip()] = _label
+
+
+def _icd_to_cancer_label(icd_code):
+    """Map an ICD code (e.g. '174.9') to its cancer label by prefix matching."""
+    for prefix, label in _ICD_TO_CANCER_LABEL.items():
+        if icd_code.startswith(prefix):
+            return label
+    return icd_code
+# === END CANCER-ONLY MONKEY PATCH ===
 
 
 random.seed(42)
@@ -796,7 +812,15 @@ def process_pt(pt_id):
             block_records, cancer_cancer, dia_records=block_dia_records
         )
         cancer_hits = [x for x in structured_hits if x["pred"] == "A"]
-        rows.extend(block_rows)
+        for hit in structured_hits:
+            record_date = block_records["Report_Date_Time"].max() if not block_records.empty else None
+            rows.append({
+                "feature_name": "cancer_cancer",
+                "keyword": _icd_to_cancer_label(hit["Code"]),
+                "icd_code": hit["Code"],
+                "date": record_date,
+                "prediction": hit["pred"],
+            })
         # Follow-up features if any prediction is "A"
         # if any(row["prediction"].upper() == "A" for row in block_rows):
         for cancer_hit in cancer_hits:
@@ -916,6 +940,70 @@ def process_pt(pt_id):
     }
 
 
+# === CANCER-ONLY MONKEY PATCH: standalone function for --cancer-only mode ===
+def process_pt_cancer_only(pt_id):
+    """Extract only cancer dx data for a patient and APPEND to existing JSONL."""
+    # Step 1: Get index date
+    with db.connect() as conn:
+        query = text(
+            f"SELECT * FROM dia WHERE EMPI = '{pt_id}' AND (Code LIKE '%L70.0%' OR Code LIKE '%L70.8%' OR Code LIKE '%L70.9%' OR Code LIKE '%L70.1%' OR Code LIKE '%706.1%' OR Code LIKE '%acne%') ORDER BY Date ASC LIMIT 1"
+        )
+        fetched = conn.execute(query).mappings().fetchone()
+        if fetched is None:
+            return None
+        index_date = normalize_date(fetched["Date"])
+        outcome_window_start_date = index_date + pd.Timedelta(days=365)
+
+    # Step 2: Get dia records only (no vis needed — cancer is structured-only)
+    with db.connect() as conn:
+        dia_records = pd.DataFrame(conn.execute(text(f"SELECT * FROM dia WHERE EMPI = '{pt_id}'")).mappings().fetchall())
+
+    outcome_dia_records = filter_records_by_date_range(dia_records, start_date=outcome_window_start_date)
+
+    # Step 3: Extract cancer hits directly from dia records (no blocking needed)
+    rows = []
+    structured_hits = _extract_structured(cancer_cancer, outcome_dia_records)
+    for hit in structured_hits:
+        rows.append({
+            "feature_name": "cancer_cancer",
+            "keyword": _icd_to_cancer_label(hit["Code"]),
+            "icd_code": hit["Code"],
+            "date": hit["Date"],
+            "prediction": hit["pred"],
+        })
+
+    # Step 4: Append to existing JSONL (remove old cancer_cancer lines first)
+    jsonl_path = _records_dir / f"{pt_id}.jsonl"
+    existing_lines = []
+    if jsonl_path.exists():
+        with open(jsonl_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    rec = json.loads(line)
+                    if rec["feature_name"] != "cancer_cancer":
+                        existing_lines.append(line)
+
+    with open(jsonl_path, "w") as f:
+        for line in existing_lines:
+            f.write(line + "\n")
+        for row in rows:
+            out_row = dict(row)
+            out_row["prediction"] = prediction_to_description(
+                out_row["feature_name"], out_row["prediction"]
+            )
+            json.dump(out_row, f, default=_json_default)
+            f.write("\n")
+
+    return {
+        "feature_counts": Counter(r["feature_name"] for r in rows),
+        "structured_feature_counts": Counter(r["feature_name"] for r in rows),
+        "llm_feature_counts": Counter(),
+        "total_rows": len(rows),
+    }
+# === END CANCER-ONLY MONKEY PATCH ===
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--n-workers", type=int, default=1, help="Number of worker threads (default: 1)"
@@ -938,8 +1026,16 @@ parser.add_argument(
     nargs="*",
     help="List of specific EMPIs to process (default: None, process all in cohort)",
 )
+# === CANCER-ONLY MONKEY PATCH ===
+parser.add_argument(
+    "--cancer-only",
+    action="store_true",
+    help="Only extract cancer dx data and append to existing records",
+)
+# === END CANCER-ONLY MONKEY PATCH ===
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
+CANCER_ONLY = args.cancer_only
 
 start_time = datetime.now()
 print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -986,9 +1082,13 @@ agg_llm_feature_counts = Counter()
 agg_total_rows = 0
 patients_processed = 0
 
+# === CANCER-ONLY MONKEY PATCH: dispatch to cancer-only function ===
+_process_fn = process_pt_cancer_only if CANCER_ONLY else process_pt
+# === END CANCER-ONLY MONKEY PATCH ===
+
 if args.n_workers > 1:
     with ThreadPoolExecutor(max_workers=args.n_workers) as executor:
-        futures = {executor.submit(process_pt, pt_id): pt_id for pt_id in pt_ids}
+        futures = {executor.submit(_process_fn, pt_id): pt_id for pt_id in pt_ids}
         for future in tqdm(as_completed(futures), total=len(pt_ids)):
             stats = future.result()
             if stats is not None:
@@ -999,7 +1099,7 @@ if args.n_workers > 1:
                 patients_processed += 1
 else:
     for pt_id in tqdm(pt_ids):
-        stats = process_pt(pt_id)
+        stats = _process_fn(pt_id)
         if stats is not None:
             agg_feature_counts += stats["feature_counts"]
             agg_structured_feature_counts += stats["structured_feature_counts"]
