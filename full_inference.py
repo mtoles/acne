@@ -858,19 +858,20 @@ def process_pt(pt_id):
 
     # Antibiotics: process all treatment window records as a single block
 
-    abx_records = med_records[med_records["Code"].isin(ABX_CODES)]
-    for _, abx_record in abx_records.iterrows():
-        rows.append(
-            {
-                "feature_name": "antibiotics",
-                "keyword": "STRUCTURED_DATA",
-                "Medication_Description": abx_record["Medication"],
-                "Medication_Code": abx_record["Code"],
-                "Medication_Quantity": abx_record["Quantity"],
-                "date": abx_record["Medication_Date"],
-                "prediction": "A",
-            }
-        )
+    if "Code" in med_records.columns:
+        abx_records = med_records[med_records["Code"].isin(ABX_CODES)]
+        for _, abx_record in abx_records.iterrows():
+            rows.append(
+                {
+                    "feature_name": "antibiotics",
+                    "keyword": "STRUCTURED_DATA",
+                    "Medication_Description": abx_record["Medication"],
+                    "Medication_Code": abx_record["Code"],
+                    "Medication_Quantity": abx_record["Quantity"],
+                    "date": abx_record["Medication_Date"],
+                    "prediction": "A",
+                }
+            )
 
     duration_numeric_rows = process_single_block_llm(
         treatment_window_dia_records,
