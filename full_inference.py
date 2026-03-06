@@ -29,7 +29,6 @@ from kw_builder import (
 )
 from kw_builder import transplant_df as transplant_icd_df, cancer_df
 
-# === CANCER-ONLY MONKEY PATCH: ICD code -> cancer label mapping ===
 _ICD_TO_CANCER_LABEL = {}
 for _code_group, _row in cancer_df.iterrows():
     _label = _row["ICD Label / Group"]
@@ -43,7 +42,6 @@ def _icd_to_cancer_label(icd_code):
         if icd_code.startswith(prefix):
             return label
     return icd_code
-# === END CANCER-ONLY MONKEY PATCH ===
 
 
 random.seed(42)
@@ -398,7 +396,7 @@ def make_keyword_filter(keywords):
 
 
 def process_single_block_llm(
-    block_records, feature_cls, chunk_filter_fn, short_circuit=True
+    block_records, feature_cls, chunk_filter_fn, short_circuit, all_records
 ):
     """
     Process a feature for a single time block using LLM.
@@ -407,6 +405,8 @@ def process_single_block_llm(
         block_records: List of vis table record dictionaries for this time block
         feature_cls: Feature class (e.g., smoking_status)
         chunk_filter_fn: Function(chunk) -> bool. If True, process chunk with LLM.
+        short_circuit: If True, stop after finding a conclusive prediction.
+        all_records: If True, process every record with keywords. If False, only the record with the most keywords.
 
     Returns:
         List of result row dictionaries
@@ -414,14 +414,21 @@ def process_single_block_llm(
     global _llm_windows_count, _per_patient_stats, _per_patient_stats_lock
 
     rows = []
-
     keywords = feature_cls.keywords
 
-    best_record, keyword_count = select_record_with_most_keywords(
-        block_records, keywords
-    )
+    if all_records:
+        records_to_process = []
+        for _, record in block_records.iterrows():
+            record_text = record.get("Report_Text", "")
+            if record_text and len(has_keyword(record_text, keywords)) > 0:
+                records_to_process.append(record)
+    else:
+        best_record, keyword_count = select_record_with_most_keywords(
+            block_records, keywords
+        )
+        records_to_process = [best_record] if best_record is not None and keyword_count > 0 else []
 
-    if best_record is not None and keyword_count > 0:
+    for record in records_to_process:
         _llm_windows_count += 1
         if (
             hasattr(_thread_local, "current_patient_id")
@@ -434,8 +441,8 @@ def process_single_block_llm(
                         "llm": 0,
                     }
                 _per_patient_stats[_thread_local.current_patient_id]["llm"] += 1
-        record_date = best_record["Report_Date_Time"]
-        record_text = best_record["Report_Text"]
+        record_date = record["Report_Date_Time"]
+        record_text = record["Report_Text"]
 
         inconclusive_values = getattr(feature_cls, "inconclusive_values", set())
         found_conclusive = False
@@ -526,7 +533,7 @@ def process_pt(pt_id):
         if fetched is not None:
             index_date = fetched["Date"]
             index_date = normalize_date(index_date)
-            outcome_window_start_date = index_date + pd.Timedelta(days=365)
+            outcome_window_start_date = index_date + pd.Timedelta(days=365 * 2)
         else:
             print("WARNING: No acne diagnosis found for patient {pt_id}")
             return None
@@ -644,6 +651,8 @@ def process_pt(pt_id):
                 block_records,
                 smoking_status,
                 make_keyword_filter(smoking_status.keywords),
+                short_circuit=True,
+                all_records=False,
             )
         rows.extend(block_rows)
         # Follow-up: smoking_amount if any prediction is "C"
@@ -662,6 +671,8 @@ def process_pt(pt_id):
                         block_records,
                         smoking_amount,
                         make_keyword_filter(smoking_amount.keywords),
+                        short_circuit=True,
+                        all_records=False,
                     )
                 for row in follow_up_rows:
                     row["feature_name"] = "smoking_amount"
@@ -694,6 +705,8 @@ def process_pt(pt_id):
                 block_records,
                 alcohol_status,
                 make_keyword_filter(alcohol_status.keywords),
+                short_circuit=True,
+                all_records=False,
             )
         rows.extend(block_rows)
         # Follow-up: alcohol_amount if any prediction is "A"
@@ -712,6 +725,8 @@ def process_pt(pt_id):
                         block_records,
                         alcohol_amount,
                         make_keyword_filter(alcohol_amount.keywords),
+                        short_circuit=True,
+                        all_records=False,
                     )
                 for row in follow_up_rows:
                     row["feature_name"] = "alcohol_amount"
@@ -837,6 +852,8 @@ def process_pt(pt_id):
                 block_records,
                 cancer_date_of_diagnosis,
                 chunk_filter_fn=cancer_date_filter,
+                short_circuit=True,
+                all_records=False,
             )
             for row in date_rows:
                 row["feature_name"] = "cancer_date_of_diagnosis"
@@ -852,13 +869,16 @@ def process_pt(pt_id):
                 block_records,
                 cancer_stage_at_diagnosis,
                 chunk_filter_fn=cancer_stage_filter,
+                short_circuit=True,
+                all_records=False,
             )
             for row in stage_rows:
                 row["feature_name"] = "cancer_stage_at_diagnosis"
             rows.extend(stage_rows)
 
             max_stage_rows = process_single_block_llm(
-                block_records, cancer_maximum_stage, chunk_filter_fn=cancer_stage_filter
+                block_records, cancer_maximum_stage, chunk_filter_fn=cancer_stage_filter,
+                short_circuit=True, all_records=False,
             )
             for row in max_stage_rows:
                 row["feature_name"] = "cancer_maximum_stage"
@@ -873,7 +893,8 @@ def process_pt(pt_id):
 
     for block_index, block_records in cancer_family_blocks.items():
         block_rows = process_single_block_llm(
-            block_records, cancer_family_any, chunk_filter_fn=cancer_family_filter
+            block_records, cancer_family_any, chunk_filter_fn=cancer_family_filter,
+            short_circuit=True, all_records=False,
         )
         rows.extend(block_rows)
     # print(f"Completed cancer family any for {pt_id}")
@@ -883,7 +904,9 @@ def process_pt(pt_id):
     # Antibiotics: process all treatment window records as a single block
 
     if "Code" in med_records.columns:
-        abx_records = med_records[med_records["Code"].isin(ABX_CODES)]
+        abx_records = med_records[
+            med_records.apply(lambda r: (str(r["Code_Type"]), str(r["Code"])) in ABX_CODE_TYPE_PAIRS, axis=1)
+        ]
         for _, abx_record in abx_records.iterrows():
             rows.append(
                 {
@@ -902,8 +925,8 @@ def process_pt(pt_id):
         antibiotic_duration_numeric,
         make_keyword_filter(antibiotic_duration_numeric.keywords),
         short_circuit=False,
+        all_records=True,
     )
-
     rows.extend(duration_numeric_rows)
 
     # Save per-patient JSONL
@@ -940,69 +963,6 @@ def process_pt(pt_id):
     }
 
 
-# === CANCER-ONLY MONKEY PATCH: standalone function for --cancer-only mode ===
-def process_pt_cancer_only(pt_id):
-    """Extract only cancer dx data for a patient and APPEND to existing JSONL."""
-    # Step 1: Get index date
-    with db.connect() as conn:
-        query = text(
-            f"SELECT * FROM dia WHERE EMPI = '{pt_id}' AND (Code LIKE '%L70.0%' OR Code LIKE '%L70.8%' OR Code LIKE '%L70.9%' OR Code LIKE '%L70.1%' OR Code LIKE '%706.1%' OR Code LIKE '%acne%') ORDER BY Date ASC LIMIT 1"
-        )
-        fetched = conn.execute(query).mappings().fetchone()
-        if fetched is None:
-            return None
-        index_date = normalize_date(fetched["Date"])
-        outcome_window_start_date = index_date + pd.Timedelta(days=365)
-
-    # Step 2: Get dia records only (no vis needed — cancer is structured-only)
-    with db.connect() as conn:
-        dia_records = pd.DataFrame(conn.execute(text(f"SELECT * FROM dia WHERE EMPI = '{pt_id}'")).mappings().fetchall())
-
-    outcome_dia_records = filter_records_by_date_range(dia_records, start_date=outcome_window_start_date)
-
-    # Step 3: Extract cancer hits directly from dia records (no blocking needed)
-    rows = []
-    structured_hits = _extract_structured(cancer_cancer, outcome_dia_records)
-    for hit in structured_hits:
-        rows.append({
-            "feature_name": "cancer_cancer",
-            "keyword": _icd_to_cancer_label(hit["Code"]),
-            "icd_code": hit["Code"],
-            "date": hit["Date"],
-            "prediction": hit["pred"],
-        })
-
-    # Step 4: Append to existing JSONL (remove old cancer_cancer lines first)
-    jsonl_path = _records_dir / f"{pt_id}.jsonl"
-    existing_lines = []
-    if jsonl_path.exists():
-        with open(jsonl_path) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    rec = json.loads(line)
-                    if rec["feature_name"] != "cancer_cancer":
-                        existing_lines.append(line)
-
-    with open(jsonl_path, "w") as f:
-        for line in existing_lines:
-            f.write(line + "\n")
-        for row in rows:
-            out_row = dict(row)
-            out_row["prediction"] = prediction_to_description(
-                out_row["feature_name"], out_row["prediction"]
-            )
-            json.dump(out_row, f, default=_json_default)
-            f.write("\n")
-
-    return {
-        "feature_counts": Counter(r["feature_name"] for r in rows),
-        "structured_feature_counts": Counter(r["feature_name"] for r in rows),
-        "llm_feature_counts": Counter(),
-        "total_rows": len(rows),
-    }
-# === END CANCER-ONLY MONKEY PATCH ===
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -1026,16 +986,8 @@ parser.add_argument(
     nargs="*",
     help="List of specific EMPIs to process (default: None, process all in cohort)",
 )
-# === CANCER-ONLY MONKEY PATCH ===
-parser.add_argument(
-    "--cancer-only",
-    action="store_true",
-    help="Only extract cancer dx data and append to existing records",
-)
-# === END CANCER-ONLY MONKEY PATCH ===
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
-CANCER_ONLY = args.cancer_only
 
 start_time = datetime.now()
 print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1082,13 +1034,9 @@ agg_llm_feature_counts = Counter()
 agg_total_rows = 0
 patients_processed = 0
 
-# === CANCER-ONLY MONKEY PATCH: dispatch to cancer-only function ===
-_process_fn = process_pt_cancer_only if CANCER_ONLY else process_pt
-# === END CANCER-ONLY MONKEY PATCH ===
-
 if args.n_workers > 1:
     with ThreadPoolExecutor(max_workers=args.n_workers) as executor:
-        futures = {executor.submit(_process_fn, pt_id): pt_id for pt_id in pt_ids}
+        futures = {executor.submit(process_pt, pt_id): pt_id for pt_id in pt_ids}
         for future in tqdm(as_completed(futures), total=len(pt_ids)):
             stats = future.result()
             if stats is not None:
@@ -1099,7 +1047,7 @@ if args.n_workers > 1:
                 patients_processed += 1
 else:
     for pt_id in tqdm(pt_ids):
-        stats = _process_fn(pt_id)
+        stats = process_pt(pt_id)
         if stats is not None:
             agg_feature_counts += stats["feature_counts"]
             agg_structured_feature_counts += stats["structured_feature_counts"]

@@ -67,6 +67,10 @@ KEYWORD_ADDITIONAL_INFO = defaultdict(
 
 med_list_df = pd.read_csv("labeled_data/abx_med_code_list_v2.csv")
 ABX_CODES = [str(x) for x in med_list_df[med_list_df["include_final"] == 1]["Code"].unique()]
+ABX_CODE_TYPE_PAIRS = set(
+    (str(row["Code_Type"]), str(row["Code"]))
+    for _, row in med_list_df[med_list_df["include_final"] == 1][["Code_Type", "Code"]].drop_duplicates().iterrows()
+)
 
 # used for questions about meidcations
 ENTRY_FORMAT_STR = """Entries in this medical record typically adhere to the following format, though the header may be missing:
