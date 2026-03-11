@@ -14,11 +14,40 @@ Algorithm:
     6. If Acc(p_next, D) > Acc(p_curr, D), accept the rule
     7. Repeat until convergence (no errors or no improving rules)
 
-This differs from existing autoprompt methods (DSPy, APE, Reflexion) which focus on
-guiding reasoning and error correction. Label-2-Prompt instead extracts implicit user
-intent from patterns in labeled data -- the unspoken assumptions experts make during
-annotation (e.g. answer format, units, edge case handling) that are "common sense"
-but not stated in the prompt.
+Label-2-Prompt differs from existing methods in that it extracts implicit user intent
+-- the unspoken assumptions experts make during annotation (e.g. answer format, units,
+edge case handling) -- rather than optimizing reasoning or instruction phrasing.
+
+Baseline algorithms (implemented in prompt_optimizers.py):
+
+    OPRO (Yang et al., 2023): Meta-LLM sees scored prompt history + errors/correct
+        examples and proposes a new prompt. Unique: treats prompt optimization as a
+        natural language optimization problem; the meta-prompt contains a trajectory
+        of past prompts sorted by score.
+
+    SAMMO (Schnabel et al., 2024): Clusters errors by semantic similarity before
+        meta-prompting so the meta-LLM sees failure *patterns* rather than individual
+        cases. Unique: structured mutation operators (paraphrase, add/remove sections)
+        applied to a prompt AST, not free-form rewriting.
+
+    EvoPrompt (Guo et al., 2023): Maintains a population of prompts, applies
+        evolutionary operators (crossover, mutation) to generate candidates, evaluates
+        on train set, and selects the fittest. Unique: no meta-LLM needed for the
+        optimization step itself; diversity maintained via population.
+
+    PromptAgent (Wang et al., 2023): Uses Monte Carlo Tree Search over the space of
+        prompt rewrites. Each node is a prompt, edges are LLM-proposed edits.
+        Unique: strategic exploration/exploitation tradeoff via UCB; plans multiple
+        steps ahead rather than greedy single-step refinement.
+
+    DSPy MIPROv2 (Khattab et al., 2023): Optimizes multi-stage LLM pipelines
+        end-to-end. Generates candidate instructions from random training subsets,
+        bootstraps few-shot demonstrations, and uses Bayesian surrogate models for
+        efficient search. Unique: optimizes full pipelines (not just single prompts)
+        and jointly tunes instructions + demonstrations.
+
+    Matt-opt: for multiple choice questions, cluster all answers that have same inputs
+        and same outputs
 """
 
 import pandas as pd
@@ -43,7 +72,7 @@ os.chdir(PROJECT_ROOT)
 from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase, PtNumericFeatureBase
 from models import MrModel, DummyModel
 from utils import get_dataset, compute_numeric_pct_error, compute_numeric_abs_error
-from prompt_optimizers import DummyOptimizer
+from prompt_optimizers import DummyOptimizer, OPROOptimizer
 
 tqdm.pandas()
 
@@ -51,6 +80,7 @@ PROMPT_HISTORY_PATH = "labeled_data/LLM Adjustment Tracking.xlsx"
 
 OPTIMIZERS = {
     "dummy": DummyOptimizer,
+    "opro": OPROOptimizer,
 }
 
 
@@ -330,14 +360,15 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
             best_train_accuracy = train_accuracy
             best_prompt = current_prompt
 
-        errors = train_metrics["errors"]
-        if not errors:
+        if not train_metrics["errors"]:
             print("  No errors on train set -- stopping early")
             break
 
-        # Optimizer proposes a new prompt
-        candidate_prompt = optimizer.step(current_prompt, errors)
-        current_prompt = candidate_prompt
+        # Optimizer proposes a new prompt (gets all records so it can see correct + incorrect)
+        optimizer_result = optimizer.step(current_prompt, train_metrics["records"])
+        prompt_history[-1]["candidate_prompt"] = optimizer_result["prompt"]
+        prompt_history[-1]["candidate_raw_response"] = optimizer_result["raw_response"]
+        current_prompt = optimizer_result["prompt"]
 
     # Use the best prompt found during optimization
     print(f"\n--- Final eval with best prompt (train acc={best_train_accuracy:.3f}) ---")
@@ -359,6 +390,7 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
 
     return {
         "feature_name": feature_name,
+        "baseline_prompt": baseline_prompts[feature_name],
         "train_chunks": len(train_df),
         "eval_chunks": len(eval_df),
         "train_accuracy_history": train_accuracy_history,
@@ -452,16 +484,24 @@ def main():
     # Write aggregate results
     results_path = timestamp_dir / "results.json"
     serializable = {
-        feat: {
-            "train_accuracy_history": r["train_accuracy_history"],
-            "best_train_accuracy": r["best_train_accuracy"],
-            "eval_combined": r["eval_metrics"]["combined"],
-            "eval_natural": r["eval_metrics"]["natural"],
-            "eval_synthetic": r["eval_metrics"]["synthetic"],
-            "best_prompt": r["best_prompt"],
-            "prompt_history": r["prompt_history"],
-        }
-        for feat, r in all_results.items()
+        "metadata": {
+            "model": model_id,
+            "optimizer": args.optimizer,
+            "iterations": args.iterations,
+        },
+        "features": {
+            feat: {
+                "baseline_prompt": r["baseline_prompt"],
+                "train_accuracy_history": r["train_accuracy_history"],
+                "best_train_accuracy": r["best_train_accuracy"],
+                "eval_combined": r["eval_metrics"]["combined"],
+                "eval_natural": r["eval_metrics"]["natural"],
+                "eval_synthetic": r["eval_metrics"]["synthetic"],
+                "best_prompt": r["best_prompt"],
+                "prompt_history": r["prompt_history"],
+            }
+            for feat, r in all_results.items()
+        },
     }
     with open(results_path, "w") as f:
         json.dump(serializable, f, indent=2)
