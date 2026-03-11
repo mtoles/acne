@@ -59,7 +59,7 @@ class MrModel:
     def __init__(
         self,
         model_id,
-        base_url="http://localhost:8000/v1", 
+        base_url="http://localhost:8001/v1", 
         api_key="token-abc123",
     ):
         self.model_id = model_id

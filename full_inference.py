@@ -921,6 +921,28 @@ def process_pt(pt_id):
                     "prediction": "A",
                 }
             )
+        def contains_contraceptive_kw(s):
+            for contraceptive_kw in CONTRACEPTIVE_NAMES:
+                pattern = r'(?:^|[\W])' + re.escape(contraceptive_kw.lower()) + r'(?:$|[\W])'
+                if re.search(pattern, s.lower()):
+                    return True
+            return False
+
+        contraceptive_records = med_records[
+            med_records.apply(lambda r: contains_contraceptive_kw(r["Medication"]), axis=1)
+        ]
+        for _, contraceptive_record in contraceptive_records.iterrows():
+            rows.append(
+                {
+                    "feature_name": "contraceptives",
+                    "keyword": "STRUCTURED_DATA",
+                    "Medication_Description": contraceptive_record["Medication"],
+                    "Medication_Code": contraceptive_record.get("Code", ""),
+                    "Medication_Quantity": contraceptive_record.get("Quantity", ""),
+                    "date": contraceptive_record["Medication_Date"],
+                    "prediction": "A",
+                }
+            )
 
     duration_numeric_rows = process_single_block_llm(
         treatment_window_dia_records,

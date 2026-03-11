@@ -72,6 +72,30 @@ ABX_CODE_TYPE_PAIRS = set(
     for _, row in med_list_df[med_list_df["include_final"] == 1][["Code_Type", "Code"]].drop_duplicates().iterrows()
 )
 
+CONTRACEPTIVE_NAMES = [
+    "Apri", "Desogen", "Reclipsen", "Isibloom", "Enskyce", "Juleber", "Kariva",
+    "Mircette", "Azurette", "Viorele", "Volnea", "Pimtrea", "Ortho", "Ortho Tri-Cyclen",
+    "Ortho Tri-Cyclen Lo", "Ortho-Cyclen", "Sprintec", "Mono-Linyah", "Previfem",
+    "Tri-Sprintec", "Tri-Linyah", "Estarylla", "Femynor", "Mili", "Yaz", "Yasmin",
+    "Gianvi", "Loryna", "Nikki", "Ocella", "Syeda", "Zarah", "Beyaz", "Safyral",
+    "Alesse", "Aviane", "Vienva", "Lessina", "Larissia", "Falmina", "Lutera", "Sronyx",
+    "Portia", "Levora", "Kurvelo", "Altavera", "Nordette", "Seasonale", "Seasonique",
+    "Camrese", "Jolessa", "Loestrin", "Junel", "Microgestin", "Blisovi", "Hailey",
+    "Larin", "Gildess", "Estrostep", "Ovcon", "Kelnor", "Zovia", "Nextstellis",
+    "Kalliga", "Cryselle", "Low-Ogestrel", "Balziva", "Nortrel", "Cyclafem", "Dasetta",
+    "Vyfemla", "Zenchent", "Wymzya", "Kaitlib", "Lo Loestrin Fe", "Junel Fe 24",
+    "Hailey 24 Fe", "Lomedia 24 Fe", "Melodetta 24 Fe", "Merzee", "Taytulla", "Gemmily",
+    "Xulane", "Ortho Evra", "Twirla",
+    "NuvaRing", "EluRyng", "Haloette", "Annovera", "Segesterone",
+    "Norethindrone", "Drospirenone", "Norgestrel", "Camila", "Slynd", "Errin", "Opill",
+    "Heather", "Incassia", "Jolivette", "Nora-BE", "Norlyda", "Norlyroc", "Sharobel",
+    "Deblitane", "Lyza",
+    "Mirena", "Liletta", "Kyleena", "Skyla",
+    "ParaGard",
+    "Nexplanon",
+    "Provera", "Depo-medroxyprogesterone", "Medroxyprogesterone", "Depo medroxyprogesterone",
+]
+
 # used for questions about meidcations
 ENTRY_FORMAT_STR = """Entries in this medical record typically adhere to the following format, though the header may be missing:
 ###
