@@ -829,7 +829,7 @@ def process_pt(pt_id):
             block_records, cancer_cancer, dia_records=block_dia_records
         )
         cancer_hits = [x for x in structured_hits if x["pred"] == "A"]
-        for hit in structured_hits:
+        for hit in cancer_hits:
             record_date = block_records["Report_Date_Time"].max() if not block_records.empty else None
             rows.append({
                 "feature_name": "cancer_cancer",

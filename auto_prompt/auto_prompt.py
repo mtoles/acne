@@ -25,11 +25,6 @@ Baseline algorithms (implemented in prompt_optimizers.py):
         natural language optimization problem; the meta-prompt contains a trajectory
         of past prompts sorted by score.
 
-    SAMMO (Schnabel et al., 2024): Clusters errors by semantic similarity before
-        meta-prompting so the meta-LLM sees failure *patterns* rather than individual
-        cases. Unique: structured mutation operators (paraphrase, add/remove sections)
-        applied to a prompt AST, not free-form rewriting.
-
     EvoPrompt (Guo et al., 2023): Maintains a population of prompts, applies
         evolutionary operators (crossover, mutation) to generate candidates, evaluates
         on train set, and selects the fittest. Unique: no meta-LLM needed for the
@@ -46,8 +41,44 @@ Baseline algorithms (implemented in prompt_optimizers.py):
         efficient search. Unique: optimizes full pipelines (not just single prompts)
         and jointly tunes instructions + demonstrations.
 
-    Matt-opt: for multiple choice questions, cluster all answers that have same inputs
-        and same outputs
+    ETGPO (arXiv 2602.00997): Error Taxonomy-Guided Prompt Optimization. Collects
+        errors and asks the LLM to categorize each into an error taxonomy by root cause.
+        Reuses categories across batches. Filters out long-tail errors to focus on the
+        most prevalent failure categories. Unique: LLM-based clustering with persistent
+        taxonomy that grows over iterations.
+
+    AMPO (arXiv 2410.08696): Automatic Multi-Branched Prompt Optimization. Two-agent
+        LLM pipeline: LLM-Analyzer identifies failure causes, LLM-Summarizer groups
+        them into patterns with importance scores. Creates multi-branched prompts where
+        each branch handles a different failure pattern. Unique: multi-branch prompts
+        rather than a single optimized prompt.
+
+    Error-Driven Prompt Optimization (arXiv 2512.13323): Clusters erroneous predictions
+        using HDBSCAN (density-based clustering), selects the largest cluster, and
+        formulates new prompt rules to address it. Unique: uses algorithmic clustering
+        (HDBSCAN) rather than LLM-based categorization.
+
+    Matt-opt (ours): for multiple choice questions, use confusion matrix clustering
+        (group errors by ground_truth/prediction pairs) to identify systematic failure
+        patterns. Address one confusion pattern per iteration with targeted add/remove
+        instruction mutations.
+
+Not implemented:
+
+    SAMMO (Schnabel et al., 2024): Represents prompts as structured ASTs, applies
+        typed mutation operators (paraphrase, add/remove sections) to specific nodes,
+        and searches via beam search. Not implemented because its contributions are
+        framework-level (AST representation, beam search) rather than algorithmic, and
+        our prompts are too simple to benefit from AST structure. The paper does not
+        include error clustering despite common misconception.
+
+    APE (Zhou et al., 2022): Generates N candidate prompts from input-output examples
+        in parallel, evaluates all, selects the best. The foundational "generate then
+        select" approach. Not implemented because in our iterative framework it reduces
+        to a weaker OPRO: it sees only correct examples (no errors, no trajectory
+        history, no current prompt to refine). Its key contribution -- parallel candidate
+        generation -- could be added as a variant of OPRO instead.
+
 """
 
 import pandas as pd
