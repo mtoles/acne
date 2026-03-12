@@ -2219,3 +2219,131 @@ class antibiotic_cephalexin(PtFeatureBase):
 
 class antibiotic_azithromycin(PtFeatureBase):
     pass
+
+
+# --- Demographic helper functions ---
+
+def compute_sex(dem_row):
+    """Determine sex from a dem table row. Prefers Sex_At_Birth, falls back to Gender_Legal_Sex."""
+    sex = str(dem_row["Sex_At_Birth"]).lower().strip()
+    if sex not in ("male", "female"):
+        sex = str(dem_row["Gender_Legal_Sex"]).lower().strip()
+    return sex
+
+
+def compute_race(dem_row):
+    """Determine race/ethnicity from a dem table row. Hispanic overrides Race_Group."""
+    race = str(dem_row["Race_Group"]).lower() if pd.notna(dem_row["Race_Group"]) else ""
+    if dem_row["Ethnic_Group"] == "HISPANIC":
+        race = "hispanic"
+    return race
+
+
+def compute_age(dem_row):
+    """Return integer age from a dem table row."""
+    return int(dem_row["Age"])
+
+
+def categorize_age(age):
+    """Bin age into 10-year categories for categorical matching."""
+    if pd.isna(age):
+        return None
+    age_int = int(age)
+    if age_int < 10:
+        return "0-9"
+    elif age_int >= 100:
+        return "100+"
+    else:
+        decade = (age_int // 10) * 10
+        return f"{decade}-{decade+9}"
+
+
+def categorize_bmi(bmi):
+    """Categorize a BMI value into underweight/normal weight/overweight/obese."""
+    if pd.isna(bmi):
+        return None
+    if bmi < 18.5:
+        return "underweight"
+    elif bmi < 25:
+        return "normal weight"
+    elif bmi < 30:
+        return "overweight"
+    else:
+        return "obese"
+
+
+def compute_bmi_from_phy(phy_records, index_date):
+    """Get closest BMI value to index_date from phy records DataFrame.
+    Returns (bmi_value, bmi_category) or (None, None)."""
+    if phy_records.empty:
+        return None, None
+    df = phy_records.copy()
+    df["Date"] = pd.to_datetime(df["Date"], format="mixed", errors="coerce")
+    df = df[df["Code"] == "BMI"]
+    if df.empty:
+        return None, None
+    df["Result"] = pd.to_numeric(df["Result"], errors="coerce")
+    df = df.dropna(subset=["Result"])
+    if df.empty:
+        return None, None
+    df["_abs_days"] = (df["Date"] - index_date).dt.days.abs()
+    bmi = df.sort_values("_abs_days").iloc[0]["Result"]
+    return float(bmi), categorize_bmi(bmi)
+
+
+def _closest_non_null_structured(phy_records, index_date, feature_cls):
+    """Find the closest date to index_date with a non-null structured result.
+
+    Groups phy records by date, evaluates each date's records with
+    feature_cls.option_from_structured, and returns the result from the
+    closest date (by absolute distance) that produces a non-null value.
+
+    Returns the option string or None if no date produces a result.
+    """
+    if phy_records.empty:
+        return None
+    df = phy_records.copy()
+    df["_parsed_date"] = pd.to_datetime(df["Date"], format="mixed", errors="coerce")
+    df = df.dropna(subset=["_parsed_date"])
+    if df.empty:
+        return None
+    df["_abs_days"] = (df["_parsed_date"] - index_date).dt.days.abs()
+
+    # Get unique dates sorted by distance to index_date
+    date_distances = df.groupby("_parsed_date")["_abs_days"].first().sort_values()
+
+    for date_val in date_distances.index:
+        date_group = df[df["_parsed_date"] == date_val]
+        records = date_group[["Concept_Name", "Result"]].to_dict("records")
+        option = feature_cls.option_from_structured(records)
+        if option is not None:
+            return option
+    return None
+
+
+def compute_smoking_status_demographic(phy_records, index_date=None):
+    """Compute smoking status from phy records DataFrame. Returns descriptive label.
+    If index_date is provided, uses the closest date with a non-null result."""
+    mapping = {"C": "Current Smoker", "B": "Former Smoker", "A": "Never Smoker"}
+    if phy_records.empty:
+        return "Unknown"
+    if index_date is not None:
+        option = _closest_non_null_structured(phy_records, index_date, smoking_status)
+    else:
+        records = phy_records[["Concept_Name", "Result"]].to_dict("records")
+        option = smoking_status.option_from_structured(records)
+    return mapping.get(option, "Unknown")
+
+
+def compute_alcohol_status_demographic(phy_records, index_date=None):
+    """Compute alcohol status from phy records DataFrame. Returns descriptive label.
+    If index_date is provided, uses the closest date with a non-null result."""
+    mapping = {"A": "Currently Drinks", "B": "Does Not Currently Drink"}
+    if phy_records.empty:
+        return "Unknown"
+    if index_date is not None:
+        option = _closest_non_null_structured(phy_records, index_date, alcohol_status)
+    else:
+        records = phy_records[["Concept_Name", "Result"]].to_dict("records")
+        option = alcohol_status.option_from_structured(records)
+    return mapping.get(option, "Unknown")

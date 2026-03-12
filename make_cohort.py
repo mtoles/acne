@@ -2,7 +2,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from tqdm import tqdm
 from make_db import db_url
-from pt_features import get_rows_by_icd, cancer_icd9s, cancer_icd10s, smoking_status, alcohol_status
+from pt_features import get_rows_by_icd, cancer_icd9s, cancer_icd10s, compute_sex, compute_race, compute_age, categorize_age, categorize_bmi, compute_bmi_from_phy, compute_smoking_status_demographic, compute_alcohol_status_demographic
 import json
 from pathlib import Path
 import numpy as np
@@ -12,7 +12,7 @@ from itertools import combinations
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Create matched case-control cohort for antibiotic study")
 parser.add_argument("--n-limit", type=int, default=None, help="Limit to first N patients (N/2 cases, N/2 controls). Default: None (use all)")
-parser.add_argument("--min-match-features", type=int, default=6, help="Minimum number of matching features (out of 6: sex, race, BMI, smoking, alcohol, age±5). Default: 6 (exact match on all)")
+parser.add_argument("--min-match-features", type=int, default=5, help="Minimum number of matching features (out of 6: sex, race, BMI, smoking, alcohol, age±5). Default: 6 (exact match on all)")
 args = parser.parse_args()
 
 N_LIMIT = args.n_limit  # use first N/2 from each cohort for quick test; set to None for full run
@@ -133,32 +133,11 @@ no_abx_dem_df["took_abx"] = False
 dem_df = pd.concat([took_abx_dem_df, no_abx_dem_df], ignore_index=True)
 
 print("Processing demographic data...")
-dem_df["study_age"] = dem_df["Age"].astype(int)
-
-# Bin age into 10-year categories for categorical matching
-def categorize_age(age):
-    if pd.isna(age):
-        return None
-    age_int = int(age)
-    # Create bins: 0-9, 10-19, 20-29, ..., 90-99, 100+
-    if age_int < 10:
-        return "0-9"
-    elif age_int >= 100:
-        return "100+"
-    else:
-        decade = (age_int // 10) * 10
-        return f"{decade}-{decade+9}"
+dem_df["study_age"] = dem_df.apply(compute_age, axis=1)
 
 dem_df["study_age_bin"] = dem_df["study_age"].apply(categorize_age)
-
-dem_df["study_sex"] = dem_df["Sex_At_Birth"]
-mask = ~dem_df["study_sex"].astype(str).str.lower().isin(["male", "female"])
-dem_df.loc[mask, "study_sex"] = dem_df.loc[mask, "Gender_Legal_Sex"]
-dem_df["study_sex"] = dem_df["study_sex"].astype(str).str.lower().str.strip()
-dem_df["study_race"] = dem_df["Race_Group"]
-mask = dem_df["Ethnic_Group"] == "HISPANIC"
-dem_df.loc[mask, "study_race"] = "Hispanic"
-dem_df["study_race"] = dem_df["study_race"].apply(lambda x: str(x).lower() if pd.notna(x) else "")
+dem_df["study_sex"] = dem_df.apply(compute_sex, axis=1)
+dem_df["study_race"] = dem_df.apply(compute_race, axis=1)
 
 # Query physical health data using batched queries
 print("Querying physical health data...")
@@ -166,88 +145,27 @@ with db.connect() as conn:
     all_empis = list(took_abx_empis) + list(no_abx_empis)
     phy_df = batch_sql_query(conn, all_empis, "phy")
 
-# Parse dates and filter to records within 1 year before index date
-print("Filtering phy records to closest to index date...")
-phy_df["Date"] = pd.to_datetime(phy_df["Date"], format="%m/%d/%Y", errors="coerce")
-phy_df["index_date"] = phy_df["EMPI"].map(index_date_map)
+# Process BMI, smoking, alcohol in a single groupby pass
+print("Processing BMI, smoking, and alcohol status...")
+bmi_by_empi = {}
+bmi_cat_by_empi = {}
+smoking_by_empi = {}
+alcohol_by_empi = {}
+for empi, group in tqdm(phy_df.groupby("EMPI")):
+    idx_date = index_date_map[empi]
+    bmi_val, bmi_cat = compute_bmi_from_phy(group, idx_date)
+    bmi_by_empi[empi] = bmi_val
+    bmi_cat_by_empi[empi] = bmi_cat
+    smoking_by_empi[empi] = compute_smoking_status_demographic(group, idx_date)
+    alcohol_by_empi[empi] = compute_alcohol_status_demographic(group, idx_date)
 
-# Keep records within 1 year before index date
-phy_df["days_before_index"] = (phy_df["index_date"] - phy_df["Date"]).dt.days
-phy_df = phy_df[(phy_df["days_before_index"] >= 0) & (phy_df["days_before_index"] <= 365)]
-
-print(f"Filtered phy records: {len(phy_df)} records within 1 year before index date")
-
-# Extract BMI (use most recent measurement within the window)
-print("Processing BMI data...")
-bmi_df = phy_df[phy_df["Code"] == "BMI"].copy()
-bmi_df["Result"] = pd.to_numeric(bmi_df["Result"], errors="coerce")
-# Sort by days_before_index to get closest to index date (smallest value = closest)
-bmi_df = bmi_df.sort_values("days_before_index")
-bmi_by_empi = bmi_df.groupby("EMPI")["Result"].first()
 dem_df["study_bmi"] = dem_df["EMPI"].map(bmi_by_empi)
-
-# Categorize BMI into 4 categories
-def categorize_bmi(bmi):
-    if pd.isna(bmi):
-        return None
-    if bmi < 18.5:
-        return "underweight"
-    elif bmi < 25:
-        return "normal weight"
-    elif bmi < 30:
-        return "overweight"
-    else:
-        return "obese"
-
-dem_df["study_bmi_category"] = dem_df["study_bmi"].apply(categorize_bmi)
-
-
-def smoking_status_from_structured_wrapper(phy_subset):
-    """Wrapper for smoking_status.option_from_structured to work with grouped EMPI data."""
-    results = {}
-    for empi, group in phy_subset.groupby("EMPI"):
-        records = group[["Concept_Name", "Result"]].to_dict("records")
-        option = smoking_status.option_from_structured(records)
-        # Map options to descriptive labels
-        if option == "C":
-            results[empi] = "Current Smoker"
-        elif option == "B":
-            results[empi] = "Former Smoker"
-        elif option == "A":
-            results[empi] = "Never Smoker"
-        else:
-            results[empi] = "Unknown"
-    return pd.Series(results)
-
-
-def alcohol_status_from_structured_wrapper(phy_subset):
-    """Wrapper for alcohol_status.option_from_structured to work with grouped EMPI data."""
-    results = {}
-    for empi, group in phy_subset.groupby("EMPI"):
-        records = group[["Concept_Name", "Result"]].to_dict("records")
-        option = alcohol_status.option_from_structured(records)
-        # Map options to descriptive labels
-        if option == "A":
-            results[empi] = "Currently Drinks"
-        elif option == "B":
-            results[empi] = "Does Not Currently Drink"
-        else:
-            results[empi] = "Unknown"
-    return pd.Series(results)
-
-
-# Use structured data detection via option_from_structured wrapper
-print("Processing smoking status...")
-smoking_by_empi = smoking_status_from_structured_wrapper(phy_df)
+dem_df["study_bmi_category"] = dem_df["EMPI"].map(bmi_cat_by_empi)
 dem_df["study_smoking_status"] = dem_df["EMPI"].map(smoking_by_empi).fillna("Unknown")
-
-# Use structured data detection via option_from_structured wrapper
-print("Processing alcohol status...")
-alcohol_by_empi = alcohol_status_from_structured_wrapper(phy_df)
 dem_df["study_alcohol_status"] = dem_df["EMPI"].map(alcohol_by_empi).fillna("Unknown")
 
 # Free up memory
-del phy_df, bmi_df
+del phy_df
 
 
 print(dem_df.head())

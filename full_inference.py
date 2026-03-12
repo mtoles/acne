@@ -569,6 +569,10 @@ def process_pt(pt_id):
         prc_result = conn.execute(prc_query)
         prc_records = pd.DataFrame(prc_result.mappings().fetchall())
 
+        dem_query = text(f"SELECT * FROM dem WHERE EMPI = '{pt_id}'")
+        dem_result = conn.execute(dem_query)
+        dem_rows = [dict(r) for r in dem_result.mappings().fetchall()]
+
     ### Step 3: Define time windows and filter records ###
     # Window 1: All records (for smoking, alcohol, transplant, immunosuppressed_disease)
     all_records = vis_records
@@ -625,14 +629,11 @@ def process_pt(pt_id):
 
     # === Features using all records ===
 
-    # Smoking & alcohol: extract structured data from ALL pre-outcome phy records
-    # (independent of vis records, so we don't miss phy data in time periods without visits)
-    pre_outcome_phy_records = filter_records_by_date_range(
-        phy_records, end_date=outcome_window_start_date
-    )
+    # Smoking & alcohol: extract structured data from ALL phy records
+    # (covariates — use closest-to-index-date record with a non-null result)
 
     # Smoking status: structured from phy
-    smoking_structured_hits = _extract_structured(smoking_status, pre_outcome_phy_records)
+    smoking_structured_hits = _extract_structured(smoking_status, phy_records)
     for hit in smoking_structured_hits:
         rows.append({
             "feature_name": "smoking_status",
@@ -642,7 +643,7 @@ def process_pt(pt_id):
         })
     # Smoking amount follow-up: if any structured hit is "C" (current smoker)
     if any(h["pred"] == "C" for h in smoking_structured_hits):
-        smoking_amount_hits = _extract_structured(smoking_amount, pre_outcome_phy_records)
+        smoking_amount_hits = _extract_structured(smoking_amount, phy_records)
         for hit in smoking_amount_hits:
             rows.append({
                 "feature_name": "smoking_amount",
@@ -684,7 +685,7 @@ def process_pt(pt_id):
                 rows.extend(follow_up_rows)
 
     # Alcohol status: structured from phy
-    alcohol_structured_hits = _extract_structured(alcohol_status, pre_outcome_phy_records)
+    alcohol_structured_hits = _extract_structured(alcohol_status, phy_records)
     for hit in alcohol_structured_hits:
         rows.append({
             "feature_name": "alcohol_status",
@@ -694,7 +695,7 @@ def process_pt(pt_id):
         })
     # Alcohol amount follow-up: if any structured hit is "A" (drinks alcohol)
     if any(h["pred"] == "A" for h in alcohol_structured_hits):
-        alcohol_amount_hits = _extract_structured(alcohol_amount, pre_outcome_phy_records)
+        alcohol_amount_hits = _extract_structured(alcohol_amount, phy_records)
         for hit in alcohol_amount_hits:
             rows.append({
                 "feature_name": "alcohol_amount",
@@ -952,6 +953,32 @@ def process_pt(pt_id):
         all_records=True,
     )
     rows.extend(duration_numeric_rows)
+
+    # --- Demographics ---
+    if dem_rows:
+        dem_row = dem_rows[0]
+        rows.append({"feature_name": "demographics", "keyword": "sex", "date": str(index_date), "prediction": compute_sex(dem_row)})
+        rows.append({"feature_name": "demographics", "keyword": "race", "date": str(index_date), "prediction": compute_race(dem_row)})
+        rows.append({"feature_name": "demographics", "keyword": "age", "date": str(index_date), "prediction": str(compute_age(dem_row))})
+        bmi_val, bmi_cat = compute_bmi_from_phy(phy_records, index_date)
+        if bmi_val is not None:
+            rows.append({"feature_name": "demographics", "keyword": "bmi", "date": str(index_date), "prediction": str(round(bmi_val, 1))})
+            rows.append({"feature_name": "demographics", "keyword": "bmi_category", "date": str(index_date), "prediction": bmi_cat})
+
+        # Deceased status: check all dem rows for a non-empty Date_Of_Death
+        death_dates = []
+        for dr in dem_rows:
+            dod = str(dr["Date_Of_Death"]).strip()
+            if dod:
+                parsed = normalize_date(dod)
+                if parsed is not None:
+                    death_dates.append(parsed)
+        if death_dates:
+            earliest_death = min(death_dates)
+            rows.append({"feature_name": "demographics", "keyword": "deceased", "date": str(index_date), "prediction": "Yes"})
+            rows.append({"feature_name": "demographics", "keyword": "date_of_death", "date": str(index_date), "prediction": str(earliest_death)})
+        else:
+            rows.append({"feature_name": "demographics", "keyword": "deceased", "date": str(index_date), "prediction": "No"})
 
     # Save per-patient JSONL
     if rows:
