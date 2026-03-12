@@ -65,7 +65,7 @@ class OPROOptimizer(PromptOptimizer):
 
     def _format_example(self, rec, label):
         """Format a single record for the meta-prompt."""
-        chunk_preview = rec["chunk"][:500]
+        chunk_preview = rec["chunk"]
         return (
             f"[{label}]\n"
             f"Keyword: {rec['keyword']}\n"
