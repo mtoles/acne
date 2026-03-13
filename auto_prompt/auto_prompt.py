@@ -144,7 +144,7 @@ def parse_args():
     parser.add_argument(
         "--data_source",
         choices=["mgb", "mimic"],
-        default="mgb",
+        default="mimic",
         help="Data source to use: mgb (default) or mimic",
     )
     parser.add_argument(

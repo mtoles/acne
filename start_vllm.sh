@@ -4,11 +4,16 @@
 #     --tensor-parallel 2 --gpu-memory-utilization 0.9 --max_model_len 9000 \
 #     --enforce-eager --disable-custom-all-reduce --port 8001
 
-VLLM_ENABLE_V1_MULTIPROCESSING=0 CUDA_VISIBLE_DEVICES=1,2 vllm serve Qwen/Qwen2.5-72B-Instruct-AWQ \
-    --tensor-parallel 2 --gpu-memory-utilization 0.9 --max_model_len 9000 \
-    --enforce-eager --disable-custom-all-reduce --port 8001
+VLLM_PORT="${VLLM_PORT:-8010}"
 
+# VLLM_ENABLE_V1_MULTIPROCESSING=0 CUDA_VISIBLE_DEVICES=1,2 vllm serve Qwen/Qwen2.5-72B-Instruct-AWQ \
+#     --tensor-parallel 2 --gpu-memory-utilization 0.9 --max_model_len 9000 \
+#     --enforce-eager --disable-custom-all-reduce --port "$VLLM_PORT"
 
+# no max len
+VLLM_ENABLE_V1_MULTIPROCESSING=0 CUDA_VISIBLE_DEVICES=4,5 vllm serve Qwen/Qwen2.5-72B-Instruct-AWQ \
+    --tensor-parallel 2 --gpu-memory-utilization 0.9  \
+    --enforce-eager --disable-custom-all-reduce --port "$VLLM_PORT"
 # #!/bin/bash
 
 # # Check if config.yml exists

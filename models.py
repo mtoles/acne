@@ -9,6 +9,23 @@ import os
 import yaml
 from Levenshtein import distance
 from utils import OptionType
+from joblib import Memory
+
+_cache = Memory(".llm_cache", verbose=0)
+
+
+@_cache.cache
+def _cached_llm_call(model_id, base_url, api_key, messages, max_tokens, temperature, top_p):
+    """Cached LLM API call. Takes only serializable args (no client object)."""
+    client = OpenAI(base_url=base_url, api_key=api_key)
+    response = client.chat.completions.create(
+        model=model_id,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+    )
+    return response.choices[0].message.content
 
 SYSTEM_PROMPT = "You are a medical assistant."
 
@@ -59,9 +76,12 @@ class MrModel:
     def __init__(
         self,
         model_id,
-        base_url="http://localhost:8001/v1", 
+        base_url=None,
         api_key="token-abc123",
     ):
+        if base_url is None:
+            vllm_port = os.environ.get("VLLM_PORT", "8010")
+            base_url = f"http://localhost:{vllm_port}/v1"
         self.model_id = model_id
         self.client = OpenAI(
             base_url=base_url,
@@ -120,14 +140,16 @@ class MrModel:
     def predict_single(self, history: list[dict], max_tokens: int, options: Optional[Union[list[str], OptionType]], sample=False, attempts=3):
         # TODO: test on dates
         for attempt in range(attempts):
-            response = self.client.chat.completions.create(
-                model=self.model_id,
-                messages=history,
-                max_tokens=max_tokens,
-                temperature=1.0 if sample else 0.0,
-                top_p=1.0
+            temperature = 1.0 if sample else 0.0
+            response_text = _cached_llm_call(
+                self.model_id,
+                str(self.client.base_url),
+                self.client.api_key,
+                history,
+                max_tokens,
+                temperature,
+                1.0,
             )
-            response_text = response.choices[0].message.content
             # Strip <think>...</think> blocks for answer extraction (e.g. DeepSeek-R1, Qwen3)
             # For free-form (options=None), keep content but strip tags
             response_text = self._strip_think_tags(response_text, keep_content=(options is None))
