@@ -565,9 +565,9 @@ def process_pt(pt_id):
         med_result = conn.execute(med_query)
         med_records = pd.DataFrame(med_result.mappings().fetchall())
 
-        prc_query = text(f"SELECT * FROM prc WHERE EMPI = '{pt_id}'")
-        prc_result = conn.execute(prc_query)
-        prc_records = pd.DataFrame(prc_result.mappings().fetchall())
+        # prc_query = text(f"SELECT * FROM prc WHERE EMPI = '{pt_id}'")
+        # prc_result = conn.execute(prc_query)
+        # prc_records = pd.DataFrame(prc_result.mappings().fetchall())
 
         dem_query = text(f"SELECT * FROM dem WHERE EMPI = '{pt_id}'")
         dem_result = conn.execute(dem_query)
@@ -831,12 +831,11 @@ def process_pt(pt_id):
         )
         cancer_hits = [x for x in structured_hits if x["pred"] == "A"]
         for hit in cancer_hits:
-            record_date = block_records["Report_Date_Time"].max() if not block_records.empty else None
             rows.append({
                 "feature_name": "cancer_cancer",
                 "keyword": _icd_to_cancer_label(hit["Code"]),
                 "icd_code": hit["Code"],
-                "date": record_date,
+                "date": hit["Date"],
                 "prediction": hit["pred"],
             })
         # Follow-up features if any prediction is "A"
@@ -980,6 +979,24 @@ def process_pt(pt_id):
         else:
             rows.append({"feature_name": "demographics", "keyword": "deceased", "date": str(index_date), "prediction": "No"})
 
+    # --- Date of last record across all tables ---
+    last_dates = []
+    if not vis_records.empty:
+        last_dates.append(pd.to_datetime(vis_records["Report_Date_Time"]).max())
+    if not phy_records.empty:
+        last_dates.append(pd.to_datetime(phy_records["Date"]).max())
+    if not dia_records.empty:
+        last_dates.append(pd.to_datetime(dia_records["Date"]).max())
+    if not med_records.empty:
+        last_dates.append(pd.to_datetime(med_records["Medication_Date"]).max())
+    if last_dates:
+        rows.append({
+            "feature_name": "demographics",
+            "keyword": "last_record_date",
+            "date": str(index_date),
+            "prediction": str(max(last_dates)),
+        })
+
     # Save per-patient JSONL
     if rows:
         jsonl_path = _records_dir / f"{pt_id}.jsonl"
@@ -1059,6 +1076,7 @@ if args.limit is not None:
     pt_ids = pt_ids[: args.limit]
 
 pt_ids = args.target_empis + pt_ids
+random.shuffle(pt_ids)
 
 print(f"Processing {len(matched_case_empis)} matched cases + {len(matched_control_empis)} matched controls = {len(pt_ids)} patients")
 
