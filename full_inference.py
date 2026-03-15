@@ -997,6 +997,8 @@ def process_pt(pt_id):
             "prediction": str(max(last_dates)),
         })
 
+    rows.append({"feature_name": "index_date", "keyword": "index_date", "date": str(index_date), "prediction": str(index_date)})
+
     # Save per-patient JSONL
     if rows:
         jsonl_path = _records_dir / f"{pt_id}.jsonl"
