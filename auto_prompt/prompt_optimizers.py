@@ -10,6 +10,36 @@ import random
 from collections import defaultdict
 from abc import ABC, abstractmethod
 
+# Qwen2.5-72B max context = 32768 tokens (vLLM default).
+# Reserve 2048 tokens for output, use the rest for input.
+MAX_CONTEXT_TOKENS = 32768
+MAX_OUTPUT_TOKENS = 2048
+MAX_INPUT_TOKENS = MAX_CONTEXT_TOKENS - MAX_OUTPUT_TOKENS
+# Rough chars-per-token estimate for English medical text (conservative)
+CHARS_PER_TOKEN = 3
+MAX_INPUT_CHARS = MAX_INPUT_TOKENS * CHARS_PER_TOKEN
+
+
+def budget_examples(example_texts, overhead_chars):
+    """Fit as many examples as possible into the meta-prompt token budget.
+
+    Args:
+        example_texts: list of formatted example strings
+        overhead_chars: total chars of non-example parts of the meta-prompt
+
+    Returns:
+        list of example strings that fit within MAX_INPUT_CHARS
+    """
+    budget = MAX_INPUT_CHARS - overhead_chars
+    kept = []
+    total = 0
+    for text in example_texts:
+        total += len(text)
+        if total > budget:
+            break
+        kept.append(text)
+    return kept
+
 
 class PromptOptimizer(ABC):
     """Base class for prompt optimizers.
@@ -105,9 +135,6 @@ class OPROOptimizer(PromptOptimizer):
         # Record current prompt and score in trajectory
         self.trajectory.append((current_prompt, accuracy))
 
-        # Sample a random selection of problems (mix of correct and incorrect)
-        example_sample = random.sample(records, min(self.n_examples, len(records)))
-
         # Build trajectory section sorted by score (ascending, best last per OPRO paper)
         sorted_trajectory = sorted(self.trajectory, key=lambda x: x[1])
         trajectory_section = "\n\n".join(
@@ -115,10 +142,15 @@ class OPROOptimizer(PromptOptimizer):
             for prompt, score in sorted_trajectory
         )
 
+        # Sample problems, fit to token budget
+        overhead = len(trajectory_section) + 1000
+        shuffled = random.sample(records, len(records))
+        problem_texts = [f"Problem:\n{self.format_example(r)}" for r in shuffled]
+        problem_texts = budget_examples(problem_texts, overhead)
+        print(f"  OPRO: fitting {len(problem_texts)}/{len(records)} examples into meta-prompt")
+
         # Build problems section
-        problems_section = "\n\n".join(
-            f"Problem:\n{self.format_example(r)}" for r in example_sample
-        )
+        problems_section = "\n\n".join(problem_texts)
 
         meta_prompt = (
             "Your task is to generate the instruction <INS>. Below are some previous instructions with their scores.\n"
@@ -135,7 +167,7 @@ class OPROOptimizer(PromptOptimizer):
         )
 
         history = [{"role": "user", "content": meta_prompt}]
-        response = self.model.predict_single(history, max_tokens=4000, options=None)
+        response = self.model.predict_single(history, max_tokens=MAX_OUTPUT_TOKENS, options=None)
 
         # Strip <think> tags if present (Qwen CoT)
         response = self.model._strip_think_tags(response)
@@ -186,14 +218,6 @@ class OursOptimizer(PromptOptimizer):
         chosen_cell = random.choices(cells, weights=weights, k=1)[0]
         cell_errors = confusion[chosen_cell]
 
-        # Sample examples from the chosen confusion cell
-        error_sample = random.sample(cell_errors, min(self.n_error_examples, len(cell_errors)))
-
-        errors_section = "\n\n".join(
-            f"Example {i+1}:\n{self.format_example(err, prompt_text=current_prompt, include_prediction=True)}"
-            for i, err in enumerate(error_sample)
-        )
-
         accuracy = sum(1 for r in records if r["correct"]) / len(records)
 
         # Build rule history section
@@ -204,12 +228,24 @@ class OursOptimizer(PromptOptimizer):
                 for rule, accepted, delta in self.rule_history
             ) + "\n"
 
+        # Sample examples from the chosen confusion cell, fit to token budget
+        overhead = len(current_prompt) + len(rule_history_section) + 1000
+        shuffled_errors = random.sample(cell_errors, len(cell_errors))
+        error_texts = [
+            f"Example {i+1}:\n{self.format_example(err, prompt_text=current_prompt, include_prediction=True)}"
+            for i, err in enumerate(shuffled_errors)
+        ]
+        error_texts = budget_examples(error_texts, overhead)
+        print(f"  Ours: fitting {len(error_texts)}/{len(cell_errors)} error examples into meta-prompt")
+
+        errors_section = "\n\n".join(error_texts)
+
         meta_prompt = (
             "You are helping optimize a prompt for a medical record question-answering system.\n\n"
             f"The current prompt (accuracy: {accuracy:.0%}) is:\n"
             f"---\n{current_prompt}\n---\n"
             f"{rule_history_section}\n"
-            f"Below are {len(error_sample)} examples where the model answered INCORRECTLY. "
+            f"Below are {len(error_texts)} examples where the model answered INCORRECTLY. "
             f"All share the same confusion pattern: the model predicts \"{chosen_cell[1]}\" "
             f"when the correct answer is \"{chosen_cell[0]}\" "
             f"({len(cell_errors)} errors of this type out of {len(errors)} total errors).\n\n"
@@ -224,7 +260,7 @@ class OursOptimizer(PromptOptimizer):
         )
 
         history = [{"role": "user", "content": meta_prompt}]
-        response = self.model.predict_single(history, max_tokens=2000, options=None)
+        response = self.model.predict_single(history, max_tokens=MAX_OUTPUT_TOKENS, options=None)
 
         # Strip <think> tags if present (Qwen CoT)
         response = self.model._strip_think_tags(response)
