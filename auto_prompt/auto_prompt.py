@@ -25,11 +25,6 @@ Baseline algorithms (implemented in prompt_optimizers.py):
         natural language optimization problem; the meta-prompt contains a trajectory
         of past prompts sorted by score.
 
-    EvoPrompt (Guo et al., 2023): Maintains a population of prompts, applies
-        evolutionary operators (crossover, mutation) to generate candidates, evaluates
-        on train set, and selects the fittest. Unique: no meta-LLM needed for the
-        optimization step itself; diversity maintained via population.
-
     PromptAgent (Wang et al., 2023): Uses Monte Carlo Tree Search over the space of
         prompt rewrites. Each node is a prompt, edges are LLM-proposed edits.
         Unique: strategic exploration/exploitation tradeoff via UCB; plans multiple
@@ -58,6 +53,12 @@ Baseline algorithms (implemented in prompt_optimizers.py):
         formulates new prompt rules to address it. Unique: uses algorithmic clustering
         (HDBSCAN) rather than LLM-based categorization.
 
+    SAMMO (Schnabel et al., 2024): Represents prompts as structured ASTs, applies
+        typed mutation operators (paraphrase, add/remove sections) to specific nodes,
+        and searches via beam search. Not implemented because its contributions are
+        framework-level (AST representation, beam search) rather than algorithmic, and
+        our prompts are too simple to benefit from AST structure. 
+
     Matt-opt (ours): for multiple choice questions, use confusion matrix clustering
         (group errors by ground_truth/prediction pairs) to identify systematic failure
         patterns. Address one confusion pattern per iteration with targeted add/remove
@@ -65,12 +66,11 @@ Baseline algorithms (implemented in prompt_optimizers.py):
 
 Not implemented:
 
-    SAMMO (Schnabel et al., 2024): Represents prompts as structured ASTs, applies
-        typed mutation operators (paraphrase, add/remove sections) to specific nodes,
-        and searches via beam search. Not implemented because its contributions are
-        framework-level (AST representation, beam search) rather than algorithmic, and
-        our prompts are too simple to benefit from AST structure. The paper does not
-        include error clustering despite common misconception.
+    EvoPrompt (Guo et al., 2023): Maintains a population of prompts, applies
+        evolutionary operators (crossover, mutation) to generate candidates, evaluates
+        on train set, and selects the fittest. Unique: no meta-LLM needed for the
+        optimization step itself; diversity maintained via population. Not implemented
+        because it requires an initial set of multiple prompts.
 
     APE (Zhou et al., 2022): Generates N candidate prompts from input-output examples
         in parallel, evaluates all, selects the best. The foundational "generate then
@@ -103,7 +103,7 @@ os.chdir(PROJECT_ROOT)
 from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase, PtNumericFeatureBase
 from models import MrModel, DummyModel
 from utils import get_dataset, compute_numeric_pct_error, compute_numeric_abs_error
-from prompt_optimizers import DummyOptimizer, OPROOptimizer
+from prompt_optimizers import DummyOptimizer, OPROOptimizer, OursOptimizer
 
 tqdm.pandas()
 
@@ -112,6 +112,7 @@ PROMPT_HISTORY_PATH = "labeled_data/LLM Adjustment Tracking.xlsx"
 OPTIMIZERS = {
     "dummy": DummyOptimizer,
     "opro": OPROOptimizer,
+    "ours": OursOptimizer,
 }
 
 
@@ -164,6 +165,12 @@ def parse_args():
         type=int,
         default=50,
         help="Number of parallel workers for inference (default: 50)",
+    )
+    parser.add_argument(
+        "--note",
+        type=str,
+        default="default",
+        help="Note to use as a subdirectory in the output path (e.g. model_dir/note/timestamp)",
     )
     return parser.parse_args()
 
@@ -318,13 +325,13 @@ def run_inference(chunk_df, prompt_text, feature_name, target_cls, inference_typ
 
 
 def process_file(file_path, inference_type, downsample=None, data_source=None,
-                 baseline_prompts=None, feature_name_override=None, optimizer=None, iterations=3, n_workers=50):
+                 baseline_prompts=None, feature_name_override=None, optimizer=None, iterations=3, n_workers=50, note="default"):
     feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
     print(f"\nProcessing {feature_name}")
 
     preds_dir = Path("preds")
     model_dir = preds_dir / model_id.replace("/", "_")
-    timestamp_dir = model_dir / timestamp
+    timestamp_dir = model_dir / note / timestamp
     feature_dir = timestamp_dir / feature_name
     feature_dir.mkdir(parents=True, exist_ok=True)
 
@@ -397,9 +404,30 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
 
         # Optimizer proposes a new prompt (gets all records so it can see correct + incorrect)
         optimizer_result = optimizer.step(current_prompt, train_metrics["records"])
-        prompt_history[-1]["candidate_prompt"] = optimizer_result["prompt"]
+        candidate_prompt = optimizer_result["prompt"]
+        prompt_history[-1]["candidate_prompt"] = candidate_prompt
         prompt_history[-1]["candidate_raw_response"] = optimizer_result["raw_response"]
-        current_prompt = optimizer_result["prompt"]
+
+        # Evaluate candidate and accept/reject
+        candidate_chunk_df = train_df.copy()
+        _, candidate_metrics = run_inference(
+            candidate_chunk_df, candidate_prompt, feature_name, target_cls, inference_type,
+            n_workers=n_workers, desc=f"Candidate iter {iteration}"
+        )
+        candidate_accuracy = candidate_metrics["combined"]
+        accuracy_delta = candidate_accuracy - train_accuracy
+        accepted = bool(candidate_accuracy > train_accuracy)
+        prompt_history[-1]["candidate_accuracy"] = candidate_accuracy
+        prompt_history[-1]["accepted"] = accepted
+
+        rule = optimizer_result.get("rule", candidate_prompt)
+        optimizer.feedback(rule, accepted, accuracy_delta)
+
+        if accepted:
+            print(f"  ACCEPTED candidate (acc {train_accuracy:.3f} -> {candidate_accuracy:.3f}, {accuracy_delta:+.3f})")
+            current_prompt = candidate_prompt
+        else:
+            print(f"  REJECTED candidate (acc {train_accuracy:.3f} -> {candidate_accuracy:.3f}, {accuracy_delta:+.3f})")
 
     # Use the best prompt found during optimization
     print(f"\n--- Final eval with best prompt (train acc={best_train_accuracy:.3f}) ---")
@@ -457,8 +485,8 @@ def main():
 
     preds_dir = Path("auto_prompt/preds")
     model_dir = preds_dir / model_id.replace("/", "_")
-    timestamp_dir = model_dir / timestamp
-    timestamp_dir.mkdir(parents=True, exist_ok=True) 
+    timestamp_dir = model_dir / args.note / timestamp
+    timestamp_dir.mkdir(parents=True, exist_ok=True)
 
     excel_files = []
     for subdir in labeled_data_dir.iterdir():
@@ -489,56 +517,68 @@ def main():
 
     all_results = {}
 
+    records_path = timestamp_dir / "records.jsonl"
+    results_path = timestamp_dir / "results.json"
+
+    def save_feature_results(feature_name, results):
+        """Save per-feature results immediately after each feature completes."""
+        # Append records to .jsonl
+        with open(records_path, "a") as f:
+            for rec in results["records"]:
+                f.write(json.dumps(rec) + "\n")
+
+        # Write/update aggregate results.json with all completed features so far
+        serializable = {
+            "metadata": {
+                "model": model_id,
+                "optimizer": args.optimizer,
+                "iterations": args.iterations,
+            },
+            "features": {
+                feat: {
+                    "baseline_prompt": r["baseline_prompt"],
+                    "train_accuracy_history": r["train_accuracy_history"],
+                    "best_train_accuracy": r["best_train_accuracy"],
+                    "eval_combined": r["eval_metrics"]["combined"],
+                    "eval_natural": r["eval_metrics"]["natural"],
+                    "eval_synthetic": r["eval_metrics"]["synthetic"],
+                    "best_prompt": r["best_prompt"],
+                    "prompt_history": r["prompt_history"],
+                }
+                for feat, r in all_results.items()
+            },
+        }
+        with open(results_path, "w") as f:
+            json.dump(serializable, f, indent=2)
+
+        # Print per-feature summary line
+        train_hist = " -> ".join(f"{a:.3f}" for a in results["train_accuracy_history"])
+        eval_acc = results["eval_metrics"]["combined"]
+        line = f"  >> {feature_name}: train=[{train_hist}] eval={eval_acc:.3f}"
+        if "avg_pct_error" in results["eval_metrics"]:
+            line += f" pct_err={results['eval_metrics']['avg_pct_error']:.1f}%"
+        print(line)
+        print(f"  >> Saved to: {results_path}")
+
     for feature_name, file_path in features_to_process:
         print(f"\n{'='*80}")
         print(f"Processing {feature_name}...")
         print(f"{'='*80}")
-        if "cancer_date_frequency" in feature_name:
+        target_cls = PtFeaturesMeta.registry.get(feature_name)
+        if target_cls and issubclass(target_cls, (PtDateFeatureBase, PtNumericFeatureBase)):
+            print(f"  Skipping {feature_name} (date/numeric feature, MC only for now)")
             continue
         results = process_file(
             file_path, inference_type, downsample,
             data_source=args.data_source, baseline_prompts=baseline_prompts,
             feature_name_override=feature_name, optimizer=optimizer,
-            iterations=args.iterations, n_workers=args.n_workers,
+            iterations=args.iterations, n_workers=args.n_workers, note=args.note,
         )
         if results:
             all_results[feature_name] = results
+            save_feature_results(feature_name, results)
 
-    # Write per-example records to .jsonl (one JSON object per line)
-    records_path = timestamp_dir / "records.jsonl"
-    with open(records_path, "w") as f:
-        for feat, r in all_results.items():
-            for rec in r["records"]:
-                f.write(json.dumps(rec) + "\n")
-    print(f"\nPer-example records saved to: {records_path}")
-
-    # Write aggregate results
-    results_path = timestamp_dir / "results.json"
-    serializable = {
-        "metadata": {
-            "model": model_id,
-            "optimizer": args.optimizer,
-            "iterations": args.iterations,
-        },
-        "features": {
-            feat: {
-                "baseline_prompt": r["baseline_prompt"],
-                "train_accuracy_history": r["train_accuracy_history"],
-                "best_train_accuracy": r["best_train_accuracy"],
-                "eval_combined": r["eval_metrics"]["combined"],
-                "eval_natural": r["eval_metrics"]["natural"],
-                "eval_synthetic": r["eval_metrics"]["synthetic"],
-                "best_prompt": r["best_prompt"],
-                "prompt_history": r["prompt_history"],
-            }
-            for feat, r in all_results.items()
-        },
-    }
-    with open(results_path, "w") as f:
-        json.dump(serializable, f, indent=2)
-    print(f"Aggregate results saved to: {results_path}")
-
-    # Summary
+    # Final summary
     print("\n" + "="*80)
     print("Summary:")
     print("="*80)
@@ -557,13 +597,14 @@ def main():
             print(line)
             f.write(line + "\n")
 
-            # Show first 5 eval errors
             errors = results["eval_metrics"].get("errors", [])
             if errors:
                 f.write(f"  First {min(5, len(errors))} eval errors:\n")
                 for err in errors[:5]:
                     err_line = f"    pred={err['prediction']}, gt={err['ground_truth']}, chunk={err['chunk'][:150]}"
                     f.write(err_line + "\n")
+
+    print(f"\nAll results: {results_path}")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ The optimization loop in auto_prompt.py handles evaluation and iteration.
 
 import re
 import random
+from collections import defaultdict
 from abc import ABC, abstractmethod
 
 
@@ -23,6 +24,41 @@ class PromptOptimizer(ABC):
             model: model instance for meta-LLM calls
         """
         self.model = model
+
+    @staticmethod
+    def format_example(rec, prompt_text="<INS>", include_prediction=False):
+        """Format a single record mirroring MrModel.format_chunk_qs inference format.
+
+        Args:
+            rec: dict with chunk, keyword, ground_truth, prediction, correct
+            prompt_text: the prompt/instruction to show in the Question slot
+            include_prediction: if True, include model prediction and ground truth
+        """
+        lines = (
+            f"### Medical Record Excerpt: {rec['chunk']}\n\n"
+            f"### Question: {prompt_text}\n\n"
+            f"(keyword = \"{rec['keyword']}\")"
+        )
+        if include_prediction:
+            lines += (
+                f"\nModel prediction: {rec['prediction']}"
+                f"\nGround truth answer: {rec['ground_truth']}"
+            )
+        else:
+            lines += f"\nGround truth answer:\n{rec['ground_truth']}"
+        return lines
+
+    def feedback(self, rule, accepted, accuracy_delta):
+        """Called by the outer loop after evaluating a candidate prompt.
+
+        Subclasses can override to track accepted/rejected rules.
+
+        Args:
+            rule: str, the rule or prompt that was proposed
+            accepted: bool, whether accuracy improved
+            accuracy_delta: float, change in accuracy (positive = improvement)
+        """
+        pass
 
     @abstractmethod
     def step(self, current_prompt, records):
@@ -54,78 +90,48 @@ class DummyOptimizer(PromptOptimizer):
 
 
 class OPROOptimizer(PromptOptimizer):
-    """OPRO-style optimizer: shows errors + random correct examples to a meta-LLM
-    and asks it to produce an improved prompt."""
+    """OPRO-style optimizer: shows previous instructions with scores and example
+    problems to a meta-LLM, and asks it to produce an improved instruction."""
 
-    def __init__(self, model=None, n_correct_examples=5, max_errors=20):
+    def __init__(self, model=None, n_examples=20):
         super().__init__(model=model)
-        self.n_correct_examples = n_correct_examples
-        self.max_errors = max_errors
-        self.trajectory = []  # list of (prompt, accuracy) tuples, sorted by score
-
-    def _format_example(self, rec, label):
-        """Format a single record for the meta-prompt."""
-        chunk_preview = rec["chunk"]
-        return (
-            f"[{label}]\n"
-            f"Keyword: {rec['keyword']}\n"
-            f"Record excerpt: {chunk_preview}\n"
-            f"Expected answer: {rec['ground_truth']}\n"
-            f"Model answer: {rec['prediction']}\n"
-        )
+        self.n_examples = n_examples
+        self.trajectory = []  # list of (prompt, accuracy) tuples
 
     def step(self, current_prompt, records):
-        errors = [r for r in records if not r["correct"]]
         correct = [r for r in records if r["correct"]]
         accuracy = len(correct) / len(records)
 
         # Record current prompt and score in trajectory
         self.trajectory.append((current_prompt, accuracy))
 
-        # Sample correct examples
-        correct_sample = random.sample(correct, min(self.n_correct_examples, len(correct))) if correct else []
-
-        # Cap errors to avoid exceeding context
-        error_sample = errors[:self.max_errors]
-
-        # Build meta-prompt
-        correct_section = "\n\n".join(self._format_example(r, "CORRECT") for r in correct_sample)
-        error_section = "\n\n".join(self._format_example(r, "ERROR") for r in error_sample)
+        # Sample a random selection of problems (mix of correct and incorrect)
+        example_sample = random.sample(records, min(self.n_examples, len(records)))
 
         # Build trajectory section sorted by score (ascending, best last per OPRO paper)
         sorted_trajectory = sorted(self.trajectory, key=lambda x: x[1])
         trajectory_section = "\n\n".join(
-            f"[Score: {score:.0%}]\n{prompt}"
+            f"text:\n{prompt}\nscore:\n{round(score * 100)}"
             for prompt, score in sorted_trajectory
         )
 
-        meta_prompt = (
-            "You are an expert prompt engineer. Your task is to improve a prompt used to extract "
-            "information from medical records.\n\n"
-            f"## Prompt Optimization Trajectory (sorted by score, best last)\n{trajectory_section}\n\n"
-            f"## Current Prompt\n{current_prompt}\n\n"
-            f"## Results\n"
-            f"Accuracy: {len(correct)}/{len(records)} "
-            f"({len(correct)/len(records)*100:.0f}%)\n\n"
+        # Build problems section
+        problems_section = "\n\n".join(
+            f"Problem:\n{self.format_example(r)}" for r in example_sample
         )
 
-        if correct_section:
-            meta_prompt += f"## Examples the model got CORRECT\n{correct_section}\n\n"
+        meta_prompt = (
+            "Your task is to generate the instruction <INS>. Below are some previous instructions with their scores.\n"
+            "The score ranges from 0 to 100.\n\n"
+            f"{trajectory_section}\n\n"
+            f"Below are some problems.\n\n"
+            f"{problems_section}\n\n"
+            "Think step by step, then generate an instruction that is different from all the instructions <INS> above, and has a higher score "
+            "than all the instructions <INS> above. The instruction should begin with <INS> and end with </INS>. "
+            "The instruction should be concise, effective, and generally applicable to all problems above. "
+            "Do not edit the options mentioned in the problems. "
+            "If you include \{keyword\} in your instruction, it will be replaced with the actual keyword during inference, so it can be used as a placeholder. "
 
-        meta_prompt += (
-            f"## Examples the model got WRONG\n{error_section}\n\n"
-            "## Instructions\n"
-            "First, reason step-by-step inside <reasoning>...</reasoning> tags. Analyze the errors "
-            "above and identify what systematic mistake(s) the model is making. Consider what "
-            "instructions would fix these errors while preserving correct answers.\n\n"
-            "Then, AFTER the closing </reasoning> tag, output ONLY the improved prompt text.\n\n"
-            "Rules:\n"
-            "- Keep the same question structure and answer options\n"
-            "- Add clarifying rules or instructions that address the specific failure patterns\n"
-            "- Do not remove existing instructions that are working\n"
-            "- Be concise -- only add what is necessary\n\n"
-            "Remember: <reasoning>your analysis here</reasoning>\n"
-            "Then the improved prompt text with no other wrapping or explanation."
         )
 
         history = [{"role": "user", "content": meta_prompt}]
@@ -134,21 +140,105 @@ class OPROOptimizer(PromptOptimizer):
         # Strip <think> tags if present (Qwen CoT)
         response = self.model._strip_think_tags(response)
 
-        # Extract and log reasoning, then strip it from the output prompt
-        reasoning_match = re.search(r'<reasoning>(.*?)</reasoning>', response, flags=re.DOTALL)
-        if reasoning_match:
-            reasoning = reasoning_match.group(1).strip()
-            print(f"  OPRO reasoning ({len(reasoning)} chars): {reasoning[:300]}...")
+        # Extract the instruction from <INS>...</INS> tags
+        ins_match = re.search(r'<INS>(.*?)</INS>', response, flags=re.DOTALL)
+        if ins_match:
+            new_prompt = ins_match.group(1).strip()
         else:
-            print("  OPRO: no <reasoning> tags found in response")
-
-        # Strip <reasoning>...</reasoning> blocks and any unclosed <reasoning> tags
-        new_prompt = re.sub(r'<reasoning>.*?</reasoning>', '', response, flags=re.DOTALL)
-        new_prompt = re.sub(r'<reasoning>.*', '', new_prompt, flags=re.DOTALL)
-        # Strip common preamble the model may add
-        new_prompt = re.sub(r'^#+\s*(Modified|Improved|Updated|New)\s*Prompt\s*\n?', '', new_prompt.strip(), flags=re.IGNORECASE)
-        new_prompt = new_prompt.strip()
+            # Fallback: try to use the full response stripped of common wrappers
+            print("  OPRO: no <INS>...</INS> tags found in response, using full response")
+            new_prompt = response.strip()
 
         print(f"  OPRO prompt ({len(new_prompt)} chars): {new_prompt[:150]}...")
 
         return {"prompt": new_prompt, "raw_response": response}
+
+class OursOptimizer(PromptOptimizer):
+    """Label-2-Prompt optimizer: uses confusion matrix clustering to infer rules
+    from errors and appends them to the prompt.
+
+    Unlike OPRO which replaces the entire prompt each iteration, this optimizer
+    grows the prompt additively by inferring one rule per iteration targeting
+    a specific confusion pattern (ground_truth -> prediction cell).
+    """
+
+    def __init__(self, model=None, n_error_examples=10):
+        super().__init__(model=model)
+        self.n_error_examples = n_error_examples
+        self.rule_history = []  # list of (rule, accepted, accuracy_delta)
+
+    def feedback(self, rule, accepted, accuracy_delta):
+        self.rule_history.append((rule, accepted, accuracy_delta))
+
+    def step(self, current_prompt, records):
+        errors = [r for r in records if not r["correct"]]
+        if not errors:
+            return {"prompt": current_prompt, "raw_response": ""}
+
+        # Construct confusion matrix of errors: (ground_truth, prediction) -> [records]
+        confusion = defaultdict(list)
+        for err in errors:
+            confusion[(err["ground_truth"], err["prediction"])].append(err)
+
+        # Choose a cell randomly proportional to its prevalence
+        cells = list(confusion.keys())
+        weights = [len(confusion[c]) for c in cells]
+        chosen_cell = random.choices(cells, weights=weights, k=1)[0]
+        cell_errors = confusion[chosen_cell]
+
+        # Sample examples from the chosen confusion cell
+        error_sample = random.sample(cell_errors, min(self.n_error_examples, len(cell_errors)))
+
+        errors_section = "\n\n".join(
+            f"Example {i+1}:\n{self.format_example(err, prompt_text=current_prompt, include_prediction=True)}"
+            for i, err in enumerate(error_sample)
+        )
+
+        accuracy = sum(1 for r in records if r["correct"]) / len(records)
+
+        # Build rule history section
+        rule_history_section = ""
+        if self.rule_history:
+            rule_history_section = "\n\nPreviously proposed rules:\n" + "\n".join(
+                f"- {'ACCEPTED' if accepted else 'REJECTED'} (accuracy {delta:+.0%}): {rule}"
+                for rule, accepted, delta in self.rule_history
+            ) + "\n"
+
+        meta_prompt = (
+            "You are helping optimize a prompt for a medical record question-answering system.\n\n"
+            f"The current prompt (accuracy: {accuracy:.0%}) is:\n"
+            f"---\n{current_prompt}\n---\n"
+            f"{rule_history_section}\n"
+            f"Below are {len(error_sample)} examples where the model answered INCORRECTLY. "
+            f"All share the same confusion pattern: the model predicts \"{chosen_cell[1]}\" "
+            f"when the correct answer is \"{chosen_cell[0]}\" "
+            f"({len(cell_errors)} errors of this type out of {len(errors)} total errors).\n\n"
+            f"{errors_section}\n\n"
+            "Analyze the errors above. Identify the implicit assumption or pattern the model is missing. "
+            "Then write a concise rule that, if appended to the prompt, would fix these errors "
+            "without breaking correct answers.\n\n"
+            "The rule should begin with <RULE> and end with </RULE>.\n"
+            "The rule should be a concrete instruction (e.g. 'If overlapping prescriptions, count total days, not per-antibiotic days.').\n"
+            "Do not rewrite the entire prompt -- just output the new rule to append.\n"
+            "If you include {keyword} in your rule, it will be replaced with the actual keyword during inference."
+        )
+
+        history = [{"role": "user", "content": meta_prompt}]
+        response = self.model.predict_single(history, max_tokens=2000, options=None)
+
+        # Strip <think> tags if present (Qwen CoT)
+        response = self.model._strip_think_tags(response)
+
+        # Extract the rule from <RULE>...</RULE> tags
+        rule_match = re.search(r'<RULE>(.*?)</RULE>', response, flags=re.DOTALL)
+        if rule_match:
+            rule = rule_match.group(1).strip()
+        else:
+            print("  Ours: no <RULE>...</RULE> tags found in response, using full response")
+            rule = response.strip()
+
+        new_prompt = current_prompt.rstrip() + "\n" + rule
+        print(f"  Ours confusion cell: {chosen_cell[0]} -> {chosen_cell[1]} ({len(cell_errors)} errors)")
+        print(f"  Ours rule ({len(rule)} chars): {rule[:150]}...")
+
+        return {"prompt": new_prompt, "raw_response": response, "rule": rule}
