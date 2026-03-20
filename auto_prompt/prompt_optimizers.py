@@ -618,3 +618,417 @@ class ETGPOOptimizer(PromptOptimizer):
         print(f"  ETGPO prompt ({len(full_prompt)} chars): {full_prompt[:150]}...")
 
         return {"prompt": full_prompt, "raw_response": raw_response, "rule": full_prompt}
+
+
+class AMPOOptimizer(PromptOptimizer):
+    """AMPO: Automatic Multi-Branched Prompt Optimization (Yang et al., EMNLP 2024).
+
+    Three-agent pipeline per iteration:
+        1. LLM-Analyzer: identifies root cause of each sampled failure (Table 4)
+        2. LLM-Summarizer: consolidates causes into patterns with importance scores (Table 5)
+        3. LLM-Revisor: adds/enhances conditional branches in the prompt, then prunes (Table 6)
+
+    Prompt templates are taken verbatim from the AMPO paper Tables 4-6.
+    The prompt grows structurally via if/else branches rather than linear rule
+    appending. The target LLM self-routes through branches at inference time.
+    """
+
+    # -- Paper prompt templates (Tables 4, 5, 6) --
+    # DO NOT edit these templates without permission.
+
+    _ANALYZER_PROMPT = (
+        "---ProblemStart---\n"
+        "I have some instructions for a specific problem:\n"
+        "---InstructionsStart---\n"
+        "{initial_prompt}\n"
+        "---InstructionsEnd---\n"
+        "But it gets the following cases wrong:\n"
+        "---BadCasesStart---\n"
+        "{bad_examples}\n"
+        "---BadCasesEnd---\n"
+        "Your task is to identify the underlying causes for my [# Instructions] as an analyzer. "
+        "Please follow these steps:\n"
+        "(1) Identify what perspectives there are to consider for my problem. Please think as "
+        "comprehensively as possible, considering all aspects.\n"
+        "(2) Based on these potential perspectives you identified, analyze the pattern of the failed cases.\n"
+        "(3) Carefully review each step of my [# Instructions] and identify which step neglects the "
+        "key information in the pattern, resulting in failure.\n"
+        "(4) Write your reasons and wrap each reason with <START> and <END>."
+    )
+
+    _SUMMARIZER_PROMPT = (
+        "---ProblemStart---\n"
+        "I have some instructions for a specific problem:\n"
+        "---InstructionsStart---\n"
+        "{initial_prompt}\n"
+        "---InstructionsEnd---\n"
+        "Here are some reasons why my current instructions cannot solve some problem:\n"
+        "---Reasons---\n"
+        "{reasons}\n"
+        "---Reasons---\n"
+        "Your task is to summarize the many reasons provided above into a few major categories "
+        "and assign an important score for each category. Be careful to eliminate repetitive and "
+        "similar reasons. Each summarized pattern should be wrapped with <START> and <END>."
+    )
+
+    _REVISOR_PROMPT = (
+        "---ProblemStart---\n"
+        "You have some instructions for a specific task:\n"
+        "---InstructionsStart---\n"
+        "{initial_prompt}\n"
+        "---InstructionsEnd---\n"
+        "However, due to the complexity of real-world situations, a single flow of instructions "
+        "(i.e., sequential instructions) cannot apply to all cases. Therefore, you should transform "
+        "the instructions into a conditional approach, which means adopting different instructions "
+        "for different patterns.\n"
+        "Notably, the key aspect of this process is to create an adaptive prompt structure, thereby "
+        "accommodating tasks of varying difficulties. To achieve this, you should find the golden "
+        "mean between adding the branches to address the new pattern and providing more details to "
+        "enhance the existing branches based on the difficulty of your task and the distribution of "
+        "recognized patterns.\n"
+        "An expert has pointed some patterns that you don't considered before for your instructions:\n"
+        "---ExpertAnalysisStart---\n"
+        "{patterns}\n"
+        "---ExpertAnalysisEnd---\n"
+        "Please optimize your [# Instructions] based on expert analysis step-by-step:\n"
+        "(1) Carefully review each step of your instructions.\n"
+        "(2) Identify the steps that went wrong due to a lack of key information mentioned in "
+        "expert analysis.\n"
+        "(3) For each suboptimal step, you have the following options:\n"
+        "- 3.1 Consider improving the step to include the key information.\n"
+        "- 3.2 Otherwise, you can also consider adding **sub-steps** using an **if** or **if-else** "
+        "structure to handle the **new** patterns. Ensure that each substep is specific and avoids "
+        "vague instructions.\n"
+        "Note that if a step needs to consider multiple situations, break it down into substeps to "
+        "make it easier to follow.\n"
+        "(4) Include Tips or Cautions: If merely optimizing existing steps with branches like "
+        "if-else does not sufficiently to address all aspects, add new tips or cautions to the "
+        "current instructions to handle different patterns.\n"
+        "(5) Maintain the other main steps unchanged from the initial prompt, in order to not lose "
+        "information.\n"
+        "(6) At last, review the whole steps and prune the branches to avoid the instructions "
+        "overfitting.\n"
+        "Please only output the optimized prompt without anything else."
+    )
+
+    _PRUNER_PROMPT = (
+        "---ProblemStart---\n"
+        "You have some optimized instructions for a specific task:\n"
+        "---InstructionsStart---\n"
+        "{optimized_prompt}\n"
+        "---InstructionsEnd---\n"
+        "Review the whole instructions and prune any branches that may cause overfitting. "
+        "Remove branches that are:\n"
+        "- Too specific to a single case and unlikely to generalize\n"
+        "- Redundant with other branches\n"
+        "- Contradictory to other instructions\n"
+        "Please only output the pruned prompt without anything else."
+    )
+
+    def __init__(self, model=None, k_failures=5, n_top_patterns=1):
+        super().__init__(model=model)
+        self.k_failures = k_failures
+        self.n_top_patterns = n_top_patterns
+        self.revision_history = []  # track (pattern, accepted, delta)
+
+    def feedback(self, rule, accepted, accuracy_delta):
+        self.revision_history.append((rule, accepted, accuracy_delta))
+
+    def _call_llm(self, prompt, sample=False):
+        history = [{"role": "user", "content": prompt}]
+        response = self.model.predict_single(
+            history, max_tokens=MAX_OUTPUT_TOKENS, options=None, sample=sample
+        )
+        if response is None:
+            print("  AMPO WARNING: LLM returned empty response")
+            return ""
+        return self.model._strip_think_tags(response)
+
+    def _format_bad_case(self, i, err, current_prompt):
+        """Format a single failure case for the Analyzer prompt."""
+        return (
+            f"Case {i+1}:\n"
+            f"Medical Record: {err['chunk']}\n"
+            f"Question: {current_prompt}\n"
+            f"(keyword = \"{err['keyword']}\")\n"
+            f"Correct Answer: {err['ground_truth']}\n"
+            f"Model's Answer: {err['prediction']}"
+        )
+
+    def _analyze(self, errors, current_prompt):
+        """Agent 1 (LLM-Analyzer, Table 4): identify root cause for each failure.
+
+        Returns list of reason strings extracted from <START>...<END> tags.
+        """
+        bad_examples = "\n\n".join(
+            self._format_bad_case(i, err, current_prompt)
+            for i, err in enumerate(errors)
+        )
+
+        meta_prompt = self._ANALYZER_PROMPT.format(
+            initial_prompt=current_prompt,
+            bad_examples=bad_examples,
+        )
+        print(f"  AMPO Analyzer: analyzing {len(errors)} failures")
+
+        response = self._call_llm(meta_prompt, sample=True)
+        if not response:
+            return []
+
+        # Extract reasons from <START>...<END> tags
+        reasons = re.findall(r'<START>(.*?)<END>', response, flags=re.DOTALL)
+        reasons = [r.strip() for r in reasons if r.strip()]
+
+        if not reasons:
+            print("  AMPO Analyzer: no <START>...<END> tags found, using full response")
+            reasons = [response.strip()]
+
+        return reasons
+
+    def _summarize(self, reasons, current_prompt):
+        """Agent 2 (LLM-Summarizer, Table 5): consolidate reasons into patterns.
+
+        Returns list of (pattern_text, importance_score) tuples sorted by score
+        descending. Importance scores are parsed from the summarizer output
+        (e.g. "Important score: 8/10" or "Score: 8").
+        """
+        reasons_text = "\n".join(f"Reason {i+1}: {r}" for i, r in enumerate(reasons))
+
+        meta_prompt = self._SUMMARIZER_PROMPT.format(
+            initial_prompt=current_prompt,
+            reasons=reasons_text,
+        )
+
+        response = self._call_llm(meta_prompt)
+        if not response:
+            return []
+
+        # Extract patterns from <START>...<END> tags
+        raw_patterns = re.findall(r'<START>(.*?)<END>', response, flags=re.DOTALL)
+        raw_patterns = [p.strip() for p in raw_patterns if p.strip()]
+
+        if not raw_patterns:
+            print("  AMPO Summarizer: no <START>...<END> tags found, using full response")
+            raw_patterns = [response.strip()]
+
+        # Parse importance scores from each pattern block
+        scored_patterns = []
+        for pat in raw_patterns:
+            # Try to find score like "Important score: 8", "Score: 8/10", "Importance: 8"
+            score_match = re.search(
+                r'(?:important|importance)\s*(?:score)?\s*[:=]\s*(\d+)', pat, re.IGNORECASE
+            )
+            if not score_match:
+                score_match = re.search(r'score\s*[:=]\s*(\d+)', pat, re.IGNORECASE)
+            score = int(score_match.group(1)) if score_match else 0
+            scored_patterns.append((pat, score))
+
+        # Sort by importance score descending (Algorithm line 14)
+        scored_patterns.sort(key=lambda x: x[1], reverse=True)
+        return scored_patterns
+
+    def _revise(self, current_prompt, pattern_text):
+        """Agent 3 (LLM-Revisor, Table 6): add/enhance branches.
+
+        Returns (new_prompt, raw_response).
+        """
+        meta_prompt = self._REVISOR_PROMPT.format(
+            initial_prompt=current_prompt,
+            patterns=pattern_text,
+        )
+
+        response = self._call_llm(meta_prompt)
+        if not response:
+            return current_prompt, ""
+
+        # The paper says "Please only output the optimized prompt without anything else."
+        # So the full response IS the new prompt.
+        new_prompt = response.strip()
+
+        return new_prompt, response
+
+    def _prune(self, optimized_prompt):
+        """Separate pruning step (Algorithm line 17).
+
+        The Revisor prompt includes inline pruning (step 6), but the algorithm
+        specifies a distinct pruning pass to avoid overfitting.
+
+        Returns pruned prompt string.
+        """
+        meta_prompt = self._PRUNER_PROMPT.format(
+            optimized_prompt=optimized_prompt,
+        )
+
+        response = self._call_llm(meta_prompt)
+        if not response:
+            return optimized_prompt
+
+        return response.strip()
+
+    def step(self, current_prompt, records):
+        """Single-candidate step for interface compatibility.
+
+        When n_top_patterns=1 and the base class search() loop is used, this
+        provides the standard step/eval/accept cycle.
+        """
+        errors = [r for r in records if not r["correct"]]
+        if not errors:
+            return {"prompt": current_prompt, "raw_response": ""}
+
+        accuracy = sum(1 for r in records if r["correct"]) / len(records)
+
+        # Line 9: Sample K failed cases
+        k = min(self.k_failures, len(errors))
+        sampled_errors = random.sample(errors, k)
+
+        print(f"  AMPO: {len(errors)} errors at {accuracy:.0%}, sampling {k} for analysis")
+
+        # Line 11: LLM-Analyzer
+        reasons = self._analyze(sampled_errors, current_prompt)
+        if not reasons:
+            print("  AMPO: analyzer returned no reasons")
+            return {"prompt": current_prompt, "raw_response": ""}
+        print(f"  AMPO Analyzer: {len(reasons)} root causes identified")
+
+        # Line 12: LLM-Summarizer
+        scored_patterns = self._summarize(reasons, current_prompt)
+        if not scored_patterns:
+            print("  AMPO: summarizer returned no patterns")
+            return {"prompt": current_prompt, "raw_response": ""}
+        for i, (p, s) in enumerate(scored_patterns):
+            print(f"  AMPO Pattern {i+1} (score={s}): {p[:100]}...")
+
+        # Line 14: Select top N patterns
+        top_patterns = scored_patterns[:self.n_top_patterns]
+
+        # Line 15: LLM-Revisor (use top-1 for single-candidate step)
+        pattern_text = top_patterns[0][0]
+        new_prompt, raw_response = self._revise(current_prompt, pattern_text)
+
+        # Line 17: LLM-Revisor prunes
+        new_prompt = self._prune(new_prompt)
+
+        print(f"  AMPO prompt ({len(new_prompt)} chars): {new_prompt[:150]}...")
+
+        return {"prompt": new_prompt, "raw_response": raw_response, "rule": pattern_text}
+
+    def search(self, init_prompt, eval_fn, iterations=3):
+        """AMPO optimization loop (Algorithm 1).
+
+        When n_top_patterns > 1, overrides the base class to generate N
+        candidates per iteration, evaluate each, and select the best
+        (Algorithm lines 15-19). When n_top_patterns == 1, this is equivalent
+        to the base class greedy loop but with the separate pruning step.
+
+        Args:
+            init_prompt: str, the starting prompt
+            eval_fn: callable(prompt) -> (accuracy: float, records: list[dict])
+            iterations: int, number of optimization iterations (T)
+
+        Returns:
+            dict matching base class search() signature.
+        """
+        if self.n_top_patterns <= 1:
+            # N=1: use base class greedy loop (step already handles full pipeline)
+            return super().search(init_prompt, eval_fn, iterations=iterations)
+
+        # N>1: generate N candidates per iteration, evaluate each, pick best
+        current_prompt = init_prompt
+        best_prompt = current_prompt
+        best_accuracy = 0.0
+        accuracy_history = []
+        prompt_history = []
+        all_records = []
+
+        for iteration in range(iterations):
+            print(f"\n--- AMPO Iteration {iteration} ---")
+            print(f"Prompt ({len(current_prompt)} chars): {current_prompt[:120]}...")
+
+            # Line 9: Evaluate P on Dtrain
+            accuracy, records = eval_fn(current_prompt)
+            accuracy_history.append(accuracy)
+            prompt_history.append({
+                "iteration": iteration,
+                "prompt": current_prompt,
+                "train_accuracy": accuracy,
+            })
+            all_records.extend(records)
+
+            if accuracy > best_accuracy:
+                best_accuracy = accuracy
+                best_prompt = current_prompt
+
+            errors = [r for r in records if not r["correct"]]
+            if not errors:
+                print("  No errors on train set -- stopping early")
+                break
+
+            # Line 9: Sample K failed cases
+            k = min(self.k_failures, len(errors))
+            sampled_errors = random.sample(errors, k)
+            print(f"  AMPO: {len(errors)} errors at {accuracy:.0%}, sampling {k}")
+
+            # Line 11: LLM-Analyzer
+            reasons = self._analyze(sampled_errors, current_prompt)
+            if not reasons:
+                print("  AMPO: analyzer returned no reasons, skipping")
+                continue
+            print(f"  AMPO Analyzer: {len(reasons)} root causes")
+
+            # Line 12: LLM-Summarizer
+            scored_patterns = self._summarize(reasons, current_prompt)
+            if not scored_patterns:
+                print("  AMPO: summarizer returned no patterns, skipping")
+                continue
+            for i, (p, s) in enumerate(scored_patterns):
+                print(f"  AMPO Pattern {i+1} (score={s}): {p[:100]}...")
+
+            # Line 14: Select top N patterns
+            top_patterns = scored_patterns[:self.n_top_patterns]
+
+            # Lines 15-18: For each top pattern, revise -> prune -> evaluate
+            best_candidate = None
+            best_candidate_acc = -1.0
+            best_candidate_pattern = None
+
+            for j, (pattern_text, score) in enumerate(top_patterns):
+                print(f"  AMPO: revising with pattern {j+1}/{len(top_patterns)} (score={score})")
+
+                # Line 15: LLM-Revisor optimizes
+                candidate, raw_resp = self._revise(current_prompt, pattern_text)
+
+                # Line 17: LLM-Revisor prunes
+                candidate = self._prune(candidate)
+
+                # Line 18: Evaluate on Dval (here we use eval_fn)
+                cand_acc, cand_records = eval_fn(candidate)
+                all_records.extend(cand_records)
+                print(f"    Candidate {j+1}: {cand_acc:.3f} ({len(candidate)} chars)")
+
+                if cand_acc > best_candidate_acc:
+                    best_candidate_acc = cand_acc
+                    best_candidate = candidate
+                    best_candidate_pattern = pattern_text
+
+            # Line 19: Update P = P*
+            if best_candidate is not None and best_candidate_acc > accuracy:
+                print(f"  ACCEPTED best candidate (acc {accuracy:.3f} -> {best_candidate_acc:.3f})")
+                current_prompt = best_candidate
+                self.feedback(best_candidate_pattern, True, best_candidate_acc - accuracy)
+            else:
+                delta = best_candidate_acc - accuracy if best_candidate is not None else 0.0
+                print(f"  REJECTED all candidates (best delta: {delta:+.3f})")
+                if best_candidate_pattern is not None:
+                    self.feedback(best_candidate_pattern, False, delta)
+
+            if best_candidate_acc > best_accuracy and best_candidate is not None:
+                best_accuracy = best_candidate_acc
+                best_prompt = best_candidate
+
+        return {
+            "best_prompt": best_prompt,
+            "best_accuracy": best_accuracy,
+            "accuracy_history": accuracy_history,
+            "prompt_history": prompt_history,
+            "all_records": all_records,
+        }

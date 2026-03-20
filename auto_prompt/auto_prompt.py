@@ -25,11 +25,6 @@ Baseline algorithms (implemented in prompt_optimizers.py):
         natural language optimization problem; the meta-prompt contains a trajectory
         of past prompts sorted by score.
 
-    PromptAgent (Wang et al., 2023): Uses Monte Carlo Tree Search over the space of
-        prompt rewrites. Each node is a prompt, edges are LLM-proposed edits.
-        Unique: strategic exploration/exploitation tradeoff via UCB; plans multiple
-        steps ahead rather than greedy single-step refinement.
-
     DSPy MIPROv2 (Khattab et al., 2023): Optimizes multi-stage LLM pipelines
         end-to-end. Generates candidate instructions from random training subsets,
         bootstraps few-shot demonstrations, and uses Bayesian surrogate models for
@@ -47,11 +42,6 @@ Baseline algorithms (implemented in prompt_optimizers.py):
         them into patterns with importance scores. Creates multi-branched prompts where
         each branch handles a different failure pattern. Unique: multi-branch prompts
         rather than a single optimized prompt.
-
-    Error-Driven Prompt Optimization (arXiv 2512.13323): Clusters erroneous predictions
-        using HDBSCAN (density-based clustering), selects the largest cluster, and
-        formulates new prompt rules to address it. Unique: uses algorithmic clustering
-        (HDBSCAN) rather than LLM-based categorization.
 
     SAMMO (Schnabel et al., 2024): Represents prompts as structured ASTs, applies
         typed mutation operators (paraphrase, add/remove sections) to specific nodes,
@@ -78,7 +68,18 @@ Not implemented:
         to a weaker OPRO: it sees only correct examples (no errors, no trajectory
         history, no current prompt to refine). Its key contribution -- parallel candidate
         generation -- could be added as a variant of OPRO instead.
+        
+    PromptAgent (Wang et al., 2023): Uses Monte Carlo Tree Search over the space of
+        prompt rewrites. Each node is a prompt, edges are LLM-proposed edits.
+        Unique: strategic exploration/exploitation tradeoff via UCB; plans multiple
+        steps ahead rather than greedy single-step refinement. Not implemented because
+        it requires too many evaluations.
 
+    Error-Driven Prompt Optimization (arXiv 2512.13323): Clusters erroneous predictions
+        using HDBSCAN (density-based clustering), selects the largest cluster, and
+        formulates new prompt rules to address it. Unique: uses algorithmic clustering
+        (HDBSCAN) rather than LLM-based categorization. Not implemented because clustering
+        method applies to arithmetic and code, not ours
 """
 
 import pandas as pd
@@ -103,7 +104,7 @@ os.chdir(PROJECT_ROOT)
 from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase, PtNumericFeatureBase
 from models import MrModel, DummyModel
 from utils import get_dataset, compute_numeric_pct_error, compute_numeric_abs_error
-from prompt_optimizers import DummyOptimizer, OPROOptimizer, OursOptimizer, ETGPOOptimizer
+from prompt_optimizers import DummyOptimizer, OPROOptimizer, OursOptimizer, ETGPOOptimizer, AMPOOptimizer
 
 tqdm.pandas()
 
@@ -114,6 +115,7 @@ OPTIMIZERS = {
     "opro": OPROOptimizer,
     "ours": OursOptimizer,
     "etgpo": ETGPOOptimizer,
+    "ampo": AMPOOptimizer,
 }
 
 
