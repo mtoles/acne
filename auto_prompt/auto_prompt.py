@@ -104,7 +104,7 @@ os.chdir(PROJECT_ROOT)
 from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase, PtNumericFeatureBase
 from models import MrModel, DummyModel
 from utils import get_dataset, compute_numeric_pct_error, compute_numeric_abs_error
-from prompt_optimizers import DummyOptimizer, OPROOptimizer, OursOptimizer, ETGPOOptimizer, AMPOOptimizer
+from prompt_optimizers import DummyOptimizer, OPROOptimizer, OursOptimizer, OursMultiFailureOptimizer, ETGPOOptimizer, AMPOOptimizer
 
 tqdm.pandas()
 
@@ -114,6 +114,7 @@ OPTIMIZERS = {
     "dummy": DummyOptimizer,
     "opro": OPROOptimizer,
     "ours": OursOptimizer,
+    "ours-mf": OursMultiFailureOptimizer,
     "etgpo": ETGPOOptimizer,
     "ampo": AMPOOptimizer,
 }

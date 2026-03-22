@@ -279,6 +279,166 @@ class OursOptimizer(PromptOptimizer):
         return {"prompt": new_prompt, "raw_response": response, "rule": rule}
 
 
+class OursMultiFailureOptimizer(PromptOptimizer):
+    """Like OursOptimizer but will be updated to handle multiple failure modes
+    per iteration. Currently an exact copy of OursOptimizer."""
+
+    def __init__(self, model=None, n_error_examples=10):
+        super().__init__(model=model)
+        self.n_error_examples = n_error_examples
+        self.rule_history = []
+        self.trajectory = []  # list of (prompt, accuracy) like OPRO
+
+    def feedback(self, rule, accepted, accuracy_delta):
+        self.rule_history.append((rule, accepted, accuracy_delta))
+        # Add the candidate prompt+score to trajectory so the meta-LLM
+        # sees rejected attempts too (prevents repeating the same candidate)
+        if self.trajectory:
+            base_prompt, base_acc = self.trajectory[-1]
+            candidate_prompt = base_prompt.rstrip() + "\n" + rule
+            candidate_acc = base_acc + accuracy_delta
+            self.trajectory.append((candidate_prompt, candidate_acc))
+
+    @staticmethod
+    def _fill_multi_failure(template, confusion, current_prompt, format_example_fn):
+        """Fill template with examples from multiple confusion cells, budget-aware.
+
+        Iterates through confusion cells sorted by descending frequency. For each
+        cell, adds a header and as many examples as fit the remaining character
+        budget. Moves to the next cell when space allows.
+
+        Args:
+            template: prompt string with {FAILURE_GROUPS} placeholder
+            confusion: dict of (gt, pred) -> [error records]
+            current_prompt: str, the current prompt (passed to format_example_fn)
+            format_example_fn: callable(rec, prompt_text, include_prediction) -> str
+
+        Returns:
+            (filled_prompt, cells_included) where cells_included is list of
+            (gt, pred, n_examples_shown) tuples.
+        """
+        placeholder = "{FAILURE_GROUPS}"
+        base_len = len(template) - len(placeholder)
+        budget = MAX_INPUT_CHARS - base_len
+
+        # Sort cells by frequency descending
+        sorted_cells = sorted(confusion.keys(), key=lambda c: len(confusion[c]), reverse=True)
+
+        groups = []
+        cells_included = []
+        total_chars = 0
+        global_example_idx = 0
+
+        for cell in sorted_cells:
+            gt, pred = cell
+            cell_errors = confusion[cell]
+
+            header = (
+                f"--- Failure type: model predicts \"{pred}\" when correct answer is \"{gt}\" "
+                f"({len(cell_errors)} errors of this type) ---\n\n"
+            )
+
+            if total_chars + len(header) > budget:
+                break
+
+            # Shuffle within cell for variety
+            rng = random.Random(hash((gt, pred)))
+            shuffled = rng.sample(cell_errors, len(cell_errors))
+
+            examples_for_cell = []
+            cell_chars = len(header)
+
+            for err in shuffled:
+                global_example_idx += 1
+                text = f"Example {global_example_idx}:\n{format_example_fn(err, prompt_text=current_prompt, include_prediction=True)}"
+                if total_chars + cell_chars + len(text) + 2 > budget:  # +2 for "\n\n" join
+                    break
+                examples_for_cell.append(text)
+                cell_chars += len(text) + 2
+
+            if not examples_for_cell:
+                break
+
+            group_text = header + "\n\n".join(examples_for_cell)
+            groups.append(group_text)
+            total_chars += len(group_text) + 2  # +2 for "\n\n" between groups
+            cells_included.append((gt, pred, len(examples_for_cell)))
+
+        filled = template.replace(placeholder, "\n\n".join(groups))
+        return filled, cells_included
+
+    def step(self, current_prompt, records):
+        errors = [r for r in records if not r["correct"]]
+        if not errors:
+            return {"prompt": current_prompt, "raw_response": ""}
+
+        confusion = defaultdict(list)
+        for err in errors:
+            confusion[(err["ground_truth"], err["prediction"])].append(err)
+
+        accuracy = sum(1 for r in records if r["correct"]) / len(records)
+
+        # Record trajectory (like OPRO)
+        self.trajectory.append((current_prompt, accuracy))
+
+        # Build trajectory section sorted by score ascending (best last, per OPRO)
+        sorted_trajectory = sorted(self.trajectory, key=lambda x: x[1])
+        trajectory_section = "\n\n".join(
+            f"text:\n{prompt}\nscore:\n{round(score * 100)}"
+            for prompt, score in sorted_trajectory
+        )
+
+        rule_history_section = ""
+        if self.rule_history:
+            rule_history_section = "\n\nPreviously proposed rules:\n" + "\n".join(
+                f"- {'ACCEPTED' if accepted else 'REJECTED'} (accuracy {delta:+.0%}): {rule}"
+                for rule, accepted, delta in self.rule_history
+            ) + "\n"
+
+        meta_template = (
+            "You are helping optimize a prompt for a medical record question-answering system.\n\n"
+            "Below are previous prompts with their scores (0-100). Study what worked and what didn't.\n\n"
+            f"{trajectory_section}\n\n"
+            f"The current prompt (accuracy: {accuracy:.0%}) is:\n"
+            f"---\n{current_prompt}\n---\n"
+            f"{rule_history_section}\n"
+            f"Below are examples where the model answered INCORRECTLY, grouped by failure type.\n\n"
+            "{FAILURE_GROUPS}\n\n"
+            "Analyze the errors above across all failure types. Identify the implicit assumptions or "
+            "patterns the model is missing. Then write a concise rule that, if appended to the prompt, "
+            "would fix these errors without breaking correct answers.\n\n"
+            "The rule should begin with <RULE> and end with </RULE>.\n"
+            "The rule should be a concrete instruction (e.g. 'If overlapping prescriptions, count total days, not per-antibiotic days.').\n"
+            "Do not rewrite the entire prompt -- just output the new rule to append.\n"
+            "If you include {keyword} in your rule, it will be replaced with the actual keyword during inference."
+        )
+
+        meta_prompt, cells_included = self._fill_multi_failure(
+            meta_template, confusion, current_prompt, self.format_example
+        )
+
+        total_examples = sum(n for _, _, n in cells_included)
+        total_errors = len(errors)
+        cell_summary = ", ".join(f"{gt}->{pred}({n})" for gt, pred, n in cells_included)
+        print(f"  OursMultiFailure: {len(cells_included)} failure types, {total_examples}/{total_errors} examples [{cell_summary}]")
+
+        history = [{"role": "user", "content": meta_prompt}]
+        response = self.model.predict_single(history, max_tokens=MAX_OUTPUT_TOKENS, options=None)
+        response = self.model._strip_think_tags(response)
+
+        rule_match = re.search(r'<RULE>(.*?)</RULE>', response, flags=re.DOTALL)
+        if rule_match:
+            rule = rule_match.group(1).strip()
+        else:
+            print("  OursMultiFailure: no <RULE>...</RULE> tags found in response, using full response")
+            rule = response.strip()
+
+        new_prompt = current_prompt.rstrip() + "\n" + rule
+        print(f"  OursMultiFailure rule ({len(rule)} chars): {rule[:150]}...")
+
+        return {"prompt": new_prompt, "raw_response": response, "rule": rule}
+
+
 class ETGPOOptimizer(PromptOptimizer):
     """ETGPO: Error Taxonomy-Guided Prompt Optimization.
 
