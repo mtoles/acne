@@ -104,7 +104,7 @@ os.chdir(PROJECT_ROOT)
 from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase, PtNumericFeatureBase
 from models import MrModel, DummyModel
 from utils import get_dataset, compute_numeric_pct_error, compute_numeric_abs_error
-from prompt_optimizers import DummyOptimizer, OPROOptimizer, OursOptimizer, OursMultiFailureOptimizer, ETGPOOptimizer, AMPOOptimizer
+from prompt_optimizers import DummyOptimizer, OPROOptimizer, OursOptimizer, OursMultiFailureOptimizer, ETGPOOptimizer, AMPOOptimizer, DSPyOptimizer
 
 tqdm.pandas()
 
@@ -117,6 +117,7 @@ OPTIMIZERS = {
     "ours-mf": OursMultiFailureOptimizer,
     "etgpo": ETGPOOptimizer,
     "ampo": AMPOOptimizer,
+    "dspy": None,  # DSPy uses its own optimization loop, handled separately
 }
 
 
@@ -465,6 +466,93 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
     }
 
 
+def process_file_dspy(file_path, data_source, downsample, baseline_prompts,
+                      feature_name_override, iterations, n_workers, note):
+    """Run DSPy MIPROv2 optimization for a single feature.
+
+    Unlike process_file(), DSPy manages its own optimization loop internally.
+    We evaluate the optimized program on the same eval split for fair comparison,
+    and also extract the optimized instruction to evaluate through run_inference().
+    """
+    feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
+    print(f"\nProcessing {feature_name} with DSPy MIPROv2")
+
+    target_cls = PtFeaturesMeta.registry[feature_name]
+    feature_metadata = {}
+    if getattr(target_cls, "data_source_feature", None) or getattr(target_cls, "gt_column", "val_unified") != "val_unified":
+        feature_metadata[feature_name] = {
+            "data_source_feature": getattr(target_cls, "data_source_feature", None) or feature_name,
+            "gt_column": getattr(target_cls, "gt_column", "val_unified"),
+        }
+
+    datasets = get_dataset(
+        data_source=data_source or "mgb",
+        feature_names=[feature_name],
+        train_split=0.5,
+        downsample=downsample,
+        random_state=42,
+        feature_metadata=feature_metadata,
+    )
+
+    if feature_name not in datasets:
+        raise ValueError(f"Dataset not found for feature: {feature_name}")
+
+    train_df = datasets[feature_name]["train"].copy()
+    eval_df = datasets[feature_name]["eval"].copy()
+    train_df = train_df[train_df["val_unified"] != "DROP"]
+    eval_df = eval_df[eval_df["val_unified"] != "DROP"]
+
+    print(f"Train: {len(train_df)}, Eval: {len(eval_df)}")
+
+    # Run DSPy optimization
+    dspy_optimizer = DSPyOptimizer(model_id=model_id, n_workers=n_workers)
+    dspy_result = dspy_optimizer.optimize(
+        train_df, eval_df,
+        baseline_prompt=baseline_prompts[feature_name],
+        num_trials=iterations,
+    )
+
+    optimized_instruction = dspy_result["optimized_instruction"]
+    dspy_eval_score = dspy_result["dspy_eval_score"]
+    print(f"  DSPy eval accuracy: {dspy_eval_score:.1f}%")
+
+    # Also evaluate the extracted instruction through run_inference (Option B)
+    print("\n--- Evaluating extracted instruction through run_inference ---")
+    eval_chunk_df = eval_df.copy()
+    _, eval_metrics_native = run_inference(
+        eval_chunk_df, optimized_instruction, feature_name, target_cls, "cot",
+        n_workers=n_workers, desc="Eval (DSPy instruction, native inference)"
+    )
+
+    # Build records for the native eval
+    all_records = []
+    for rec in eval_metrics_native["records"]:
+        rec["feature"] = feature_name
+        rec["split"] = "eval"
+        rec["iteration"] = iterations - 1
+        rec["prompt"] = optimized_instruction
+    all_records.extend(eval_metrics_native["records"])
+
+    return {
+        "feature_name": feature_name,
+        "baseline_prompt": baseline_prompts[feature_name],
+        "train_chunks": len(train_df),
+        "eval_chunks": len(eval_df),
+        "train_accuracy_history": [],  # DSPy manages its own loop
+        "best_train_accuracy": dspy_eval_score / 100.0,  # DSPy returns percentage
+        "eval_metrics": eval_metrics_native,
+        "best_prompt": optimized_instruction,
+        "prompt_history": [{
+            "iteration": 0,
+            "prompt": baseline_prompts[feature_name],
+            "candidate_prompt": optimized_instruction,
+            "dspy_eval_score": dspy_eval_score,
+            "dspy_demos": dspy_result["optimized_demos"],
+        }],
+        "records": all_records,
+    }
+
+
 def main():
     args = parse_args()
     inference_type = args.inference_type
@@ -479,7 +567,9 @@ def main():
     if target_features is not None:
         print(f"Features: {target_features}")
 
-    optimizer = OPTIMIZERS[args.optimizer](model=model)
+    is_dspy = args.optimizer == "dspy"
+    if not is_dspy:
+        optimizer = OPTIMIZERS[args.optimizer](model=model)
 
     print("\nLoading baseline prompts...")
     baseline_prompts = load_baseline_prompts()
@@ -572,12 +662,19 @@ def main():
         if target_cls and issubclass(target_cls, (PtDateFeatureBase, PtNumericFeatureBase)):
             print(f"  Skipping {feature_name} (date/numeric feature, MC only for now)")
             continue
-        results = process_file(
-            file_path, inference_type, downsample,
-            data_source=args.data_source, baseline_prompts=baseline_prompts,
-            feature_name_override=feature_name, optimizer=optimizer,
-            iterations=args.iterations, n_workers=args.n_workers, note=args.note,
-        )
+        if is_dspy:
+            results = process_file_dspy(
+                file_path, data_source=args.data_source, downsample=downsample,
+                baseline_prompts=baseline_prompts, feature_name_override=feature_name,
+                iterations=args.iterations, n_workers=args.n_workers, note=args.note,
+            )
+        else:
+            results = process_file(
+                file_path, inference_type, downsample,
+                data_source=args.data_source, baseline_prompts=baseline_prompts,
+                feature_name_override=feature_name, optimizer=optimizer,
+                iterations=args.iterations, n_workers=args.n_workers, note=args.note,
+            )
         if results:
             all_results[feature_name] = results
             save_feature_results(feature_name, results)

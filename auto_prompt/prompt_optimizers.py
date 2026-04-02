@@ -6,10 +6,13 @@ The optimization loop in auto_prompt.py handles evaluation and iteration.
 """
 
 import json
+import os
 import re
 import random
 from collections import defaultdict
 from abc import ABC, abstractmethod
+
+import dspy
 
 # Qwen2.5-72B max context = 32768 tokens (vLLM default).
 # Reserve 2048 tokens for output, use the rest for input.
@@ -1191,4 +1194,131 @@ class AMPOOptimizer(PromptOptimizer):
             "accuracy_history": accuracy_history,
             "prompt_history": prompt_history,
             "all_records": all_records,
+        }
+
+
+# ---------------------------------------------------------------------------
+# DSPy MIPROv2 optimizer
+# ---------------------------------------------------------------------------
+
+class _MedicalClassifier(dspy.Module):
+    """DSPy module for medical record classification with chain-of-thought."""
+
+    def __init__(self):
+        self.predict = dspy.ChainOfThought("medical_record, keyword -> classification")
+
+    def forward(self, medical_record, keyword):
+        return self.predict(medical_record=medical_record, keyword=keyword)
+
+
+def _dspy_classification_metric(example, pred, trace=None):
+    """Exact-match metric for DSPy evaluation."""
+    return pred.classification.strip() == example.classification.strip()
+
+
+def _df_to_dspy_examples(chunk_df):
+    """Convert a chunk DataFrame to a list of dspy.Example objects."""
+    examples = []
+    for _, row in chunk_df.iterrows():
+        ex = dspy.Example(
+            medical_record=str(row["chunk"]),
+            keyword=str(row["found_keywords"]),
+            classification=str(row["val_unified"]),
+        ).with_inputs("medical_record", "keyword")
+        examples.append(ex)
+    return examples
+
+
+class DSPyOptimizer:
+    """DSPy MIPROv2-based prompt optimizer.
+
+    Unlike other optimizers that implement step(), DSPy manages its own
+    optimization loop internally. Call optimize() with train/eval DataFrames.
+    """
+
+    def __init__(self, model_id, n_workers=50):
+        self.model_id = model_id
+        self.n_workers = n_workers
+        self._configure_lm()
+
+    def _configure_lm(self):
+        """Configure DSPy to use the same vLLM endpoint as MrModel."""
+        vllm_port = os.environ.get("VLLM_PORT", "8010")
+        lm = dspy.LM(
+            model=f"openai/{self.model_id}",
+            api_base=f"http://localhost:{vllm_port}/v1",
+            api_key="token-abc123",
+            max_tokens=1024,
+            temperature=0.0,
+        )
+        dspy.configure(lm=lm)
+
+    def optimize(self, train_df, eval_df, baseline_prompt, num_trials=10):
+        """Run MIPROv2 optimization and evaluate.
+
+        Args:
+            train_df: DataFrame with chunk, found_keywords, val_unified columns
+            eval_df: DataFrame with same columns
+            baseline_prompt: str, initial instruction to seed optimization
+            num_trials: int, number of Bayesian search trials
+
+        Returns:
+            dict with keys:
+                - optimized_instruction: str
+                - optimized_demos: list of demo dicts
+                - dspy_eval_score: float (percentage, 0-100)
+                - optimized_program: the compiled dspy.Module
+        """
+        trainset = _df_to_dspy_examples(train_df)
+        evalset = _df_to_dspy_examples(eval_df)
+
+        # Build classifier seeded with the baseline prompt
+        classifier = _MedicalClassifier()
+        inner_predict = classifier.predict.predict  # ChainOfThought wraps a Predict
+        inner_predict.signature = inner_predict.signature.with_instructions(
+            baseline_prompt
+        )
+
+        # Run MIPROv2 optimization
+        optimizer = dspy.MIPROv2(
+            metric=_dspy_classification_metric,
+            num_threads=self.n_workers,
+            num_candidates=7,
+            max_bootstrapped_demos=4,
+            max_labeled_demos=4,
+            auto=None,
+        )
+        optimized = optimizer.compile(
+            classifier,
+            trainset=trainset,
+            num_trials=num_trials,
+        )
+
+        # Evaluate with DSPy on eval set
+        dspy_evaluator = dspy.Evaluate(
+            devset=evalset,
+            metric=_dspy_classification_metric,
+            num_threads=self.n_workers,
+            display_progress=True,
+        )
+        dspy_eval_result = dspy_evaluator(optimized)
+        dspy_eval_score = float(dspy_eval_result)  # EvaluationResult -> float
+
+        # Extract optimized instruction and demos
+        optimized_instruction = optimized.predict.predict.signature.instructions
+        optimized_demos = [
+            {
+                "medical_record": demo.get("medical_record", ""),
+                "keyword": demo.get("keyword", ""),
+                "classification": demo.get("classification", ""),
+                "reasoning": demo.get("reasoning", ""),
+            }
+            for demo in getattr(optimized.predict.predict, "demos", [])
+        ]
+
+        return {
+            "optimized_instruction": optimized_instruction,
+            "optimized_demos": optimized_demos,
+            "dspy_eval_score": dspy_eval_score,
+            "optimized_program": optimized,
         }
