@@ -198,6 +198,25 @@ class OursOptimizer(PromptOptimizer):
     a specific confusion pattern (ground_truth -> prediction cell).
     """
 
+    META_TEMPLATE = (
+        "You are helping optimize a prompt for a medical record question-answering system.\n\n"
+        "The current prompt (accuracy: {accuracy}) is:\n"
+        "---\n{current_prompt}\n---\n"
+        "{rule_history_section}\n"
+        "Below are examples where the model answered INCORRECTLY. "
+        "All share the same confusion pattern: the model predicts \"{pred}\" "
+        "when the correct answer is \"{gt}\" "
+        "({n_cell_errors} errors of this type out of {n_total_errors} total errors).\n\n"
+        "{{EXAMPLES}}\n\n"
+        "Analyze the errors above. Identify the implicit assumption or pattern the model is missing. "
+        "Then write a concise rule that, if appended to the prompt, would fix these errors "
+        "without breaking correct answers.\n\n"
+        "The rule should begin with <RULE> and end with </RULE>.\n"
+        "The rule should be a concrete instruction (e.g. 'If overlapping prescriptions, count total days, not per-antibiotic days.').\n"
+        "Do not rewrite the entire prompt -- just output the new rule to append.\n"
+        "If you include {{keyword}} in your rule, it will be replaced with the actual keyword during inference."
+    )
+
     def __init__(self, model=None, n_error_examples=10):
         super().__init__(model=model)
         self.n_error_examples = n_error_examples
@@ -239,23 +258,14 @@ class OursOptimizer(PromptOptimizer):
             for i, err in enumerate(shuffled_errors)
         ]
 
-        meta_template = (
-            "You are helping optimize a prompt for a medical record question-answering system.\n\n"
-            f"The current prompt (accuracy: {accuracy:.0%}) is:\n"
-            f"---\n{current_prompt}\n---\n"
-            f"{rule_history_section}\n"
-            f"Below are examples where the model answered INCORRECTLY. "
-            f"All share the same confusion pattern: the model predicts \"{chosen_cell[1]}\" "
-            f"when the correct answer is \"{chosen_cell[0]}\" "
-            f"({len(cell_errors)} errors of this type out of {len(errors)} total errors).\n\n"
-            "{EXAMPLES}\n\n"
-            "Analyze the errors above. Identify the implicit assumption or pattern the model is missing. "
-            "Then write a concise rule that, if appended to the prompt, would fix these errors "
-            "without breaking correct answers.\n\n"
-            "The rule should begin with <RULE> and end with </RULE>.\n"
-            "The rule should be a concrete instruction (e.g. 'If overlapping prescriptions, count total days, not per-antibiotic days.').\n"
-            "Do not rewrite the entire prompt -- just output the new rule to append.\n"
-            "If you include {keyword} in your rule, it will be replaced with the actual keyword during inference."
+        meta_template = self.META_TEMPLATE.format(
+            accuracy=f"{accuracy:.0%}",
+            current_prompt=current_prompt,
+            rule_history_section=rule_history_section,
+            pred=chosen_cell[1],
+            gt=chosen_cell[0],
+            n_cell_errors=len(cell_errors),
+            n_total_errors=len(errors),
         )
 
         meta_prompt = fill_prompt(meta_template, error_texts)
@@ -280,6 +290,30 @@ class OursOptimizer(PromptOptimizer):
         print(f"  Ours rule ({len(rule)} chars): {rule[:150]}...")
 
         return {"prompt": new_prompt, "raw_response": response, "rule": rule}
+
+
+class OursOR(OursOptimizer):
+    """Variant of OursOptimizer with a different meta-prompt."""
+
+    META_TEMPLATE = (
+        "You are helping optimize a prompt for a medical record question-answering system.\n\n"
+        "The current prompt (accuracy: {accuracy}) is:\n"
+        "---\n{current_prompt}\n---\n"
+        "{rule_history_section}\n"
+        "Below are examples where the model answered INCORRECTLY. "
+        "All share the same confusion pattern: the model predicts \"{pred}\" "
+        "when the correct answer is \"{gt}\" "
+        "({n_cell_errors} errors of this type out of {n_total_errors} total errors).\n\n"
+        "{{EXAMPLES}}\n\n"
+        "Analyze the errors above. Identify the implicit assumption or pattern the model is missing. "
+        "Then write a concise rule that, if appended to the prompt, would fix these errors "
+        "without breaking correct answers.\n\n"
+        "The rule should begin with <RULE> and end with </RULE>.\n"
+        "The rule should be a concrete instruction (e.g. 'If overlapping prescriptions, count total days, not per-antibiotic days.').\n"
+        "Rules can be conditional on previous rules, and or overwrite them by specifying so.\n"
+        "Do not rewrite the entire prompt -- just output the new rule to append.\n"
+        "If you include {{keyword}} in your rule, it will be replaced with the actual keyword during inference."
+    )
 
 
 class OursMultiFailureOptimizer(PromptOptimizer):
@@ -1316,9 +1350,28 @@ class DSPyOptimizer:
             for demo in getattr(optimized.predict.predict, "demos", [])
         ]
 
+        # Extract per-trial history from MIPROv2's trial_logs (attached when track_stats=True)
+        # trial_logs has full_eval_score for full-eval trials and mb_score for minibatch trials
+        trial_history = []
+        if hasattr(optimized, "trial_logs"):
+            for trial_num in sorted(optimized.trial_logs.keys()):
+                log = optimized.trial_logs[trial_num]
+                # Prefer full eval score; fall back to minibatch score
+                score = log.get("full_eval_score", log.get("mb_score"))
+                is_full_eval = "full_eval_score" in log
+                prog = log.get("full_eval_program", log.get("mb_program"))
+                instruction = prog.predict.predict.signature.instructions if prog else None
+                trial_history.append({
+                    "trial": trial_num,
+                    "score": score / 100.0 if score is not None else None,
+                    "is_full_eval": is_full_eval,
+                    "instruction": instruction,
+                })
+
         return {
             "optimized_instruction": optimized_instruction,
             "optimized_demos": optimized_demos,
             "dspy_eval_score": dspy_eval_score,
             "optimized_program": optimized,
+            "trial_history": trial_history,
         }

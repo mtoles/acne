@@ -104,7 +104,7 @@ os.chdir(PROJECT_ROOT)
 from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase, PtNumericFeatureBase
 from models import MrModel, DummyModel
 from utils import get_dataset, compute_numeric_pct_error, compute_numeric_abs_error
-from prompt_optimizers import DummyOptimizer, OPROOptimizer, OursOptimizer, OursMultiFailureOptimizer, ETGPOOptimizer, AMPOOptimizer, DSPyOptimizer
+from prompt_optimizers import DummyOptimizer, OPROOptimizer, OursOptimizer, OursOR, OursMultiFailureOptimizer, ETGPOOptimizer, AMPOOptimizer, DSPyOptimizer
 
 tqdm.pandas()
 
@@ -114,6 +114,7 @@ OPTIMIZERS = {
     "dummy": DummyOptimizer,
     "opro": OPROOptimizer,
     "ours": OursOptimizer,
+    "ours-or": OursOR,
     "ours-mf": OursMultiFailureOptimizer,
     "etgpo": ETGPOOptimizer,
     "ampo": AMPOOptimizer,
@@ -533,22 +534,38 @@ def process_file_dspy(file_path, data_source, downsample, baseline_prompts,
         rec["prompt"] = optimized_instruction
     all_records.extend(eval_metrics_native["records"])
 
+    # Build prompt_history in same format as other optimizers using trial history
+    trial_history = dspy_result.get("trial_history", [])
+    prompt_history = []
+    best_so_far = 0.0
+    best_prompt_so_far = baseline_prompts[feature_name]
+    for i, trial in enumerate(trial_history):
+        score = trial["score"] if trial["score"] is not None else 0.0
+        candidate_prompt = trial["instruction"] or ""
+        accepted = score > best_so_far
+        if accepted:
+            best_so_far = score
+            best_prompt_so_far = candidate_prompt
+        prompt_history.append({
+            "iteration": i,
+            "prompt": best_prompt_so_far,
+            "train_accuracy": best_so_far,
+            "candidate_prompt": candidate_prompt,
+            "candidate_accuracy": score,
+            "accepted": accepted,
+            "candidate_raw_response": "",
+        })
+
     return {
         "feature_name": feature_name,
         "baseline_prompt": baseline_prompts[feature_name],
         "train_chunks": len(train_df),
         "eval_chunks": len(eval_df),
-        "train_accuracy_history": [],  # DSPy manages its own loop
-        "best_train_accuracy": dspy_eval_score / 100.0,  # DSPy returns percentage
+        "train_accuracy_history": [h["train_accuracy"] for h in prompt_history],
+        "best_train_accuracy": best_so_far if prompt_history else dspy_eval_score / 100.0,
         "eval_metrics": eval_metrics_native,
         "best_prompt": optimized_instruction,
-        "prompt_history": [{
-            "iteration": 0,
-            "prompt": baseline_prompts[feature_name],
-            "candidate_prompt": optimized_instruction,
-            "dspy_eval_score": dspy_eval_score,
-            "dspy_demos": dspy_result["optimized_demos"],
-        }],
+        "prompt_history": prompt_history,
         "records": all_records,
     }
 
