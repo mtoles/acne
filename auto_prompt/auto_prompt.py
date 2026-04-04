@@ -377,16 +377,22 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
     train_accuracy_history = []
     prompt_history = []  # track prompt text and accuracy per iteration
     all_records = []  # accumulate per-example records across iterations
+    cached_metrics = None  # reuse metrics when prompt hasn't changed
 
     for iteration in range(iterations):
         print(f"\n--- Iteration {iteration} (train) ---")
         print(f"Prompt ({len(current_prompt)} chars): {current_prompt[:120]}...")
 
-        train_chunk_df = train_df.copy()
-        _, train_metrics = run_inference(
-            train_chunk_df, current_prompt, feature_name, target_cls, inference_type,
-            n_workers=n_workers, desc=f"Train iter {iteration}"
-        )
+        if cached_metrics is not None:
+            train_metrics = cached_metrics
+            cached_metrics = None
+            print(f"  (reusing previous eval)")
+        else:
+            train_chunk_df = train_df.copy()
+            _, train_metrics = run_inference(
+                train_chunk_df, current_prompt, feature_name, target_cls, inference_type,
+                n_workers=n_workers, desc=f"Train iter {iteration}"
+            )
 
         train_accuracy = train_metrics["combined"]
         train_accuracy_history.append(train_accuracy)
@@ -432,8 +438,10 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
         if accepted:
             print(f"  ACCEPTED candidate (acc {train_accuracy:.3f} -> {candidate_accuracy:.3f}, {accuracy_delta:+.3f})")
             current_prompt = candidate_prompt
+            cached_metrics = candidate_metrics
         else:
             print(f"  REJECTED candidate (acc {train_accuracy:.3f} -> {candidate_accuracy:.3f}, {accuracy_delta:+.3f})")
+            cached_metrics = train_metrics
 
     # Use the best prompt found during optimization
     print(f"\n--- Final eval with best prompt (train acc={best_train_accuracy:.3f}) ---")
@@ -541,6 +549,9 @@ def process_file_dspy(file_path, data_source, downsample, baseline_prompts,
     best_prompt_so_far = baseline_prompts[feature_name]
     for i, trial in enumerate(trial_history):
         score = trial["score"] if trial["score"] is not None else 0.0
+        # Normalize to 0-1 if score is on 0-100 scale
+        if score > 1.0:
+            score = score / 100.0
         candidate_prompt = trial["instruction"] or ""
         accepted = score > best_so_far
         if accepted:

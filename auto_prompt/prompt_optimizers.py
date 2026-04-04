@@ -1326,6 +1326,7 @@ class DSPyOptimizer:
             classifier,
             trainset=trainset,
             num_trials=num_trials,
+            minibatch=False,
         )
 
         # Evaluate with DSPy on eval set
