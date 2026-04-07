@@ -13,6 +13,8 @@ from joblib import Memory
 
 _cache = Memory(".llm_cache", verbose=0)
 
+COT_SUFFIX = "\n\n### Instructions:\n\nThink step by step, then answer the question."
+
 
 @_cache.cache
 def _cached_llm_call(model_id, base_url, api_key, messages, max_tokens, temperature, top_p):
@@ -218,9 +220,8 @@ class MrModel:
 
         max_cot_attempts = 2
         for attempt in range(max_cot_attempts):
-            cot_prompt = "### Instructions:\n\nThink step by step, then answer the question."
             original_prompt = history[-1]["content"]
-            cot_history = [{"role": "user", "content": original_prompt + cot_prompt}]
+            cot_history = [{"role": "user", "content": original_prompt + COT_SUFFIX}]
             cot_response = self.predict_single(history=cot_history, max_tokens=1024, options=None, sample=sample)
             cot_response = self._strip_think_tags(cot_response, keep_content=True)
             clean_prompt = f"{original_prompt}\n\n### Thoughts: {cot_response}\n\n{target_type_subprompt_map[target_type]}"

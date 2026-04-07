@@ -1236,10 +1236,10 @@ class AMPOOptimizer(PromptOptimizer):
 # ---------------------------------------------------------------------------
 
 class _MedicalClassifier(dspy.Module):
-    """DSPy module for medical record classification with chain-of-thought."""
+    """DSPy module for medical record classification."""
 
     def __init__(self):
-        self.predict = dspy.ChainOfThought("medical_record, keyword -> classification")
+        self.predict = dspy.Predict("medical_record, keyword -> classification")
 
     def forward(self, medical_record, keyword):
         return self.predict(medical_record=medical_record, keyword=keyword)
@@ -1307,9 +1307,10 @@ class DSPyOptimizer:
         evalset = _df_to_dspy_examples(eval_df)
 
         # Build classifier seeded with the baseline prompt
+        # Note: CoT is NOT added here — it's applied at final eval via run_inference/predict_with_cot,
+        # same as the other optimizers. Adding it here causes vLLM OOM during bootstrapping.
         classifier = _MedicalClassifier()
-        inner_predict = classifier.predict.predict  # ChainOfThought wraps a Predict
-        inner_predict.signature = inner_predict.signature.with_instructions(
+        classifier.predict.signature = classifier.predict.signature.with_instructions(
             baseline_prompt
         )
 
@@ -1326,7 +1327,7 @@ class DSPyOptimizer:
             classifier,
             trainset=trainset,
             num_trials=num_trials,
-            minibatch=False,
+            minibatch=True,
         )
 
         # Evaluate with DSPy on eval set
@@ -1339,16 +1340,15 @@ class DSPyOptimizer:
         dspy_eval_result = dspy_evaluator(optimized)
         dspy_eval_score = float(dspy_eval_result)  # EvaluationResult -> float
 
-        # Extract optimized instruction and demos
-        optimized_instruction = optimized.predict.predict.signature.instructions
+        # Extract optimized instruction (strip CoT suffix) and demos
+        optimized_instruction = optimized.predict.signature.instructions
         optimized_demos = [
             {
                 "medical_record": demo.get("medical_record", ""),
                 "keyword": demo.get("keyword", ""),
                 "classification": demo.get("classification", ""),
-                "reasoning": demo.get("reasoning", ""),
             }
-            for demo in getattr(optimized.predict.predict, "demos", [])
+            for demo in getattr(optimized.predict, "demos", [])
         ]
 
         # Extract per-trial history from MIPROv2's trial_logs (attached when track_stats=True)
@@ -1361,7 +1361,7 @@ class DSPyOptimizer:
                 score = log.get("full_eval_score", log.get("mb_score"))
                 is_full_eval = "full_eval_score" in log
                 prog = log.get("full_eval_program", log.get("mb_program"))
-                instruction = prog.predict.predict.signature.instructions if prog else None
+                instruction = prog.predict.signature.instructions if prog else None
                 trial_history.append({
                     "trial": trial_num,
                     "score": score / 100.0 if score is not None else None,
