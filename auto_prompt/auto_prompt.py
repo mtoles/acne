@@ -104,7 +104,7 @@ os.chdir(PROJECT_ROOT)
 from pt_features import PtFeaturesMeta, PtFeatureBase, PtDateFeatureBase, PtNumericFeatureBase
 from models import MrModel, DummyModel
 from utils import get_dataset, compute_numeric_pct_error, compute_numeric_abs_error
-from prompt_optimizers import DummyOptimizer, OPROOptimizer, OursOptimizer, OursOR, OursMultiFailureOptimizer, ETGPOOptimizer, AMPOOptimizer, DSPyOptimizer
+from prompt_optimizers import DummyOptimizer, OPROOptimizer, OursOptimizer, OursOR, OursMultiFailureOptimizer, ETGPOOptimizer, AMPOOptimizer
 
 tqdm.pandas()
 
@@ -178,6 +178,12 @@ def parse_args():
         default="default",
         help="Note to use as a subdirectory in the output path (e.g. model_dir/note/timestamp)",
     )
+    parser.add_argument(
+        "--dataset",
+        choices=["acne", "odd"],
+        default="acne",
+        help="Dataset to use: acne (default, medical record features) or odd (opioid aberrant behavior detection)",
+    )
     return parser.parse_args()
 
 
@@ -227,6 +233,57 @@ def process_single_chunk(args):
     preds_for_chunk.update({k: v for k, v in pred_dict.items()})
 
     return i, preds_for_chunk
+
+
+def _predict_binary(args):
+    """Predict Yes/No for a single (prompt, context) pair."""
+    i, prompt_text, context = args
+    history = model.format_chunk_qs(q=prompt_text, chunk=context, options=["Yes", "No"])
+    pred = model.predict_with_cot(history, options=["Yes", "No"], max_answer_tokens=8)
+    return i, pred
+
+
+def run_inference_binary(df, prompt_col="prompt", label_col="label", n_workers=50, desc=""):
+    """Run binary (Yes/No) inference. Returns metrics dict compatible with optimize_category.
+
+    df must have columns: prompt_col (str), label_col (0/1), and 'context'.
+    """
+    predictions = [None] * len(df)
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        futures = {
+            executor.submit(_predict_binary, (i, row[prompt_col], row["context"])): i
+            for i, (_, row) in enumerate(df.iterrows())
+        }
+        with tqdm(total=len(df), desc=desc) as pbar:
+            for future in as_completed(futures):
+                i, pred = future.result()
+                predictions[i] = pred
+                pbar.update(1)
+
+    ground_truth = ["Yes" if v == 1 else "No" for v in df[label_col]]
+    correct = sum(p == g for p, g in zip(predictions, ground_truth))
+    accuracy = correct / len(predictions) if predictions else 0
+
+    records = [
+        {
+            "chunk": str(df.iloc[i]["context"]),
+            "keyword": "",
+            "ground_truth": ground_truth[i],
+            "prediction": predictions[i] or "",
+            "correct": predictions[i] == ground_truth[i],
+        }
+        for i in range(len(predictions))
+    ]
+
+    metrics = {
+        "combined": accuracy,
+        "natural": accuracy,
+        "synthetic": 0,
+        "records": records,
+        "errors": [r for r in records if not r["correct"]],
+    }
+    print(f"  Accuracy: {accuracy:.3f} ({correct}/{len(predictions)})")
+    return metrics
 
 
 def run_inference(chunk_df, prompt_text, feature_name, target_cls, inference_type, n_workers=50, desc=""):
@@ -330,54 +387,113 @@ def run_inference(chunk_df, prompt_text, feature_name, target_cls, inference_typ
     return chunk_df, metrics
 
 
-def process_file(file_path, inference_type, downsample=None, data_source=None,
-                 baseline_prompts=None, feature_name_override=None, optimizer=None, iterations=3, n_workers=50, note="default"):
-    feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
-    print(f"\nProcessing {feature_name}")
+ODD_CATEGORIES = {
+    "Confirmed Aberrant Behavior": {
+        "definition": "Evidence confirming the loss of control of opioid use, specifically aberrant usage of opioid medications.",
+        "example": "[Patient] admits that he has been sharing his Percocet with his wife, and that is why he has run out early.",
+    },
+    "Suggested Aberrant Behavior": {
+        "definition": "Evidence suggesting loss of control of opioid use or compulsive/inappropriate use of opioids.",
+        "example": "[Patient] states that 'that [drug] won't work; only [X drug] will and I won't take any other'",
+    },
+    "Opioids": {
+        "definition": "The mention or listing of the name(s) of the opioid medication(s) that the patient is currently prescribed or has just been newly prescribed.",
+        "example": "Oxycodone has been known to make [the patient] sleepy at 5 mg.",
+    },
+    "Indication": {
+        "definition": "Patients are using opioids under instructions.",
+        "example": "[The patient] is in a daze.",
+    },
+    "Diagnosed Opioid Dependency": {
+        "definition": "Patients have the condition of being dependent on opioids, have chronic opioid use, or is undergoing opioid titration.",
+        "example": "[The patient] is in severe pain and has been taking [opioid drug] for [time].",
+    },
+    "Benzodiazepines": {
+        "definition": "Patients are co-prescribed benzodiazepines.",
+        "example": "Valium has been listed in patient medication list.",
+    },
+    "Medicine Changes": {
+        "definition": "Change in opioid medicine, dosage, and prescription since the last visit.",
+        "example": "[Patient] reports that his previous PCP just recently changed his pain regimen, adding oxycodone.",
+    },
+    "Central Nervous System Related": {
+        "definition": "CNS-related terms/terms suggesting altered sensorium.",
+        "example": "[Patient] reported to have nausea after taking [drug].",
+    },
+    "Social Determinants of Health": {
+        "definition": "The nonmedical factors that influence health outcomes.",
+        "example": "[Patient] divorced a years ago.",
+    },
+}
 
-    preds_dir = Path("preds")
-    model_dir = preds_dir / model_id.replace("/", "_")
-    timestamp_dir = model_dir / note / timestamp
-    feature_dir = timestamp_dir / feature_name
-    feature_dir.mkdir(parents=True, exist_ok=True)
+ODD_COL_RENAME = {
+    "Confirmed aberrant behavior": "Confirmed Aberrant Behavior",
+    "Suggested aberrant behavior": "Suggested Aberrant Behavior",
+    "Diagnosed opioid dependence": "Diagnosed Opioid Dependency",
+    "Medication change": "Medicine Changes",
+    "Central nervous system related": "Central Nervous System Related",
+    "Social determinant of health": "Social Determinants of Health",
+}
 
-    target_cls = PtFeaturesMeta.registry[feature_name]
-    feature_metadata = {}
-    if getattr(target_cls, "data_source_feature", None) or getattr(target_cls, "gt_column", "val_unified") != "val_unified":
-        feature_metadata[feature_name] = {
-            "data_source_feature": getattr(target_cls, "data_source_feature", None) or feature_name,
-            "gt_column": getattr(target_cls, "gt_column", "val_unified"),
-        }
 
-    datasets = get_dataset(
-        data_source=data_source or "mgb",
-        feature_names=[feature_name],
-        train_split=0.5,
-        downsample=downsample,
-        random_state=42,
-        feature_metadata=feature_metadata,
+def load_odd_dataset(train_split=0.5, downsample=None, random_state=42):
+    """Load the ODD MIMIC dataset, split by note_id, return {category: {train: df, eval: df}}."""
+    csv_path = "auto_prompt/datasets/odd-a-benchmark-dataset-for-the-nlp-based-opioid-related-aberrant-behavior-detection-1.0.0/ORAB_Annotation_MIMIC.csv"
+    df = pd.read_csv(csv_path).rename(columns=ODD_COL_RENAME)
+
+    # Split by note_id so same patient's notes don't leak across splits
+    note_ids = df["note_id"].unique()
+    rng = pd.np.random.RandomState(random_state) if hasattr(pd, 'np') else __import__('numpy').random.RandomState(random_state)
+    rng.shuffle(note_ids)
+    split_idx = int(len(note_ids) * train_split)
+    train_notes = set(note_ids[:split_idx])
+
+    datasets = {}
+    for cat in ODD_CATEGORIES:
+        info = ODD_CATEGORIES[cat]
+        cat_df = df[["note_id", "context", cat]].copy()
+        cat_df = cat_df.rename(columns={cat: "label"})
+        cat_df["category"] = cat
+
+        train_df = cat_df[cat_df["note_id"].isin(train_notes)].copy()
+        eval_df = cat_df[~cat_df["note_id"].isin(train_notes)].copy()
+
+        if downsample:
+            train_df = train_df.sample(n=min(downsample, len(train_df)), random_state=random_state)
+            eval_df = eval_df.sample(n=min(downsample, len(eval_df)), random_state=random_state)
+
+        datasets[cat] = {"train": train_df.reset_index(drop=True), "eval": eval_df.reset_index(drop=True)}
+
+    return datasets
+
+
+def make_odd_prompt(category, prompt_text, context):
+    """Build the full prompt for an ODD category."""
+    return f"{prompt_text}\n\nTarget Passage:\n\n{context}"
+
+
+def make_odd_baseline_prompt(category):
+    """Generate baseline prompt for an ODD category."""
+    info = ODD_CATEGORIES[category]
+    return (
+        f"Does the target passage indicate that the patient expressed {category} "
+        f"as defined as: {info['definition']} "
+        f"An example of {category} is: {info['example']}"
     )
 
-    if feature_name not in datasets:
-        raise ValueError(f"Dataset not found for feature: {feature_name}")
 
-    train_df = datasets[feature_name]["train"].copy()
-    eval_df = datasets[feature_name]["eval"].copy()
+def _run_optimization_loop(feature_name, train_df, eval_df, baseline_prompt, optimizer, iterations, n_workers, eval_fn):
+    """Generic optimization loop. eval_fn(df, prompt_text, desc) -> metrics_dict."""
+    print(f"\nProcessing: {feature_name}")
+    print(f"Train: {len(train_df)}, Eval: {len(eval_df)}")
 
-    train_df = train_df[train_df["val_unified"] != "DROP"]
-    eval_df = eval_df[eval_df["val_unified"] != "DROP"]
-
-    print(f"Train: {len(train_df)} ({len(train_df[train_df['is_synthetic'] == False])} natural, {len(train_df[train_df['is_synthetic'] == True])} synthetic)")
-    print(f"Eval: {len(eval_df)} ({len(eval_df[eval_df['is_synthetic'] == False])} natural, {len(eval_df[eval_df['is_synthetic'] == True])} synthetic)")
-
-    # --- Optimization loop on train set ---
-    current_prompt = baseline_prompts[feature_name]
+    current_prompt = baseline_prompt
     best_prompt = current_prompt
     best_train_accuracy = 0.0
     train_accuracy_history = []
-    prompt_history = []  # track prompt text and accuracy per iteration
-    all_records = []  # accumulate per-example records across iterations
-    cached_metrics = None  # reuse metrics when prompt hasn't changed
+    prompt_history = []
+    all_records = []
+    cached_metrics = None
 
     for iteration in range(iterations):
         print(f"\n--- Iteration {iteration} (train) ---")
@@ -388,17 +504,12 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
             cached_metrics = None
             print(f"  (reusing previous eval)")
         else:
-            train_chunk_df = train_df.copy()
-            _, train_metrics = run_inference(
-                train_chunk_df, current_prompt, feature_name, target_cls, inference_type,
-                n_workers=n_workers, desc=f"Train iter {iteration}"
-            )
+            train_metrics = eval_fn(train_df, current_prompt, desc=f"Train iter {iteration}")
 
         train_accuracy = train_metrics["combined"]
         train_accuracy_history.append(train_accuracy)
         prompt_history.append({"iteration": iteration, "prompt": current_prompt, "train_accuracy": train_accuracy})
 
-        # Tag and accumulate records
         for rec in train_metrics["records"]:
             rec["feature"] = feature_name
             rec["split"] = "train"
@@ -414,18 +525,12 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
             print("  No errors on train set -- stopping early")
             break
 
-        # Optimizer proposes a new prompt (gets all records so it can see correct + incorrect)
         optimizer_result = optimizer.step(current_prompt, train_metrics["records"])
         candidate_prompt = optimizer_result["prompt"]
         prompt_history[-1]["candidate_prompt"] = candidate_prompt
         prompt_history[-1]["candidate_raw_response"] = optimizer_result["raw_response"]
 
-        # Evaluate candidate and accept/reject
-        candidate_chunk_df = train_df.copy()
-        _, candidate_metrics = run_inference(
-            candidate_chunk_df, candidate_prompt, feature_name, target_cls, inference_type,
-            n_workers=n_workers, desc=f"Candidate iter {iteration}"
-        )
+        candidate_metrics = eval_fn(train_df, candidate_prompt, desc=f"Candidate iter {iteration}")
         candidate_accuracy = candidate_metrics["combined"]
         accuracy_delta = candidate_accuracy - train_accuracy
         accepted = bool(candidate_accuracy > train_accuracy)
@@ -443,27 +548,20 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
             print(f"  REJECTED candidate (acc {train_accuracy:.3f} -> {candidate_accuracy:.3f}, {accuracy_delta:+.3f})")
             cached_metrics = train_metrics
 
-    # Use the best prompt found during optimization
+    # Final eval
     print(f"\n--- Final eval with best prompt (train acc={best_train_accuracy:.3f}) ---")
-    print(f"Best prompt ({len(best_prompt)} chars): {best_prompt[:120]}...")
+    eval_metrics = eval_fn(eval_df, best_prompt, desc="Eval (best prompt)")
 
-    eval_chunk_df = eval_df.copy()
-    _, eval_metrics = run_inference(
-        eval_chunk_df, best_prompt, feature_name, target_cls, inference_type,
-        n_workers=n_workers, desc="Eval (best prompt)"
-    )
-
-    # Tag eval records
     for rec in eval_metrics["records"]:
         rec["feature"] = feature_name
         rec["split"] = "eval"
-        rec["iteration"] = len(train_accuracy_history) - 1  # best iteration
+        rec["iteration"] = len(train_accuracy_history) - 1
         rec["prompt"] = best_prompt
     all_records.extend(eval_metrics["records"])
 
     return {
         "feature_name": feature_name,
-        "baseline_prompt": baseline_prompts[feature_name],
+        "baseline_prompt": baseline_prompt,
         "train_chunks": len(train_df),
         "eval_chunks": len(eval_df),
         "train_accuracy_history": train_accuracy_history,
@@ -475,17 +573,8 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
     }
 
 
-def process_file_dspy(file_path, data_source, downsample, baseline_prompts,
-                      feature_name_override, iterations, n_workers, note):
-    """Run DSPy MIPROv2 optimization for a single feature.
-
-    Unlike process_file(), DSPy manages its own optimization loop internally.
-    We evaluate the optimized program on the same eval split for fair comparison,
-    and also extract the optimized instruction to evaluate through run_inference().
-    """
-    feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
-    print(f"\nProcessing {feature_name} with DSPy MIPROv2")
-
+def _load_acne_feature_data(feature_name, data_source, downsample):
+    """Load and split ACNE feature data. Returns (train_df, eval_df, target_cls)."""
     target_cls = PtFeaturesMeta.registry[feature_name]
     feature_metadata = {}
     if getattr(target_cls, "data_source_feature", None) or getattr(target_cls, "gt_column", "val_unified") != "val_unified":
@@ -510,75 +599,48 @@ def process_file_dspy(file_path, data_source, downsample, baseline_prompts,
     eval_df = datasets[feature_name]["eval"].copy()
     train_df = train_df[train_df["val_unified"] != "DROP"]
     eval_df = eval_df[eval_df["val_unified"] != "DROP"]
+    return train_df, eval_df, target_cls
 
-    print(f"Train: {len(train_df)}, Eval: {len(eval_df)}")
 
-    # Run DSPy optimization
-    dspy_optimizer = DSPyOptimizer(model_id=model_id, n_workers=n_workers)
-    dspy_result = dspy_optimizer.optimize(
-        train_df, eval_df,
-        baseline_prompt=baseline_prompts[feature_name],
-        num_trials=iterations,
+def _make_acne_eval_fn(feature_name, target_cls, inference_type, n_workers):
+    """Create an eval_fn for ACNE features compatible with _run_optimization_loop."""
+    def eval_fn(df, prompt_text, desc=""):
+        chunk_df = df.copy()
+        _, metrics = run_inference(
+            chunk_df, prompt_text, feature_name, target_cls, inference_type,
+            n_workers=n_workers, desc=desc
+        )
+        return metrics
+    return eval_fn
+
+
+def process_file(file_path, inference_type, downsample=None, data_source=None,
+                 baseline_prompts=None, feature_name_override=None, optimizer=None, iterations=3, n_workers=50, note="default"):
+    feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
+    train_df, eval_df, target_cls = _load_acne_feature_data(feature_name, data_source, downsample)
+
+    print(f"Train: {len(train_df)} ({len(train_df[train_df['is_synthetic'] == False])} natural, {len(train_df[train_df['is_synthetic'] == True])} synthetic)")
+    print(f"Eval: {len(eval_df)} ({len(eval_df[eval_df['is_synthetic'] == False])} natural, {len(eval_df[eval_df['is_synthetic'] == True])} synthetic)")
+
+    eval_fn = _make_acne_eval_fn(feature_name, target_cls, inference_type, n_workers)
+    return _run_optimization_loop(
+        feature_name, train_df, eval_df, baseline_prompts[feature_name],
+        optimizer, iterations, n_workers, eval_fn,
     )
 
-    optimized_instruction = dspy_result["optimized_instruction"]
-    dspy_eval_score = dspy_result["dspy_eval_score"]
-    print(f"  DSPy eval accuracy: {dspy_eval_score:.1f}%")
 
-    # Also evaluate the extracted instruction through run_inference (Option B)
-    print("\n--- Evaluating extracted instruction through run_inference ---")
-    eval_chunk_df = eval_df.copy()
-    _, eval_metrics_native = run_inference(
-        eval_chunk_df, optimized_instruction, feature_name, target_cls, "cot",
-        n_workers=n_workers, desc="Eval (DSPy instruction, native inference)"
+def process_file_dspy(file_path, data_source, downsample, baseline_prompts,
+                      feature_name_override, iterations, n_workers, note):
+    """Run DSPy MIPROv2 optimization for a single ACNE feature."""
+    from auto_prompt.dspy import run_dspy_optimization
+    feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
+    train_df, eval_df, target_cls = _load_acne_feature_data(feature_name, data_source, downsample)
+
+    eval_fn = _make_acne_eval_fn(feature_name, target_cls, "cot", n_workers)
+    return run_dspy_optimization(
+        feature_name, train_df, eval_df, baseline_prompts[feature_name],
+        iterations, n_workers, eval_fn, model_id,
     )
-
-    # Build records for the native eval
-    all_records = []
-    for rec in eval_metrics_native["records"]:
-        rec["feature"] = feature_name
-        rec["split"] = "eval"
-        rec["iteration"] = iterations - 1
-        rec["prompt"] = optimized_instruction
-    all_records.extend(eval_metrics_native["records"])
-
-    # Build prompt_history in same format as other optimizers using trial history
-    trial_history = dspy_result.get("trial_history", [])
-    prompt_history = []
-    best_so_far = 0.0
-    best_prompt_so_far = baseline_prompts[feature_name]
-    for i, trial in enumerate(trial_history):
-        score = trial["score"] if trial["score"] is not None else 0.0
-        # Normalize to 0-1 if score is on 0-100 scale
-        if score > 1.0:
-            score = score / 100.0
-        candidate_prompt = trial["instruction"] or ""
-        accepted = score > best_so_far
-        if accepted:
-            best_so_far = score
-            best_prompt_so_far = candidate_prompt
-        prompt_history.append({
-            "iteration": i,
-            "prompt": best_prompt_so_far,
-            "train_accuracy": best_so_far,
-            "candidate_prompt": candidate_prompt,
-            "candidate_accuracy": score,
-            "accepted": accepted,
-            "candidate_raw_response": "",
-        })
-
-    return {
-        "feature_name": feature_name,
-        "baseline_prompt": baseline_prompts[feature_name],
-        "train_chunks": len(train_df),
-        "eval_chunks": len(eval_df),
-        "train_accuracy_history": [h["train_accuracy"] for h in prompt_history],
-        "best_train_accuracy": best_so_far if prompt_history else dspy_eval_score / 100.0,
-        "eval_metrics": eval_metrics_native,
-        "best_prompt": optimized_instruction,
-        "prompt_history": prompt_history,
-        "records": all_records,
-    }
 
 
 def main():
@@ -589,6 +651,7 @@ def main():
 
     print(f"Inference type: {inference_type}")
     print(f"Optimizer: {args.optimizer}")
+    print(f"Dataset: {args.dataset}")
     print(f"Iterations: {args.iterations}")
     if downsample is not None:
         print(f"Downsampling to {downsample} examples per feature")
@@ -599,16 +662,134 @@ def main():
     if not is_dspy:
         optimizer = OPTIMIZERS[args.optimizer](model=model)
 
+    preds_dir = Path("auto_prompt/preds")
+    model_dir = preds_dir / model_id.replace("/", "_")
+    timestamp_dir = model_dir / args.note / timestamp
+    timestamp_dir.mkdir(parents=True, exist_ok=True)
+
+    all_results = {}
+    records_path = timestamp_dir / "records.jsonl"
+    results_path = timestamp_dir / "results.json"
+
+    def save_feature_results(feature_name, results):
+        """Save per-feature results immediately after each feature completes."""
+        with open(records_path, "a") as f:
+            for rec in results["records"]:
+                f.write(json.dumps(rec) + "\n")
+
+        serializable = {
+            "metadata": {
+                "model": model_id,
+                "optimizer": args.optimizer,
+                "dataset": args.dataset,
+                "iterations": args.iterations,
+            },
+            "features": {
+                feat: {
+                    "baseline_prompt": r["baseline_prompt"],
+                    "train_accuracy_history": r["train_accuracy_history"],
+                    "best_train_accuracy": r["best_train_accuracy"],
+                    "eval_combined": r["eval_metrics"]["combined"],
+                    "eval_natural": r["eval_metrics"].get("natural", 0),
+                    "eval_synthetic": r["eval_metrics"].get("synthetic", 0),
+                    "best_prompt": r["best_prompt"],
+                    "prompt_history": r["prompt_history"],
+                }
+                for feat, r in all_results.items()
+            },
+        }
+        with open(results_path, "w") as f:
+            json.dump(serializable, f, indent=2)
+
+        train_hist = " -> ".join(f"{a:.3f}" for a in results["train_accuracy_history"])
+        eval_acc = results["eval_metrics"]["combined"]
+        line = f"  >> {feature_name}: train=[{train_hist}] eval={eval_acc:.3f}"
+        print(line)
+        print(f"  >> Saved to: {results_path}")
+
+    if args.dataset == "odd":
+        _run_odd(args, optimizer if not is_dspy else None, is_dspy, downsample, target_features,
+                 all_results, save_feature_results)
+    else:
+        _run_acne(args, optimizer if not is_dspy else None, is_dspy, inference_type, downsample,
+                  target_features, all_results, save_feature_results)
+
+    # Final summary
+    print("\n" + "="*80)
+    print("Summary:")
+    print("="*80)
+    summary_path = timestamp_dir / "summary.txt"
+    with open(summary_path, "w") as f:
+        header = f"Model: {model_id} | Optimizer: {args.optimizer} | Dataset: {args.dataset} | Iterations: {args.iterations}\n"
+        print(header)
+        f.write(header)
+
+        for feature, results in all_results.items():
+            train_hist = " -> ".join(f"{a:.3f}" for a in results["train_accuracy_history"])
+            eval_acc = results["eval_metrics"]["combined"]
+            line = f"{feature}: train=[{train_hist}] eval={eval_acc:.3f}"
+            print(line)
+            f.write(line + "\n")
+
+    print(f"\nAll results: {results_path}")
+
+
+def _make_odd_eval_fn(category, n_workers):
+    """Create an eval_fn for ODD binary categories compatible with _run_optimization_loop."""
+    def eval_fn(df, prompt_text, desc=""):
+        df_with_prompt = df.assign(prompt=df["context"].apply(
+            lambda ctx: make_odd_prompt(category, prompt_text, ctx)
+        ))
+        return run_inference_binary(df_with_prompt, n_workers=n_workers, desc=desc)
+    return eval_fn
+
+
+def _run_odd(args, optimizer, is_dspy, downsample, target_features, all_results, save_feature_results):
+    """Run optimization on the ODD dataset."""
+    print("\nLoading ODD dataset...")
+    datasets = load_odd_dataset(downsample=downsample)
+
+    categories = target_features or list(ODD_CATEGORIES.keys())
+    print(f"Categories: {categories}")
+
+    for category in categories:
+        if category not in datasets:
+            print(f"Skipping unknown category: {category}")
+            continue
+        print(f"\n{'='*80}")
+        print(f"Processing {category}...")
+        print(f"{'='*80}")
+
+        train_df = datasets[category]["train"]
+        eval_df = datasets[category]["eval"]
+        baseline_prompt = make_odd_baseline_prompt(category)
+        eval_fn = _make_odd_eval_fn(category, args.n_workers)
+
+        if is_dspy:
+            from auto_prompt.dspy import run_dspy_optimization, _odd_df_to_acne_columns
+            results = run_dspy_optimization(
+                category, train_df, eval_df, baseline_prompt,
+                args.iterations, args.n_workers, eval_fn, model_id,
+                dspy_train_df=_odd_df_to_acne_columns(train_df),
+                dspy_eval_df=_odd_df_to_acne_columns(eval_df),
+            )
+        else:
+            results = _run_optimization_loop(
+                category, train_df, eval_df, baseline_prompt, optimizer,
+                args.iterations, args.n_workers, eval_fn,
+            )
+        if results:
+            all_results[category] = results
+            save_feature_results(category, results)
+
+
+def _run_acne(args, optimizer, is_dspy, inference_type, downsample, target_features, all_results, save_feature_results):
+    """Run optimization on the ACNE dataset (original flow)."""
     print("\nLoading baseline prompts...")
     baseline_prompts = load_baseline_prompts()
     print(f"Loaded {len(baseline_prompts)} baseline prompts")
 
     labeled_data_dir = Path(f"labeled_data/{args.data_source}")
-
-    preds_dir = Path("auto_prompt/preds")
-    model_dir = preds_dir / model_id.replace("/", "_")
-    timestamp_dir = model_dir / args.note / timestamp
-    timestamp_dir.mkdir(parents=True, exist_ok=True)
 
     excel_files = []
     for subdir in labeled_data_dir.iterdir():
@@ -637,51 +818,6 @@ def main():
             feature_name = file_path.stem.replace("_chunks", "")
             features_to_process.append((feature_name, file_path))
 
-    all_results = {}
-
-    records_path = timestamp_dir / "records.jsonl"
-    results_path = timestamp_dir / "results.json"
-
-    def save_feature_results(feature_name, results):
-        """Save per-feature results immediately after each feature completes."""
-        # Append records to .jsonl
-        with open(records_path, "a") as f:
-            for rec in results["records"]:
-                f.write(json.dumps(rec) + "\n")
-
-        # Write/update aggregate results.json with all completed features so far
-        serializable = {
-            "metadata": {
-                "model": model_id,
-                "optimizer": args.optimizer,
-                "iterations": args.iterations,
-            },
-            "features": {
-                feat: {
-                    "baseline_prompt": r["baseline_prompt"],
-                    "train_accuracy_history": r["train_accuracy_history"],
-                    "best_train_accuracy": r["best_train_accuracy"],
-                    "eval_combined": r["eval_metrics"]["combined"],
-                    "eval_natural": r["eval_metrics"]["natural"],
-                    "eval_synthetic": r["eval_metrics"]["synthetic"],
-                    "best_prompt": r["best_prompt"],
-                    "prompt_history": r["prompt_history"],
-                }
-                for feat, r in all_results.items()
-            },
-        }
-        with open(results_path, "w") as f:
-            json.dump(serializable, f, indent=2)
-
-        # Print per-feature summary line
-        train_hist = " -> ".join(f"{a:.3f}" for a in results["train_accuracy_history"])
-        eval_acc = results["eval_metrics"]["combined"]
-        line = f"  >> {feature_name}: train=[{train_hist}] eval={eval_acc:.3f}"
-        if "avg_pct_error" in results["eval_metrics"]:
-            line += f" pct_err={results['eval_metrics']['avg_pct_error']:.1f}%"
-        print(line)
-        print(f"  >> Saved to: {results_path}")
-
     for feature_name, file_path in features_to_process:
         print(f"\n{'='*80}")
         print(f"Processing {feature_name}...")
@@ -706,34 +842,6 @@ def main():
         if results:
             all_results[feature_name] = results
             save_feature_results(feature_name, results)
-
-    # Final summary
-    print("\n" + "="*80)
-    print("Summary:")
-    print("="*80)
-    summary_path = timestamp_dir / "summary.txt"
-    with open(summary_path, "w") as f:
-        header = f"Model: {model_id} | Optimizer: {args.optimizer} | Iterations: {args.iterations}\n"
-        print(header)
-        f.write(header)
-
-        for feature, results in all_results.items():
-            train_hist = " -> ".join(f"{a:.3f}" for a in results["train_accuracy_history"])
-            eval_acc = results["eval_metrics"]["combined"]
-            line = f"{feature}: train=[{train_hist}] eval={eval_acc:.3f}"
-            if "avg_pct_error" in results["eval_metrics"]:
-                line += f" pct_err={results['eval_metrics']['avg_pct_error']:.1f}%"
-            print(line)
-            f.write(line + "\n")
-
-            errors = results["eval_metrics"].get("errors", [])
-            if errors:
-                f.write(f"  First {min(5, len(errors))} eval errors:\n")
-                for err in errors[:5]:
-                    err_line = f"    pred={err['prediction']}, gt={err['ground_truth']}, chunk={err['chunk'][:150]}"
-                    f.write(err_line + "\n")
-
-    print(f"\nAll results: {results_path}")
 
 
 if __name__ == "__main__":
