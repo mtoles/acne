@@ -460,7 +460,6 @@ def load_odd_dataset(train_split=0.5, downsample=None, random_state=42):
 
         if downsample:
             train_df = train_df.sample(n=min(downsample, len(train_df)), random_state=random_state)
-            eval_df = eval_df.sample(n=min(downsample, len(eval_df)), random_state=random_state)
 
         datasets[cat] = {"train": train_df.reset_index(drop=True), "eval": eval_df.reset_index(drop=True)}
 
@@ -632,7 +631,7 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
 def process_file_dspy(file_path, data_source, downsample, baseline_prompts,
                       feature_name_override, iterations, n_workers, note):
     """Run DSPy MIPROv2 optimization for a single ACNE feature."""
-    from auto_prompt.dspy import run_dspy_optimization
+    from dspy_optimizer import run_dspy_optimization
     feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
     train_df, eval_df, target_cls = _load_acne_feature_data(feature_name, data_source, downsample)
 
@@ -664,7 +663,7 @@ def main():
 
     preds_dir = Path("auto_prompt/preds")
     model_dir = preds_dir / model_id.replace("/", "_")
-    timestamp_dir = model_dir / args.note / timestamp
+    timestamp_dir = model_dir / args.note / args.dataset / timestamp
     timestamp_dir.mkdir(parents=True, exist_ok=True)
 
     all_results = {}
@@ -766,7 +765,7 @@ def _run_odd(args, optimizer, is_dspy, downsample, target_features, all_results,
         eval_fn = _make_odd_eval_fn(category, args.n_workers)
 
         if is_dspy:
-            from auto_prompt.dspy import run_dspy_optimization, _odd_df_to_acne_columns
+            from dspy_optimizer import run_dspy_optimization, _odd_df_to_acne_columns
             results = run_dspy_optimization(
                 category, train_df, eval_df, baseline_prompt,
                 args.iterations, args.n_workers, eval_fn, model_id,
