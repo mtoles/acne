@@ -180,9 +180,9 @@ def parse_args():
     )
     parser.add_argument(
         "--dataset",
-        choices=["acne", "odd"],
+        choices=["acne", "odd", "sdoh"],
         default="acne",
-        help="Dataset to use: acne (default, medical record features) or odd (opioid aberrant behavior detection)",
+        help="Dataset to use: acne (default, medical record features), odd (opioid aberrant behavior detection), or sdoh (pregnancy social determinants of health)",
     )
     return parser.parse_args()
 
@@ -236,22 +236,32 @@ def process_single_chunk(args):
 
 
 def _predict_binary(args):
-    """Predict Yes/No for a single (prompt, context) pair."""
+    """Predict Yes/No for a single (prompt, context) pair.
+
+    Framed as A/B multiple choice (A=Yes, B=No) because MrModel.predict_with_cot's CoT
+    instruction is hardcoded to "answer only a single letter of the answer" — two-letter
+    tokens like "Yes"/"No" conflict with it. The letter is mapped back before returning
+    so the caller sees Yes/No as before.
+    """
     i, prompt_text, context = args
-    history = model.format_chunk_qs(q=prompt_text, chunk=context, options=["Yes", "No"])
-    pred = model.predict_with_cot(history, options=["Yes", "No"], max_answer_tokens=8)
+    question = f"{prompt_text} Options are: A. Yes, B. No"
+    history = model.format_chunk_qs(q=question, chunk=context, options=["A", "B"])
+    letter = model.predict_with_cot(history, options=["A", "B"], max_answer_tokens=8)
+    pred = {"A": "Yes", "B": "No"}.get(letter, letter)
     return i, pred
 
 
-def run_inference_binary(df, prompt_col="prompt", label_col="label", n_workers=50, desc=""):
+def run_inference_binary(df, prompt_text, label_col="label", n_workers=50, desc=""):
     """Run binary (Yes/No) inference. Returns metrics dict compatible with optimize_category.
 
-    df must have columns: prompt_col (str), label_col (0/1), and 'context'.
+    df must have columns: label_col (0/1) and 'context'. The same prompt_text is asked for
+    every row; format_chunk_qs wraps it with the context template, so prompt_text must be
+    just the question (not the context).
     """
     predictions = [None] * len(df)
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
         futures = {
-            executor.submit(_predict_binary, (i, row[prompt_col], row["context"])): i
+            executor.submit(_predict_binary, (i, prompt_text, row["context"])): i
             for i, (_, row) in enumerate(df.iterrows())
         }
         with tqdm(total=len(df), desc=desc) as pbar:
@@ -436,46 +446,94 @@ ODD_COL_RENAME = {
 }
 
 
-def load_odd_dataset(train_split=0.5, downsample=None, random_state=42):
-    """Load the ODD MIMIC dataset, split by note_id, return {category: {train: df, eval: df}}."""
-    csv_path = "auto_prompt/datasets/odd-a-benchmark-dataset-for-the-nlp-based-opioid-related-aberrant-behavior-detection-1.0.0/ORAB_Annotation_MIMIC.csv"
-    df = pd.read_csv(csv_path).rename(columns=ODD_COL_RENAME)
+SDOH_PROMPTS = {
+    "social_support": (
+        "Does the patient have social support? Social support is labeled as present if "
+        "the social history explicitly mentioned co-habitation (e.g., \"lives with\") or "
+        "strong familial support, and absent for homelessness, or no mention."
+    ),
+    "occupation": (
+        "Does the patient have an occupation? Occupation is marked present for employment "
+        "descriptions like \"works as\" occupation name, \"had a job\" and absent for "
+        "unemployment, quitting a job, or no mention."
+    ),
+    "substance_use": (
+        "Does the patient engage in substance use? Substance use is coded as present for "
+        "current/past use of alcohol, tobacco, drugs (marijuana), or tobacco/ethanol/drugs "
+        "(T/E/D)] and absent for denial regarding any substance use or no mention."
+    ),
+}
 
-    # Split by note_id so same patient's notes don't leak across splits
-    note_ids = df["note_id"].unique()
-    rng = pd.np.random.RandomState(random_state) if hasattr(pd, 'np') else __import__('numpy').random.RandomState(random_state)
-    rng.shuffle(note_ids)
-    split_idx = int(len(note_ids) * train_split)
-    train_notes = set(note_ids[:split_idx])
+
+def _split_by_key(df, key_col, train_split, random_state):
+    """Shuffle unique key values and return the set used for training."""
+    import numpy as np
+    keys = df[key_col].unique().copy()
+    rng = np.random.RandomState(random_state)
+    rng.shuffle(keys)
+    split_idx = int(len(keys) * train_split)
+    return set(keys[:split_idx])
+
+
+def _build_binary_splits(df, feature_names, key_col, text_col, train_split, downsample, random_state):
+    """Build per-feature {train, eval} splits from a binary-labeled DataFrame.
+
+    The DataFrame must have key_col, text_col, and one binary column per feature in feature_names.
+    Output rows have columns: key_col, context, label, category.
+    """
+    train_keys = _split_by_key(df, key_col, train_split, random_state)
 
     datasets = {}
-    for cat in ODD_CATEGORIES:
-        info = ODD_CATEGORIES[cat]
-        cat_df = df[["note_id", "context", cat]].copy()
-        cat_df = cat_df.rename(columns={cat: "label"})
-        cat_df["category"] = cat
+    for feat in feature_names:
+        feat_df = df[[key_col, text_col, feat]].copy()
+        feat_df = feat_df.rename(columns={text_col: "context", feat: "label"})
+        feat_df["category"] = feat
+        feat_df = feat_df.dropna(subset=["label"])
+        feat_df["label"] = feat_df["label"].astype(int)
 
-        train_df = cat_df[cat_df["note_id"].isin(train_notes)].copy()
-        eval_df = cat_df[~cat_df["note_id"].isin(train_notes)].copy()
+        train_df = feat_df[feat_df[key_col].isin(train_keys)].copy()
+        eval_df = feat_df[~feat_df[key_col].isin(train_keys)].copy()
 
         if downsample:
             train_df = train_df.sample(n=min(downsample, len(train_df)), random_state=random_state)
 
-        datasets[cat] = {"train": train_df.reset_index(drop=True), "eval": eval_df.reset_index(drop=True)}
+        datasets[feat] = {"train": train_df.reset_index(drop=True), "eval": eval_df.reset_index(drop=True)}
 
     return datasets
 
 
-def make_odd_prompt(category, prompt_text, context):
-    """Build the full prompt for an ODD category."""
-    return f"{prompt_text}\n\nTarget Passage:\n\n{context}"
+def load_odd_dataset(train_split=0.5, downsample=None, random_state=42):
+    """Load the ODD MIMIC dataset, split by note_id, return {category: {train: df, eval: df}}."""
+    csv_path = "auto_prompt/datasets/odd-a-benchmark-dataset-for-the-nlp-based-opioid-related-aberrant-behavior-detection-1.0.0/ORAB_Annotation_MIMIC.csv"
+    df = pd.read_csv(csv_path).rename(columns=ODD_COL_RENAME)
+    return _build_binary_splits(
+        df, list(ODD_CATEGORIES.keys()), key_col="note_id", text_col="context",
+        train_split=train_split, downsample=downsample, random_state=random_state,
+    )
+
+
+def load_sdoh_dataset(train_split=0.5, downsample=None, random_state=42):
+    """Load the SDoH (pregnancy) MIMIC-III + MIMIC-IV datasets, split by subject_id.
+
+    Returns {feature: {train: df, eval: df}} where feature is one of SDOH_PROMPTS keys.
+    """
+    base = "auto_prompt/datasets/annotated-social-determinants-of-health-dataset-for-adverse-pregnancy-outcomes-1.0.0"
+    df3 = pd.read_csv(f"{base}/MIMICIII_annotations_PregnancySDoH.csv", encoding="latin-1")
+    df3 = df3.rename(columns={"SUBJECT_ID": "subject_id", "TEXT": "text"})
+    df4 = pd.read_csv(f"{base}/MIMICIV_annotations_PregnancySDoH.csv", encoding="latin-1")
+    df = pd.concat([df3, df4], ignore_index=True)
+
+    return _build_binary_splits(
+        df, list(SDOH_PROMPTS.keys()), key_col="subject_id", text_col="text",
+        train_split=train_split, downsample=downsample, random_state=random_state,
+    )
 
 
 def make_odd_baseline_prompt(category):
-    """Generate baseline prompt for an ODD category."""
+    """Generate baseline prompt for an ODD category. format_chunk_qs handles the context wrapper."""
     info = ODD_CATEGORIES[category]
     return (
-        f"Does the target passage indicate that the patient expressed {category} "
+        f"Does the passage indicate that the patient expressed {category} "
         f"as defined as: {info['definition']} "
         f"An example of {category} is: {info['example']}"
     )
@@ -707,8 +765,19 @@ def main():
         print(f"  >> Saved to: {results_path}")
 
     if args.dataset == "odd":
-        _run_odd(args, optimizer if not is_dspy else None, is_dspy, downsample, target_features,
-                 all_results, save_feature_results)
+        datasets = load_odd_dataset(downsample=downsample)
+        baseline_prompts = {cat: make_odd_baseline_prompt(cat) for cat in ODD_CATEGORIES}
+        _run_binary_dataset(
+            args, optimizer if not is_dspy else None, is_dspy, target_features,
+            all_results, save_feature_results, datasets, baseline_prompts,
+        )
+    elif args.dataset == "sdoh":
+        datasets = load_sdoh_dataset(downsample=downsample)
+        baseline_prompts = dict(SDOH_PROMPTS)
+        _run_binary_dataset(
+            args, optimizer if not is_dspy else None, is_dspy, target_features,
+            all_results, save_feature_results, datasets, baseline_prompts,
+        )
     else:
         _run_acne(args, optimizer if not is_dspy else None, is_dspy, inference_type, downsample,
                   target_features, all_results, save_feature_results)
@@ -733,53 +802,52 @@ def main():
     print(f"\nAll results: {results_path}")
 
 
-def _make_odd_eval_fn(category, n_workers):
-    """Create an eval_fn for ODD binary categories compatible with _run_optimization_loop."""
+def _make_binary_eval_fn(n_workers):
+    """Create an eval_fn for binary-classification datasets compatible with _run_optimization_loop."""
     def eval_fn(df, prompt_text, desc=""):
-        df_with_prompt = df.assign(prompt=df["context"].apply(
-            lambda ctx: make_odd_prompt(category, prompt_text, ctx)
-        ))
-        return run_inference_binary(df_with_prompt, n_workers=n_workers, desc=desc)
+        return run_inference_binary(df, prompt_text, n_workers=n_workers, desc=desc)
     return eval_fn
 
 
-def _run_odd(args, optimizer, is_dspy, downsample, target_features, all_results, save_feature_results):
-    """Run optimization on the ODD dataset."""
-    print("\nLoading ODD dataset...")
-    datasets = load_odd_dataset(downsample=downsample)
+def _run_binary_dataset(args, optimizer, is_dspy, target_features, all_results, save_feature_results,
+                        datasets, baseline_prompts):
+    """Run optimization on a binary-classification dataset (ODD or SDoH).
 
-    categories = target_features or list(ODD_CATEGORIES.keys())
-    print(f"Categories: {categories}")
+    datasets: {feature: {"train": df, "eval": df}} — rows have context + label (0/1).
+    baseline_prompts: {feature: str}. Prompts must elicit Yes/No answers.
+    """
+    features = target_features or list(datasets.keys())
+    print(f"Features: {features}")
 
-    for category in categories:
-        if category not in datasets:
-            print(f"Skipping unknown category: {category}")
+    for feature in features:
+        if feature not in datasets:
+            print(f"Skipping unknown feature: {feature}")
             continue
         print(f"\n{'='*80}")
-        print(f"Processing {category}...")
+        print(f"Processing {feature}...")
         print(f"{'='*80}")
 
-        train_df = datasets[category]["train"]
-        eval_df = datasets[category]["eval"]
-        baseline_prompt = make_odd_baseline_prompt(category)
-        eval_fn = _make_odd_eval_fn(category, args.n_workers)
+        train_df = datasets[feature]["train"]
+        eval_df = datasets[feature]["eval"]
+        baseline_prompt = baseline_prompts[feature]
+        eval_fn = _make_binary_eval_fn(args.n_workers)
 
         if is_dspy:
-            from dspy_optimizer import run_dspy_optimization, _odd_df_to_acne_columns
+            from dspy_optimizer import run_dspy_optimization, _binary_df_to_acne_columns
             results = run_dspy_optimization(
-                category, train_df, eval_df, baseline_prompt,
+                feature, train_df, eval_df, baseline_prompt,
                 args.iterations, args.n_workers, eval_fn, model_id,
-                dspy_train_df=_odd_df_to_acne_columns(train_df),
-                dspy_eval_df=_odd_df_to_acne_columns(eval_df),
+                dspy_train_df=_binary_df_to_acne_columns(train_df),
+                dspy_eval_df=_binary_df_to_acne_columns(eval_df),
             )
         else:
             results = _run_optimization_loop(
-                category, train_df, eval_df, baseline_prompt, optimizer,
+                feature, train_df, eval_df, baseline_prompt, optimizer,
                 args.iterations, args.n_workers, eval_fn,
             )
         if results:
-            all_results[category] = results
-            save_feature_results(category, results)
+            all_results[feature] = results
+            save_feature_results(feature, results)
 
 
 def _run_acne(args, optimizer, is_dspy, inference_type, downsample, target_features, all_results, save_feature_results):
