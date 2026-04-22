@@ -968,7 +968,8 @@ def process_pt(pt_id):
         death_dates = []
         for dr in dem_rows:
             dod = str(dr["Date_Of_Death"]).strip()
-            if dod:
+            # if dod:
+            if dod and dod.lower() not in ("unknown", "nan", "none", "nat", ""):
                 parsed = normalize_date(dod)
                 if parsed is not None:
                     death_dates.append(parsed)
