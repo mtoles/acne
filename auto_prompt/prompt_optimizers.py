@@ -13,15 +13,48 @@ from collections import defaultdict
 from abc import ABC, abstractmethod
 
 import dspy
+from transformers import AutoTokenizer
+
+from models import MODEL_ID
 
 # Qwen2.5-72B max context = 32768 tokens (vLLM default).
-# Reserve 2048 tokens for output, use the rest for input.
+# Reserve 2048 tokens for output and a small chat-template overhead.
 MAX_CONTEXT_TOKENS = 32768
 MAX_OUTPUT_TOKENS = 2048
-MAX_INPUT_TOKENS = MAX_CONTEXT_TOKENS - MAX_OUTPUT_TOKENS
-# Rough chars-per-token estimate for English medical text (conservative)
-CHARS_PER_TOKEN = 3
-MAX_INPUT_CHARS = MAX_INPUT_TOKENS * CHARS_PER_TOKEN
+# Chat template (e.g. "<|im_start|>user\n...<|im_end|>\n<|im_start|>assistant\n")
+# wraps the raw user content. Reserve a buffer so raw-text token counts stay safe.
+CHAT_TEMPLATE_OVERHEAD = 32
+MAX_INPUT_TOKENS = MAX_CONTEXT_TOKENS - MAX_OUTPUT_TOKENS - CHAT_TEMPLATE_OVERHEAD
+
+_TOKENIZER = None
+
+
+def _get_tokenizer():
+    global _TOKENIZER
+    if _TOKENIZER is None:
+        _TOKENIZER = AutoTokenizer.from_pretrained(MODEL_ID)
+    return _TOKENIZER
+
+
+def count_tokens(text: str) -> int:
+    """Exact token count for `text` using the inference model's tokenizer."""
+    return len(_get_tokenizer().encode(text, add_special_tokens=False))
+
+
+def join_within_budget(entries, budget_tokens, separator="\n\n"):
+    """Join as many entries (in given order) as fit the token budget."""
+    if budget_tokens <= 0:
+        return ""
+    sep_tokens = count_tokens(separator)
+    kept = []
+    total = 0
+    for text in entries:
+        added = count_tokens(text) + (sep_tokens if kept else 0)
+        if total + added > budget_tokens:
+            break
+        kept.append(text)
+        total += added
+    return separator.join(kept)
 
 
 def fill_prompt(template, examples, placeholder="{EXAMPLES}"):
@@ -33,19 +66,23 @@ def fill_prompt(template, examples, placeholder="{EXAMPLES}"):
         placeholder: marker in template to replace with joined examples
 
     Returns:
-        The filled prompt string with as many examples as fit MAX_INPUT_CHARS
+        The filled prompt string with as many examples as fit MAX_INPUT_TOKENS
     """
-    base_len = len(template) - len(placeholder)
-    budget = MAX_INPUT_CHARS - base_len
+    base_text = template.replace(placeholder, "")
+    base_tokens = count_tokens(base_text)
+    budget = MAX_INPUT_TOKENS - base_tokens
     rng = random.Random(hash(tuple(examples)))
     examples = rng.sample(examples, len(examples))
     kept = []
     total = 0
+    join_tokens = count_tokens("\n\n")
     for text in examples:
-        if total + len(text) > budget:
+        text_tokens = count_tokens(text)
+        added = text_tokens + (join_tokens if kept else 0)
+        if total + added > budget:
             break
         kept.append(text)
-        total += len(text)
+        total += added
     return template.replace(placeholder, "\n\n".join(kept))
 
 
@@ -355,15 +392,17 @@ class OursMultiFailureOptimizer(PromptOptimizer):
             (gt, pred, n_examples_shown) tuples.
         """
         placeholder = "{FAILURE_GROUPS}"
-        base_len = len(template) - len(placeholder)
-        budget = MAX_INPUT_CHARS - base_len
+        base_text = template.replace(placeholder, "")
+        base_tokens = count_tokens(base_text)
+        budget = MAX_INPUT_TOKENS - base_tokens
+        join_tokens = count_tokens("\n\n")
 
         # Sort cells by frequency descending
         sorted_cells = sorted(confusion.keys(), key=lambda c: len(confusion[c]), reverse=True)
 
         groups = []
         cells_included = []
-        total_chars = 0
+        total_tokens = 0
         global_example_idx = 0
 
         for cell in sorted_cells:
@@ -374,8 +413,10 @@ class OursMultiFailureOptimizer(PromptOptimizer):
                 f"--- Failure type: model predicts \"{pred}\" when correct answer is \"{gt}\" "
                 f"({len(cell_errors)} errors of this type) ---\n\n"
             )
+            header_tokens = count_tokens(header)
 
-            if total_chars + len(header) > budget:
+            group_separator = join_tokens if groups else 0
+            if total_tokens + group_separator + header_tokens > budget:
                 break
 
             # Shuffle within cell for variety
@@ -383,22 +424,24 @@ class OursMultiFailureOptimizer(PromptOptimizer):
             shuffled = rng.sample(cell_errors, len(cell_errors))
 
             examples_for_cell = []
-            cell_chars = len(header)
+            cell_tokens = header_tokens
 
             for err in shuffled:
                 global_example_idx += 1
                 text = f"Example {global_example_idx}:\n{format_example_fn(err, prompt_text=current_prompt, include_prediction=True)}"
-                if total_chars + cell_chars + len(text) + 2 > budget:  # +2 for "\n\n" join
+                example_separator = join_tokens if examples_for_cell else 0
+                text_tokens = count_tokens(text)
+                if total_tokens + group_separator + cell_tokens + example_separator + text_tokens > budget:
                     break
                 examples_for_cell.append(text)
-                cell_chars += len(text) + 2
+                cell_tokens += example_separator + text_tokens
 
             if not examples_for_cell:
                 break
 
             group_text = header + "\n\n".join(examples_for_cell)
             groups.append(group_text)
-            total_chars += len(group_text) + 2  # +2 for "\n\n" between groups
+            total_tokens += group_separator + cell_tokens
             cells_included.append((gt, pred, len(examples_for_cell)))
 
         filled = template.replace(placeholder, "\n\n".join(groups))
@@ -418,19 +461,31 @@ class OursMultiFailureOptimizer(PromptOptimizer):
         # Record trajectory (like OPRO)
         self.trajectory.append((current_prompt, accuracy))
 
-        # Build trajectory section sorted by score ascending (best last, per OPRO)
+        # Budget trajectory + rule_history so they don't crowd out examples.
+        # Reserve half of MAX_INPUT_TOKENS for examples and template prose.
+        meta_budget = MAX_INPUT_TOKENS // 2
+        traj_budget = meta_budget * 2 // 3
+        rule_budget = meta_budget - traj_budget
+
+        # Build trajectory section sorted by score ascending (best last, per OPRO).
+        # Reverse so highest-scoring entries are kept first under the budget.
         sorted_trajectory = sorted(self.trajectory, key=lambda x: x[1])
-        trajectory_section = "\n\n".join(
+        traj_entries = [
             f"text:\n{prompt}\nscore:\n{round(score * 100)}"
-            for prompt, score in sorted_trajectory
-        )
+            for prompt, score in reversed(sorted_trajectory)
+        ]
+        trajectory_section = join_within_budget(traj_entries, traj_budget)
 
         rule_history_section = ""
         if self.rule_history:
-            rule_history_section = "\n\nPreviously proposed rules:\n" + "\n".join(
+            # Keep most recent rules first under the budget.
+            rule_entries = [
                 f"- {'ACCEPTED' if accepted else 'REJECTED'} (accuracy {delta:+.0%}): {rule}"
-                for rule, accepted, delta in self.rule_history
-            ) + "\n"
+                for rule, accepted, delta in reversed(self.rule_history)
+            ]
+            trimmed_rules = join_within_budget(rule_entries, rule_budget, separator="\n")
+            if trimmed_rules:
+                rule_history_section = "\n\nPreviously proposed rules:\n" + trimmed_rules + "\n"
 
         meta_template = (
             "You are helping optimize a prompt for a medical record question-answering system.\n\n"
