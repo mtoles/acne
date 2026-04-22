@@ -240,12 +240,13 @@ def _predict_binary(args):
 
     Framed as A/B multiple choice (A=Yes, B=No) because MrModel.predict_with_cot's CoT
     instruction is hardcoded to "answer only a single letter of the answer" — two-letter
-    tokens like "Yes"/"No" conflict with it. The letter is mapped back before returning
-    so the caller sees Yes/No as before.
+    tokens like "Yes"/"No" conflict with it. prompt_text is expected to already include
+    the "Options are: A. Yes, B. No" legend (baked into the baseline prompts, matching
+    the ACNE convention of including legends in the question itself). The letter is
+    mapped back to Yes/No before returning so the caller sees Yes/No as before.
     """
     i, prompt_text, context = args
-    question = f"{prompt_text} Options are: A. Yes, B. No"
-    history = model.format_chunk_qs(q=question, chunk=context, options=["A", "B"])
+    history = model.format_chunk_qs(q=prompt_text, chunk=context, options=["A", "B"])
     letter = model.predict_with_cot(history, options=["A", "B"], max_answer_tokens=8)
     pred = {"A": "Yes", "B": "No"}.get(letter, letter)
     return i, pred
@@ -450,17 +451,20 @@ SDOH_PROMPTS = {
     "social_support": (
         "Does the patient have social support? Social support is labeled as present if "
         "the social history explicitly mentioned co-habitation (e.g., \"lives with\") or "
-        "strong familial support, and absent for homelessness, or no mention."
+        "strong familial support, and absent for homelessness, or no mention. "
+        "Options are: A. Yes, B. No"
     ),
     "occupation": (
         "Does the patient have an occupation? Occupation is marked present for employment "
         "descriptions like \"works as\" occupation name, \"had a job\" and absent for "
-        "unemployment, quitting a job, or no mention."
+        "unemployment, quitting a job, or no mention. "
+        "Options are: A. Yes, B. No"
     ),
     "substance_use": (
         "Does the patient engage in substance use? Substance use is coded as present for "
         "current/past use of alcohol, tobacco, drugs (marijuana), or tobacco/ethanol/drugs "
-        "(T/E/D)] and absent for denial regarding any substance use or no mention."
+        "(T/E/D)] and absent for denial regarding any substance use or no mention. "
+        "Options are: A. Yes, B. No"
     ),
 }
 
@@ -535,7 +539,8 @@ def make_odd_baseline_prompt(category):
     return (
         f"Does the passage indicate that the patient expressed {category} "
         f"as defined as: {info['definition']} "
-        f"An example of {category} is: {info['example']}"
+        f"An example of {category} is: {info['example']} "
+        f"Options are: A. Yes, B. No"
     )
 
 
