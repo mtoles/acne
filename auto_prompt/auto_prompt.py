@@ -470,39 +470,39 @@ SDOH_PROMPTS = {
 
 
 def _split_by_key(df, key_col, train_split, random_state):
-    """Shuffle unique key values and return the set used for training."""
+    """Partition df into (train_df, eval_df) by shuffling unique values of key_col."""
     import numpy as np
     keys = df[key_col].unique().copy()
     rng = np.random.RandomState(random_state)
     rng.shuffle(keys)
     split_idx = int(len(keys) * train_split)
-    return set(keys[:split_idx])
+    train_keys = set(keys[:split_idx])
+    return df[df[key_col].isin(train_keys)].copy(), df[~df[key_col].isin(train_keys)].copy()
 
 
-def _build_binary_splits(df, feature_names, key_col, text_col, train_split, downsample, random_state):
-    """Build per-feature {train, eval} splits from a binary-labeled DataFrame.
+def _normalize_binary_rows(df, feature, text_col):
+    """Extract one feature's rows as context/label/category columns."""
+    out = df[[text_col, feature]].copy()
+    out = out.rename(columns={text_col: "context", feature: "label"})
+    out["category"] = feature
+    out = out.dropna(subset=["label"])
+    out["label"] = out["label"].astype(int)
+    return out
 
-    The DataFrame must have key_col, text_col, and one binary column per feature in feature_names.
-    Output rows have columns: key_col, context, label, category.
+
+def _build_binary_splits(train_df, eval_df, feature_names, text_col, downsample, random_state):
+    """Build per-feature {train, eval} splits from pre-partitioned DataFrames.
+
+    train_df and eval_df must share text_col and a binary column per feature in feature_names.
+    Output rows have columns: context, label, category.
     """
-    train_keys = _split_by_key(df, key_col, train_split, random_state)
-
     datasets = {}
     for feat in feature_names:
-        feat_df = df[[key_col, text_col, feat]].copy()
-        feat_df = feat_df.rename(columns={text_col: "context", feat: "label"})
-        feat_df["category"] = feat
-        feat_df = feat_df.dropna(subset=["label"])
-        feat_df["label"] = feat_df["label"].astype(int)
-
-        train_df = feat_df[feat_df[key_col].isin(train_keys)].copy()
-        eval_df = feat_df[~feat_df[key_col].isin(train_keys)].copy()
-
+        feat_train = _normalize_binary_rows(train_df, feat, text_col)
+        feat_eval = _normalize_binary_rows(eval_df, feat, text_col)
         if downsample:
-            train_df = train_df.sample(n=min(downsample, len(train_df)), random_state=random_state)
-
-        datasets[feat] = {"train": train_df.reset_index(drop=True), "eval": eval_df.reset_index(drop=True)}
-
+            feat_train = feat_train.sample(n=min(downsample, len(feat_train)), random_state=random_state)
+        datasets[feat] = {"train": feat_train.reset_index(drop=True), "eval": feat_eval.reset_index(drop=True)}
     return datasets
 
 
@@ -510,26 +510,22 @@ def load_odd_dataset(train_split=0.5, downsample=None, random_state=42):
     """Load the ODD MIMIC dataset, split by note_id, return {category: {train: df, eval: df}}."""
     csv_path = "auto_prompt/datasets/odd-a-benchmark-dataset-for-the-nlp-based-opioid-related-aberrant-behavior-detection-1.0.0/ORAB_Annotation_MIMIC.csv"
     df = pd.read_csv(csv_path).rename(columns=ODD_COL_RENAME)
+    train_df, eval_df = _split_by_key(df, "note_id", train_split, random_state)
     return _build_binary_splits(
-        df, list(ODD_CATEGORIES.keys()), key_col="note_id", text_col="context",
-        train_split=train_split, downsample=downsample, random_state=random_state,
+        train_df, eval_df, list(ODD_CATEGORIES.keys()), text_col="context",
+        downsample=downsample, random_state=random_state,
     )
 
 
-def load_sdoh_dataset(train_split=0.5, downsample=None, random_state=42):
-    """Load the SDoH (pregnancy) MIMIC-III + MIMIC-IV datasets, split by subject_id.
-
-    Returns {feature: {train: df, eval: df}} where feature is one of SDOH_PROMPTS keys.
-    """
+def load_sdoh_dataset(downsample=None, random_state=42):
+    """Load SDoH (pregnancy) with MIMIC-IV as train and MIMIC-III as eval/test."""
     base = "auto_prompt/datasets/annotated-social-determinants-of-health-dataset-for-adverse-pregnancy-outcomes-1.0.0"
-    df3 = pd.read_csv(f"{base}/MIMICIII_annotations_PregnancySDoH.csv", encoding="latin-1")
-    df3 = df3.rename(columns={"SUBJECT_ID": "subject_id", "TEXT": "text"})
-    df4 = pd.read_csv(f"{base}/MIMICIV_annotations_PregnancySDoH.csv", encoding="latin-1")
-    df = pd.concat([df3, df4], ignore_index=True)
-
+    train_df = pd.read_csv(f"{base}/MIMICIV_annotations_PregnancySDoH.csv", encoding="latin-1")
+    eval_df = pd.read_csv(f"{base}/MIMICIII_annotations_PregnancySDoH.csv", encoding="latin-1")
+    eval_df = eval_df.rename(columns={"SUBJECT_ID": "subject_id", "TEXT": "text"})
     return _build_binary_splits(
-        df, list(SDOH_PROMPTS.keys()), key_col="subject_id", text_col="text",
-        train_split=train_split, downsample=downsample, random_state=random_state,
+        train_df, eval_df, list(SDOH_PROMPTS.keys()), text_col="text",
+        downsample=downsample, random_state=random_state,
     )
 
 
