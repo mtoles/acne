@@ -2,7 +2,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from tqdm import tqdm
 from make_db import db_url
-from pt_features import get_rows_by_icd, cancer_icd9s, cancer_icd10s, compute_sex, compute_race, compute_age, categorize_age, categorize_bmi, compute_bmi_from_phy, compute_smoking_status_demographic, compute_alcohol_status_demographic
+from pt_features import get_rows_by_icd, cancer_icd9s, cancer_icd10s, compute_sex, compute_race, categorize_age, categorize_bmi, compute_bmi_from_phy, compute_smoking_status_demographic, compute_alcohol_status_demographic
 import json
 from pathlib import Path
 import numpy as np
@@ -13,6 +13,8 @@ from itertools import combinations
 parser = argparse.ArgumentParser(description="Create matched case-control cohort for antibiotic study")
 parser.add_argument("--n-limit", type=int, default=None, help="Limit to first N patients (N/2 cases, N/2 controls). Default: None (use all)")
 parser.add_argument("--min-match-features", type=int, default=5, help="Minimum number of matching features (out of 6: sex, race, BMI, smoking, alcohol, age±5). Default: 6 (exact match on all)")
+parser.add_argument("--min-age", type=float, default=12, help="Minimum age (inclusive) at index date. Default: 12")
+parser.add_argument("--max-age", type=float, default=45, help="Maximum age (inclusive) at index date. Default: 45")
 args = parser.parse_args()
 
 N_LIMIT = args.n_limit  # use first N/2 from each cohort for quick test; set to None for full run
@@ -133,7 +135,19 @@ no_abx_dem_df["took_abx"] = False
 dem_df = pd.concat([took_abx_dem_df, no_abx_dem_df], ignore_index=True)
 
 print("Processing demographic data...")
-dem_df["study_age"] = dem_df.apply(compute_age, axis=1)
+dem_df["Date_of_Birth"] = pd.to_datetime(dem_df["Date_of_Birth"], errors="coerce")
+dem_df["index_date"] = dem_df["EMPI"].map(index_date_map)
+dem_df["study_age"] = (dem_df["index_date"] - dem_df["Date_of_Birth"]).dt.days / 365.25
+
+# Filter by age at index date
+pre_age_filter = len(dem_df)
+in_range = dem_df["study_age"].between(args.min_age, args.max_age, inclusive="both")
+dem_df = dem_df[in_range].reset_index(drop=True)
+print(
+    f"Age filter [{args.min_age}, {args.max_age}]: {pre_age_filter} -> {len(dem_df)} patients "
+    f"(cases: {(dem_df['took_abx']==True).sum()}, controls: {(dem_df['took_abx']==False).sum()})"
+)
+index_date_map = {empi: index_date_map[empi] for empi in dem_df["EMPI"].tolist()}
 
 dem_df["study_age_bin"] = dem_df["study_age"].apply(categorize_age)
 dem_df["study_sex"] = dem_df.apply(compute_sex, axis=1)
@@ -142,7 +156,7 @@ dem_df["study_race"] = dem_df.apply(compute_race, axis=1)
 # Query physical health data using batched queries
 print("Querying physical health data...")
 with db.connect() as conn:
-    all_empis = list(took_abx_empis) + list(no_abx_empis)
+    all_empis = dem_df["EMPI"].tolist()
     phy_df = batch_sql_query(conn, all_empis, "phy")
 
 # Process BMI, smoking, alcohol in a single groupby pass
@@ -169,9 +183,6 @@ del phy_df
 
 
 print(dem_df.head())
-
-# Add index date to dem_df for reference
-dem_df["index_date"] = dem_df["EMPI"].map(index_date_map)
 
 dem_df = dem_df[["EMPI", "took_abx", "index_date", "study_age", "study_sex", "study_race", "study_bmi", "study_bmi_category", "study_smoking_status", "study_alcohol_status"]]
 

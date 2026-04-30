@@ -65,6 +65,7 @@ _thread_local = threading.local()
 
 # Global records directory (set before processing loop)
 _records_dir = None
+_recycle_dirs = []
 
 
 def _json_default(obj):
@@ -510,6 +511,62 @@ def get_chunks_by_keyword(
     return chunks
 
 
+def _recycle_patient(pt_id, src_path, dst_path):
+    """Copy an existing .jsonl record and backfill age_at_index_date if missing."""
+    rows = []
+    has_age_at_index = False
+    index_date_str = None
+    with open(src_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            rows.append(rec)
+            if rec["feature_name"] == "demographics" and rec["keyword"] == "age_at_index_date":
+                has_age_at_index = True
+            if rec["feature_name"] == "index_date":
+                index_date_str = rec["prediction"]
+
+    if not has_age_at_index and index_date_str is not None:
+        with db.connect() as conn:
+            q = text(f"SELECT Date_of_Birth FROM dem WHERE EMPI = '{pt_id}' LIMIT 1")
+            dem_row = conn.execute(q).mappings().fetchone()
+        if dem_row is not None:
+            dob = pd.to_datetime(dem_row["Date_of_Birth"], errors="coerce")
+            index_date = normalize_date(index_date_str)
+            if pd.notna(dob):
+                age_at_index = (index_date - dob).days / 365.25
+                rows.append({
+                    "feature_name": "demographics",
+                    "keyword": "age_at_index_date",
+                    "date": str(index_date),
+                    "prediction": f"{age_at_index:.2f}",
+                })
+
+    with open(dst_path, "w") as f:
+        for row in rows:
+            json.dump(row, f, default=_json_default)
+            f.write("\n")
+
+    feature_counts = Counter()
+    structured_feature_counts = Counter()
+    llm_feature_counts = Counter()
+    for row in rows:
+        feature_counts[row["feature_name"]] += 1
+        if row["keyword"] == "STRUCTURED_DATA":
+            structured_feature_counts[row["feature_name"]] += 1
+        else:
+            llm_feature_counts[row["feature_name"]] += 1
+
+    return {
+        "feature_counts": feature_counts,
+        "structured_feature_counts": structured_feature_counts,
+        "llm_feature_counts": llm_feature_counts,
+        "total_rows": len(rows),
+    }
+
+
 def process_pt(pt_id):
     """
     Process a single patient.
@@ -521,6 +578,12 @@ def process_pt(pt_id):
     if jsonl_path.exists():
         print(f"Skipping {pt_id} (already has {jsonl_path})")
         return None
+
+    # Recycle from a prior run if available (first dir wins)
+    for _recycle_dir in _recycle_dirs:
+        recycle_path = _recycle_dir / f"{pt_id}.jsonl"
+        if recycle_path.exists():
+            return _recycle_patient(pt_id, recycle_path, jsonl_path)
 
     ### Step 1: Determine index date and calculate time windows ###
     with db.connect() as conn:
@@ -953,12 +1016,16 @@ def process_pt(pt_id):
     )
     rows.extend(duration_numeric_rows)
 
-    # --- Demographics ---
+    #  Demographics 
     if dem_rows:
         dem_row = dem_rows[0]
         rows.append({"feature_name": "demographics", "keyword": "sex", "date": str(index_date), "prediction": compute_sex(dem_row)})
         rows.append({"feature_name": "demographics", "keyword": "race", "date": str(index_date), "prediction": compute_race(dem_row)})
         rows.append({"feature_name": "demographics", "keyword": "age", "date": str(index_date), "prediction": str(compute_age(dem_row))})
+        dob = pd.to_datetime(dem_row["Date_of_Birth"], errors="coerce")
+        if pd.notna(dob):
+            age_at_index = (index_date - dob).days / 365.25
+            rows.append({"feature_name": "demographics", "keyword": "age_at_index_date", "date": str(index_date), "prediction": f"{age_at_index:.2f}"})
         bmi_val, bmi_cat = compute_bmi_from_phy(phy_records, index_date)
         if bmi_val is not None:
             rows.append({"feature_name": "demographics", "keyword": "bmi", "date": str(index_date), "prediction": str(round(bmi_val, 1))})
@@ -1057,6 +1124,17 @@ parser.add_argument(
     nargs="*",
     help="List of specific EMPIs to process (default: None, process all in cohort)",
 )
+parser.add_argument(
+    "--recycle-from",
+    type=str,
+    nargs="*",
+    default=[
+        # "full_inference_out/records_old_3_wrong-age",
+        # "full_inference_out/records_old_4_wrong-recycle",
+        "full_inference_out/records_old_5",
+    ],
+    help="One or more paths to previous records/ dirs. For each pt, the first dir containing the pt's .jsonl is used (with age_at_index_date backfilled if missing).",
+)
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
 
@@ -1091,6 +1169,15 @@ output_dir.mkdir(parents=True, exist_ok=True)
 # Create records directory for per-EMPI JSONL files
 _records_dir = Path("full_inference_out/records")
 _records_dir.mkdir(parents=True, exist_ok=True)
+
+# Optional recycle-from directories
+if args.recycle_from:
+    for d in args.recycle_from:
+        p = Path(d)
+        if not p.is_dir():
+            raise FileNotFoundError(f"--recycle-from dir does not exist: {p}")
+        _recycle_dirs.append(p)
+    print(f"Recycling records from (in priority order): {[str(p) for p in _recycle_dirs]}")
 
 # Set up LLM call logging
 llm_logger = logging.getLogger("llm_calls")
