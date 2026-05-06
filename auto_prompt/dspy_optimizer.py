@@ -49,26 +49,36 @@ def run_dspy_optimization(feature_name, train_df, eval_df, baseline_prompt, iter
         rec["prompt"] = optimized_instruction
     all_records.extend(eval_metrics["records"])
 
-    # Build prompt_history from trial history
+    # Build prompt_history from trial history. Re-evaluate each trial's
+    # instruction on eval_df so analysis can plot a test-acc trajectory.
     trial_history = dspy_result.get("trial_history", [])
     prompt_history = []
     best_so_far = 0.0
     best_prompt_so_far = baseline_prompt
+    best_eval_so_far = 0.0
     for i, trial in enumerate(trial_history):
         score = trial["score"] if trial["score"] is not None else 0.0
         if score > 1.0:
             score = score / 100.0
         candidate_prompt = trial["instruction"] or ""
+        if candidate_prompt:
+            cand_eval_metrics = eval_fn(eval_df, candidate_prompt, desc=f"DSPy trial {i} eval")
+            candidate_eval_accuracy = cand_eval_metrics["combined"]
+        else:
+            candidate_eval_accuracy = 0.0
         accepted = score > best_so_far
         if accepted:
             best_so_far = score
             best_prompt_so_far = candidate_prompt
+            best_eval_so_far = candidate_eval_accuracy
         prompt_history.append({
             "iteration": i,
             "prompt": best_prompt_so_far,
             "train_accuracy": best_so_far,
+            "eval_accuracy": best_eval_so_far,
             "candidate_prompt": candidate_prompt,
             "candidate_accuracy": score,
+            "candidate_eval_accuracy": candidate_eval_accuracy,
             "accepted": accepted,
             "candidate_raw_response": "",
         })

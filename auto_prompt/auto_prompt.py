@@ -551,22 +551,32 @@ def _run_optimization_loop(feature_name, train_df, eval_df, baseline_prompt, opt
     train_accuracy_history = []
     prompt_history = []
     all_records = []
-    cached_metrics = None
+    cached_train_metrics = None
+    cached_eval_metrics = None
 
     for iteration in range(iterations):
         print(f"\n--- Iteration {iteration} (train) ---")
         print(f"Prompt ({len(current_prompt)} chars): {current_prompt[:120]}...")
 
-        if cached_metrics is not None:
-            train_metrics = cached_metrics
-            cached_metrics = None
+        if cached_train_metrics is not None:
+            train_metrics = cached_train_metrics
+            eval_metrics_iter = cached_eval_metrics
+            cached_train_metrics = None
+            cached_eval_metrics = None
             print(f"  (reusing previous eval)")
         else:
             train_metrics = eval_fn(train_df, current_prompt, desc=f"Train iter {iteration}")
+            eval_metrics_iter = eval_fn(eval_df, current_prompt, desc=f"Eval iter {iteration}")
 
         train_accuracy = train_metrics["combined"]
+        eval_accuracy = eval_metrics_iter["combined"]
         train_accuracy_history.append(train_accuracy)
-        prompt_history.append({"iteration": iteration, "prompt": current_prompt, "train_accuracy": train_accuracy})
+        prompt_history.append({
+            "iteration": iteration,
+            "prompt": current_prompt,
+            "train_accuracy": train_accuracy,
+            "eval_accuracy": eval_accuracy,
+        })
 
         for rec in train_metrics["records"]:
             rec["feature"] = feature_name
@@ -589,22 +599,27 @@ def _run_optimization_loop(feature_name, train_df, eval_df, baseline_prompt, opt
         prompt_history[-1]["candidate_raw_response"] = optimizer_result["raw_response"]
 
         candidate_metrics = eval_fn(train_df, candidate_prompt, desc=f"Candidate iter {iteration}")
+        candidate_eval_metrics = eval_fn(eval_df, candidate_prompt, desc=f"Candidate eval iter {iteration}")
         candidate_accuracy = candidate_metrics["combined"]
+        candidate_eval_accuracy = candidate_eval_metrics["combined"]
         accuracy_delta = candidate_accuracy - train_accuracy
         accepted = bool(candidate_accuracy > train_accuracy)
         prompt_history[-1]["candidate_accuracy"] = candidate_accuracy
+        prompt_history[-1]["candidate_eval_accuracy"] = candidate_eval_accuracy
         prompt_history[-1]["accepted"] = accepted
 
         rule = optimizer_result.get("rule", candidate_prompt)
         optimizer.feedback(rule, accepted, accuracy_delta)
 
         if accepted:
-            print(f"  ACCEPTED candidate (acc {train_accuracy:.3f} -> {candidate_accuracy:.3f}, {accuracy_delta:+.3f})")
+            print(f"  ACCEPTED candidate (train {train_accuracy:.3f} -> {candidate_accuracy:.3f} {accuracy_delta:+.3f}, eval {eval_accuracy:.3f} -> {candidate_eval_accuracy:.3f})")
             current_prompt = candidate_prompt
-            cached_metrics = candidate_metrics
+            cached_train_metrics = candidate_metrics
+            cached_eval_metrics = candidate_eval_metrics
         else:
-            print(f"  REJECTED candidate (acc {train_accuracy:.3f} -> {candidate_accuracy:.3f}, {accuracy_delta:+.3f})")
-            cached_metrics = train_metrics
+            print(f"  REJECTED candidate (train {train_accuracy:.3f} -> {candidate_accuracy:.3f} {accuracy_delta:+.3f}, eval {eval_accuracy:.3f} -> {candidate_eval_accuracy:.3f})")
+            cached_train_metrics = train_metrics
+            cached_eval_metrics = eval_metrics_iter
 
     # Final eval
     print(f"\n--- Final eval with best prompt (train acc={best_train_accuracy:.3f}) ---")
