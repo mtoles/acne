@@ -16,9 +16,13 @@ _cache = Memory(".llm_cache", verbose=0)
 COT_SUFFIX = "\n\n### Instructions:\n\nThink step by step, then answer the question."
 
 
-@_cache.cache
+@_cache.cache(ignore=["base_url", "api_key"])
 def _cached_llm_call(model_id, base_url, api_key, messages, max_tokens, temperature, top_p):
-    """Cached LLM API call. Takes only serializable args (no client object)."""
+    """Cached LLM API call. Takes only serializable args (no client object).
+
+    base_url and api_key are excluded from the cache key — they describe transport,
+    not model output, so a different vLLM port should hit the same entry.
+    """
     client = OpenAI(base_url=base_url, api_key=api_key)
     response = client.chat.completions.create(
         model=model_id,
