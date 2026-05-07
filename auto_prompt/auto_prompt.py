@@ -180,9 +180,9 @@ def parse_args():
     )
     parser.add_argument(
         "--dataset",
-        choices=["acne", "odd", "sdoh"],
+        choices=["acne", "odd", "sdoh", "clip"],
         default="acne",
-        help="Dataset to use: acne (default, medical record features), odd (opioid aberrant behavior detection), or sdoh (pregnancy social determinants of health)",
+        help="Dataset to use: acne (default, medical record features), odd (opioid aberrant behavior detection), sdoh (pregnancy social determinants of health), or clip (discharge-note action items)",
     )
     return parser.parse_args()
 
@@ -250,6 +250,58 @@ def _predict_binary(args):
     letter = model.predict_with_cot(history, options=["A", "B"], max_answer_tokens=8)
     pred = {"A": "Yes", "B": "No"}.get(letter, letter)
     return i, pred
+
+
+def _predict_multichoice(args):
+    """Predict a single letter from `options` for one (prompt, context) pair.
+
+    The prompt_text is expected to already include the option legend; we just
+    pass the option list to the model so the CoT instruction lists them.
+    """
+    i, prompt_text, context, options = args
+    history = model.format_chunk_qs(q=prompt_text, chunk=context, options=options)
+    letter = model.predict_with_cot(history, options=options, max_answer_tokens=8)
+    return i, letter
+
+
+def run_inference_multichoice(df, prompt_text, options, label_col="answer", n_workers=50, desc=""):
+    """Run n-way single-letter classification. df has columns 'context' and label_col (letter)."""
+    predictions = [None] * len(df)
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        futures = {
+            executor.submit(_predict_multichoice, (i, prompt_text, row["context"], options)): i
+            for i, (_, row) in enumerate(df.iterrows())
+        }
+        with tqdm(total=len(df), desc=desc) as pbar:
+            for future in as_completed(futures):
+                i, pred = future.result()
+                predictions[i] = pred
+                pbar.update(1)
+
+    ground_truth = list(df[label_col])
+    correct = sum(p == g for p, g in zip(predictions, ground_truth))
+    accuracy = correct / len(predictions) if predictions else 0
+
+    records = [
+        {
+            "chunk": str(df.iloc[i]["context"]),
+            "keyword": "",
+            "ground_truth": ground_truth[i],
+            "prediction": predictions[i] or "",
+            "correct": predictions[i] == ground_truth[i],
+        }
+        for i in range(len(predictions))
+    ]
+
+    metrics = {
+        "combined": accuracy,
+        "natural": accuracy,
+        "synthetic": 0,
+        "records": records,
+        "errors": [r for r in records if not r["correct"]],
+    }
+    print(f"  Accuracy: {accuracy:.3f} ({correct}/{len(predictions)})")
+    return metrics
 
 
 def run_inference_binary(df, prompt_text, label_col="label", n_workers=50, desc=""):
@@ -447,6 +499,73 @@ ODD_COL_RENAME = {
 }
 
 
+CLIP_LABEL_TO_LETTER = {
+    "I-Case-specific instructions for patient": "A",
+    "I-Appointment-related followup":            "B",
+    "I-Medication-related followups":            "C",
+    "I-Lab-related followup":                    "D",
+    "I-Procedure-related followup":              "E",
+    "I-Imaging-related followup":                "F",
+    "I-Other helpful contextual information":    "G",
+}
+CLIP_OPTIONS = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+CLIP_BASELINE_PROMPT = """Which of the following action type best describes this passage?
+
+A. Patient Instructions
+
+Description: Post-discharge instructions that are directed to the patient, so the PCP can ensure the patient understands and performs them.
+
+Example: No driving until post-op visit and you are no longer taking pain medications.
+
+B. Appointment
+
+Description: Appointments to be made by the PCP, or monitored to ensure the patient attends them.
+
+Example: The patient requires a neurology consult at XYZ for evaluation.
+
+C. Medication
+
+Description: Medications that the PCP either needs to ensure that the patient is taking correctly, e.g. time-limited medications or new medications that may need dose adjustment.
+
+Example: The patient was instructed to hold ASA and refrain from NSAIDs for 2 weeks.
+
+D. Lab
+
+Description: Laboratory tests that either have results pending or need to be ordered by the PCP.
+
+Example: We ask that the patients' family physician repeat these tests in 2 weeks to ensure resolution.
+
+E. Procedure
+
+Description: Procedures that the PCP needs to either order, ensure another caregiver orders, or ensure the patient undergoes.
+
+Example: Please follow-up for EGD with GI.
+
+F. Imaging
+
+Description: Imaging studies that either have results pending or need to be ordered by the PCP.
+
+Example: Superior segment of the left lower lobe: rounded density which could have been related to infection, but follow-up for resolution recommended to exclude possible malignancy.
+
+G. Other
+
+Description: Other actionable information that is important to relay to the PCP but does not fall under existing aspects (e.g. the need to closely observe the patient's diet, or fax results to another provider).
+
+Example: Since the patient has been struggling to gain weight this past year, we will monitor his nutritional status and trend weights closely.
+
+H. Multiple
+
+Description: The passage describes two or more of the above action types simultaneously (e.g. an appointment together with patient-facing instructions).
+
+Example: Please keep your appointment to see Dr. Chapman on 04-23.
+
+I. None
+
+Description: The passage does not describe any of the above action types.
+
+Example: Admission Date: 2002-07-02"""
+
+
 SDOH_PROMPTS = {
     "social_support": (
         "Does the patient have social support? Social support is labeled as present if "
@@ -527,6 +646,58 @@ def load_sdoh_dataset(downsample=None, random_state=42):
         train_df, eval_df, list(SDOH_PROMPTS.keys()), text_col="text",
         downsample=downsample, random_state=random_state,
     )
+
+
+def load_clip_dataset(downsample=None, random_state=42):
+    """Load CLIP discharge-note action items as a single 9-way feature 'action_type'.
+
+    Sentences are mapped to a letter answer:
+      A-G: single-label (one of the 7 paper classes)
+      H:   Multiple (>=2 paper classes on the same sentence)
+      I:   None (unlabeled sentence)
+    To keep the class mix from being swamped by the 88% unlabeled tail, the
+    None pool in each split is capped at the average count of the other 8
+    classes before the uniform `downsample` is applied.
+    """
+    import ast as _ast
+    base = "auto_prompt/datasets/clip-a-dataset-for-extracting-action-items-for-physicians-from-hospital-discharge-notes-1.0.0"
+    train_ids = set(int(x) for x in pd.read_csv(f"{base}/train_ids.csv", header=None)[0])
+    val_ids   = set(int(x) for x in pd.read_csv(f"{base}/val_ids.csv",   header=None)[0])
+    test_ids  = set(int(x) for x in pd.read_csv(f"{base}/test_ids.csv",  header=None)[0])
+
+    df = pd.read_csv(
+        f"{base}/sentence_level.csv",
+        converters={"sentence": _ast.literal_eval, "labels": _ast.literal_eval},
+    )
+    df["context"] = df["sentence"].apply(lambda toks: " ".join(toks))
+
+    def to_letter(ls):
+        if not ls:
+            return "I"
+        if len(ls) > 1:
+            return "H"
+        return CLIP_LABEL_TO_LETTER[ls[0]]
+    df["answer"] = df["labels"].apply(to_letter)
+    df["category"] = "action_type"
+
+    df["split"] = None
+    df.loc[df["doc_id"].isin(train_ids | val_ids), "split"] = "train"
+    df.loc[df["doc_id"].isin(test_ids), "split"] = "eval"
+    df = df.dropna(subset=["split"])
+
+    out = {}
+    for split, sub in df.groupby("split"):
+        non_none = sub[sub["answer"] != "I"]
+        none_rows = sub[sub["answer"] == "I"]
+        if len(non_none):
+            cap = int(non_none["answer"].value_counts().mean())
+            none_rows = none_rows.sample(n=min(cap, len(none_rows)), random_state=random_state)
+        balanced = pd.concat([non_none, none_rows]).reset_index(drop=True)
+        if downsample and len(balanced) > downsample:
+            balanced = balanced.sample(n=downsample, random_state=random_state).reset_index(drop=True)
+        out[split] = balanced[["context", "answer", "category"]]
+
+    return {"action_type": {"train": out["train"], "eval": out["eval"]}}
 
 
 def make_odd_baseline_prompt(category):
@@ -794,6 +965,14 @@ def main():
             args, optimizer if not is_dspy else None, is_dspy, target_features,
             all_results, save_feature_results, datasets, baseline_prompts,
         )
+    elif args.dataset == "clip":
+        datasets = load_clip_dataset(downsample=downsample)
+        baseline_prompts = {"action_type": CLIP_BASELINE_PROMPT}
+        _run_multichoice_dataset(
+            args, optimizer if not is_dspy else None, is_dspy, target_features,
+            all_results, save_feature_results, datasets, baseline_prompts,
+            options=CLIP_OPTIONS,
+        )
     else:
         _run_acne(args, optimizer if not is_dspy else None, is_dspy, inference_type, downsample,
                   target_features, all_results, save_feature_results)
@@ -823,6 +1002,54 @@ def _make_binary_eval_fn(n_workers):
     def eval_fn(df, prompt_text, desc=""):
         return run_inference_binary(df, prompt_text, n_workers=n_workers, desc=desc)
     return eval_fn
+
+
+def _make_multichoice_eval_fn(n_workers, options):
+    """Create an eval_fn for n-way multiple-choice datasets compatible with _run_optimization_loop."""
+    def eval_fn(df, prompt_text, desc=""):
+        return run_inference_multichoice(df, prompt_text, options=options, n_workers=n_workers, desc=desc)
+    return eval_fn
+
+
+def _run_multichoice_dataset(args, optimizer, is_dspy, target_features, all_results, save_feature_results,
+                             datasets, baseline_prompts, options):
+    """Run optimization on an n-way multiple-choice dataset (e.g. CLIP).
+
+    datasets: {feature: {"train": df, "eval": df}} — rows have context + answer (letter).
+    options: list of single-letter answer tokens, e.g. ["A","B",...,"I"].
+    """
+    features = target_features or list(datasets.keys())
+    print(f"Features: {features}")
+
+    for feature in features:
+        if feature not in datasets:
+            print(f"Skipping unknown feature: {feature}")
+            continue
+        print(f"\n{'='*80}")
+        print(f"Processing {feature}...")
+        print(f"{'='*80}")
+
+        train_df = datasets[feature]["train"]
+        eval_df = datasets[feature]["eval"]
+        baseline_prompt = baseline_prompts[feature]
+        eval_fn = _make_multichoice_eval_fn(args.n_workers, options)
+
+        if is_dspy:
+            from dspy_optimizer import run_dspy_optimization, _multichoice_df_to_acne_columns
+            results = run_dspy_optimization(
+                feature, train_df, eval_df, baseline_prompt,
+                args.iterations, args.n_workers, eval_fn, model_id,
+                dspy_train_df=_multichoice_df_to_acne_columns(train_df),
+                dspy_eval_df=_multichoice_df_to_acne_columns(eval_df),
+            )
+        else:
+            results = _run_optimization_loop(
+                feature, train_df, eval_df, baseline_prompt, optimizer,
+                args.iterations, args.n_workers, eval_fn,
+            )
+        if results:
+            all_results[feature] = results
+            save_feature_results(feature, results)
 
 
 def _run_binary_dataset(args, optimizer, is_dspy, target_features, all_results, save_feature_results,

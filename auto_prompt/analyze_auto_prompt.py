@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 
 
 DEFAULT_RESULTS_DIR = "auto_prompt/preds/Qwen_Qwen2.5-72B-Instruct-AWQ/paper3"
-DATASETS = ["acne", "odd", "sdoh"]
+DATASETS = ["acne", "odd", "sdoh", "clip"]
 EXCLUDE_FEATURES = {"cancer_family_any"}
 ANALYSIS_DIR = "auto_prompt/analysis"
 os.makedirs(ANALYSIS_DIR, exist_ok=True)
@@ -29,17 +29,28 @@ def _norm(v):
     return v / 100.0 if v > 1.0 else v
 
 
-def load_dataset(dataset_name, results_dir):
+def load_dataset(dataset_name, results_dir, skip_incomplete=False):
     """Load all optimizer results for a dataset. Returns {optimizer: data}."""
     base = os.path.join(results_dir, dataset_name)
     results = {}
+    if not os.path.isdir(base):
+        if skip_incomplete:
+            warnings.warn(f"Skipping missing dataset directory: {base}")
+            return results
+        raise FileNotFoundError(base)
     for ts in sorted(os.listdir(base)):
         path = os.path.join(base, ts, "results.json")
         if not os.path.isfile(path):
             continue
-        with open(path) as f:
-            data = json.load(f)
-        results[data["metadata"]["optimizer"]] = data
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            results[data["metadata"]["optimizer"]] = data
+        except (json.JSONDecodeError, KeyError, OSError) as e:
+            if skip_incomplete:
+                warnings.warn(f"Skipping {path}: {e}")
+                continue
+            raise
     return results
 
 
@@ -258,13 +269,25 @@ def plot_per_dataset(dataset_name, results, features, baselines, eval_baselines,
     print(f"Saved {out_path}")
 
 
-def print_ranking(title, results, features, value_fn):
+def print_ranking(title, results, features, value_fn, skip_incomplete=False):
     print("\n" + "=" * 60)
     print(title)
     print("=" * 60)
     method_final = {}
+    feat_values = {}
     for name, data in results.items():
-        accs = [value_fn(data["features"][f]) for f in features if f in data["features"]]
+        accs = []
+        for f in features:
+            if f not in data["features"]:
+                continue
+            try:
+                v = value_fn(data["features"][f])
+            except (KeyError, TypeError):
+                if skip_incomplete:
+                    continue
+                raise
+            feat_values[(name, f)] = v
+            accs.append(v)
         if accs:
             method_final[name] = np.mean(accs)
 
@@ -281,8 +304,8 @@ def print_ranking(title, results, features, value_fn):
     for feat in features:
         print(f"{feat:<35s}", end="")
         for name in methods:
-            if feat in results[name]["features"]:
-                print(f"{value_fn(results[name]['features'][feat]):>12.3f}", end="")
+            if (name, feat) in feat_values:
+                print(f"{feat_values[(name, feat)]:>12.3f}", end="")
             else:
                 print(f"{'N/A':>12s}", end="")
         print()
@@ -295,12 +318,19 @@ def print_ranking(title, results, features, value_fn):
 
 def plot_2x2(dataset_curves, ylabel, suptitle, out_name, y_range_fn,
              dataset_curves_light=None):
-    """2x2 figure: per-dataset curves + avg-of-avgs. Legend only in bottom-right.
+    """Grid figure: one subplot per dataset + avg-of-avgs. Legend only on the avg.
 
     If dataset_curves_light is provided, those curves are drawn first in a
     lighter shade of the same per-method color (used to overlay train under eval).
     """
-    fig, axes = plt.subplots(2, 2, figsize=(12, 9), squeeze=False)
+    n_plots = len(DATASETS) + 1  # +1 for avg-of-avgs
+    ncols = 2 if n_plots <= 4 else 3
+    nrows = math.ceil(n_plots / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows), squeeze=False)
+    flat_axes = axes.flatten()
+    for ax in flat_axes[n_plots:]:
+        ax.set_visible(False)
+
     common = set.intersection(*[set(c) for c in dataset_curves.values()])
     avg_of_avgs = {
         name: np.stack([dataset_curves[ds][name] for ds in DATASETS]).mean(axis=0)
@@ -321,7 +351,7 @@ def plot_2x2(dataset_curves, ylabel, suptitle, out_name, y_range_fn,
     all_vals = np.concatenate(all_vals_list)
     y_min, y_max = y_range_fn(all_vals)
 
-    for ax, ds in zip(axes.flatten()[:3], DATASETS):
+    for ax, ds in zip(flat_axes[:len(DATASETS)], DATASETS):
         if dataset_curves_light is not None:
             for name, curve in dataset_curves_light[ds].items():
                 style = method_styles[name]
@@ -339,7 +369,7 @@ def plot_2x2(dataset_curves, ylabel, suptitle, out_name, y_range_fn,
         ax.set_ylim(y_min, y_max)
         ax.grid(True, alpha=0.3)
 
-    ax = axes[1, 1]
+    ax = flat_axes[len(DATASETS)]
     if dataset_curves_light is not None:
         for name in sorted(light_avg_of_avgs):
             style = method_styles[name]
@@ -351,7 +381,7 @@ def plot_2x2(dataset_curves, ylabel, suptitle, out_name, y_range_fn,
         label = f"{name} eval" if dataset_curves_light is not None else name
         ax.plot(np.arange(11), avg_of_avgs[name], f"{style['marker']}-",
                 label=label, color=style["color"], alpha=0.9, markersize=5)
-    ax.set_title("Average of averages (acne + odd + sdoh)")
+    ax.set_title(f"Average of averages ({' + '.join(DATASETS)})")
     ax.set_xlabel("Iteration")
     ax.set_ylabel(ylabel)
     ax.set_ylim(y_min, y_max)
@@ -395,13 +425,24 @@ def plot_length_combined(dataset_length_curves, tag):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR)
+    parser.add_argument("--skip-incomplete", action="store_true",
+                        help="Skip datasets/features with missing data instead of crashing.")
     args = parser.parse_args()
     results_dir = args.results_dir
+    skip_incomplete = args.skip_incomplete
     tag = os.path.basename(os.path.normpath(results_dir))
 
-    raw_results = {ds: load_dataset(ds, results_dir) for ds in DATASETS}
+    raw_results = {ds: load_dataset(ds, results_dir, skip_incomplete=skip_incomplete)
+                   for ds in DATASETS}
     # Restrict to optimizers present in ALL datasets, on every plot and table.
-    common_opts = set.intersection(*[set(r) for r in raw_results.values()])
+    non_empty = [set(r) for r in raw_results.values() if r]
+    if not non_empty:
+        if skip_incomplete:
+            warnings.warn("No datasets had any results; nothing to do.")
+            return
+        raise RuntimeError("No datasets had any results.")
+    common_opts = set.intersection(*non_empty) if skip_incomplete \
+        else set.intersection(*[set(r) for r in raw_results.values()])
     results_by_ds = {
         ds: {opt: data for opt, data in r.items() if opt in common_opts}
         for ds, r in raw_results.items()
@@ -411,6 +452,13 @@ def main():
     dataset_eval_curves = {}
     dataset_length_curves = {}
     for ds, results in results_by_ds.items():
+        if skip_incomplete and not results:
+            warnings.warn(f"Skipping dataset {ds}: no results loaded.")
+            dataset_train_curves[ds] = {}
+            dataset_eval_curves[ds] = {}
+            dataset_length_curves[ds] = {}
+            continue
+
         all_feats = set()
         for data in results.values():
             all_feats.update(data["features"].keys())
@@ -421,16 +469,26 @@ def main():
 
         plot_per_dataset(ds, results, features, baselines, eval_baselines, tag)
         print_ranking(f"[{ds}] Final Train Accuracy Ranking", results, features,
-                      lambda fd: _norm(fd["best_train_accuracy"]))
+                      lambda fd: _norm(fd["best_train_accuracy"]),
+                      skip_incomplete=skip_incomplete)
         print_ranking(f"[{ds}] Final Holdout (Eval) Accuracy Ranking", results, features,
-                      lambda fd: fd["eval_combined"])
+                      lambda fd: fd["eval_combined"],
+                      skip_incomplete=skip_incomplete)
 
         print("\n" + "=" * 60)
         print(f"[{ds}] Average Prompt Length (chars)")
         print("=" * 60)
         for name, data in results.items():
-            lengths = [len(data["features"][f]["best_prompt"])
-                       for f in features if f in data["features"]]
+            lengths = []
+            for f in features:
+                if f not in data["features"]:
+                    continue
+                try:
+                    lengths.append(len(data["features"][f]["best_prompt"]))
+                except (KeyError, TypeError):
+                    if skip_incomplete:
+                        continue
+                    raise
             if lengths:
                 print(f"  {name:20s} {np.mean(lengths):>8.0f}")
 
@@ -438,8 +496,15 @@ def main():
         dataset_eval_curves[ds] = avg_eval_curve(results, features, baselines, eval_baselines)
         dataset_length_curves[ds] = avg_length_curve(results, features)
 
-    plot_combined(dataset_eval_curves, dataset_train_curves, tag)
-    plot_length_combined(dataset_length_curves, tag)
+    if any(dataset_eval_curves.values()) or any(dataset_train_curves.values()):
+        plot_combined(dataset_eval_curves, dataset_train_curves, tag)
+    elif skip_incomplete:
+        warnings.warn("No data available for combined accuracy plot; skipping.")
+
+    if any(dataset_length_curves.values()):
+        plot_length_combined(dataset_length_curves, tag)
+    elif skip_incomplete:
+        warnings.warn("No data available for combined length plot; skipping.")
 
 
 if __name__ == "__main__":

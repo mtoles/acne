@@ -16,6 +16,15 @@ def _binary_df_to_acne_columns(df):
     return acne_df
 
 
+def _multichoice_df_to_acne_columns(df):
+    """Convert an n-way multiple-choice DataFrame (context + letter answer) to ACNE-style columns."""
+    acne_df = df.copy()
+    acne_df["chunk"] = acne_df["context"]
+    acne_df["found_keywords"] = ""
+    acne_df["val_unified"] = acne_df["answer"]
+    return acne_df
+
+
 def run_dspy_optimization(feature_name, train_df, eval_df, baseline_prompt, iterations, n_workers, eval_fn, model_id, dspy_train_df=None, dspy_eval_df=None):
     """Generic DSPy MIPROv2 optimization. eval_fn(df, prompt_text, desc) -> metrics_dict.
 
