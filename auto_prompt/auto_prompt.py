@@ -169,8 +169,8 @@ def parse_args():
     parser.add_argument(
         "--n_workers",
         type=int,
-        default=50,
-        help="Number of parallel workers for inference (default: 50)",
+        default=200,
+        help="Number of parallel workers for inference",
     )
     parser.add_argument(
         "--note",
@@ -506,10 +506,11 @@ CLIP_LABEL_TO_LETTER = {
     "I-Lab-related followup":                    "D",
     "I-Procedure-related followup":              "E",
     "I-Imaging-related followup":                "F",
-    "I-Other helpful contextual information":    "G",
 }
-CLIP_OPTIONS = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
-CLIP_BASELINE_PROMPT = """Which of the following action type best describes this passage?
+# G ("Other") is treated as unlabeled (allowed in context). H ("Multiple"-label
+# sentences) and I ("None"-label sentences) are excluded from the targets.
+CLIP_OPTIONS = ["A", "B", "C", "D", "E", "F"]
+CLIP_BASELINE_PROMPT = """Which of the following action type best describes the marked sentence (between >>> and <<<)?
 
 A. Patient Instructions
 
@@ -545,25 +546,7 @@ F. Imaging
 
 Description: Imaging studies that either have results pending or need to be ordered by the PCP.
 
-Example: Superior segment of the left lower lobe: rounded density which could have been related to infection, but follow-up for resolution recommended to exclude possible malignancy.
-
-G. Other
-
-Description: Other actionable information that is important to relay to the PCP but does not fall under existing aspects (e.g. the need to closely observe the patient's diet, or fax results to another provider).
-
-Example: Since the patient has been struggling to gain weight this past year, we will monitor his nutritional status and trend weights closely.
-
-H. Multiple
-
-Description: The passage describes two or more of the above action types simultaneously (e.g. an appointment together with patient-facing instructions).
-
-Example: Please keep your appointment to see Dr. Chapman on 04-23.
-
-I. None
-
-Description: The passage does not describe any of the above action types.
-
-Example: Admission Date: 2002-07-02"""
+Example: Superior segment of the left lower lobe: rounded density which could have been related to infection, but follow-up for resolution recommended to exclude possible malignancy."""
 
 
 SDOH_PROMPTS = {
@@ -649,15 +632,19 @@ def load_sdoh_dataset(downsample=None, random_state=42):
 
 
 def load_clip_dataset(downsample=None, random_state=42):
-    """Load CLIP discharge-note action items as a single 9-way feature 'action_type'.
+    """Load CLIP discharge-note action items as a 6-way feature 'action_type'.
 
-    Sentences are mapped to a letter answer:
-      A-G: single-label (one of the 7 paper classes)
-      H:   Multiple (>=2 paper classes on the same sentence)
-      I:   None (unlabeled sentence)
-    To keep the class mix from being swamped by the 88% unlabeled tail, the
-    None pool in each split is capped at the average count of the other 8
-    classes before the uniform `downsample` is applied.
+    Targets are sentences with exactly one label whose mapped letter is in A-F
+    (Patient Instructions, Appointment, Medication, Lab, Procedure, Imaging).
+    Sentences with G ("Other"), zero labels, or 2+ labels are NOT used as
+    targets but still appear in context.
+
+    Each target's `context` is built by walking outward through neighboring
+    sentences in the same document, including any sentence that is not itself
+    a single A-F or multi-label sentence (so unlabeled or G-only sentences are
+    absorbed). Walking stops at the document boundary or at the next labeled
+    sentence (single A-F or multi-label H). The target sentence is wrapped in
+    `>>>...<<<` so the model knows which one to classify.
     """
     import ast as _ast
     base = "auto_prompt/datasets/clip-a-dataset-for-extracting-action-items-for-physicians-from-hospital-discharge-notes-1.0.0"
@@ -669,33 +656,63 @@ def load_clip_dataset(downsample=None, random_state=42):
         f"{base}/sentence_level.csv",
         converters={"sentence": _ast.literal_eval, "labels": _ast.literal_eval},
     )
-    df["context"] = df["sentence"].apply(lambda toks: " ".join(toks))
+    df["sent_text"] = df["sentence"].apply(lambda toks: " ".join(toks))
 
-    def to_letter(ls):
+    def classify(ls):
+        # 'target_letter': A-F if usable as a target, else None
+        # 'is_boundary': True if this sentence stops context expansion
+        #                (i.e., a target in A-F or a multi-label sentence)
         if not ls:
-            return "I"
-        if len(ls) > 1:
-            return "H"
-        return CLIP_LABEL_TO_LETTER[ls[0]]
-    df["answer"] = df["labels"].apply(to_letter)
-    df["category"] = "action_type"
+            return None, False
+        if len(ls) >= 2:
+            return None, True  # multi-label: not a target, but stops expansion
+        letter = CLIP_LABEL_TO_LETTER.get(ls[0])
+        if letter is None:
+            return None, False  # G ("Other"): treated as unlabeled
+        return letter, True  # single A-F target
+
+    classification = df["labels"].apply(classify)
+    df["target_letter"] = [c[0] for c in classification]
+    df["is_boundary"] = [c[1] for c in classification]
 
     df["split"] = None
     df.loc[df["doc_id"].isin(train_ids | val_ids), "split"] = "train"
     df.loc[df["doc_id"].isin(test_ids), "split"] = "eval"
-    df = df.dropna(subset=["split"])
+    df = df.dropna(subset=["split"]).reset_index(drop=True)
 
+    rows = []
+    for doc_id, sub in df.groupby("doc_id"):
+        sub = sub.sort_values("sent_index").reset_index(drop=True)
+        texts = list(sub["sent_text"])
+        boundary = list(sub["is_boundary"])
+        targets = list(sub["target_letter"])
+        split = sub["split"].iloc[0]
+        n = len(sub)
+        for i in range(n):
+            if targets[i] is None:
+                continue
+            # Walk backward through non-boundary sentences.
+            lo = i
+            while lo - 1 >= 0 and not boundary[lo - 1]:
+                lo -= 1
+            # Walk forward through non-boundary sentences.
+            hi = i
+            while hi + 1 < n and not boundary[hi + 1]:
+                hi += 1
+            parts = list(texts[lo:i]) + [f">>>{texts[i]}<<<"] + list(texts[i + 1:hi + 1])
+            rows.append({
+                "context": " ".join(parts),
+                "answer": targets[i],
+                "category": "action_type",
+                "split": split,
+            })
+
+    out_df = pd.DataFrame(rows)
     out = {}
-    for split, sub in df.groupby("split"):
-        non_none = sub[sub["answer"] != "I"]
-        none_rows = sub[sub["answer"] == "I"]
-        if len(non_none):
-            cap = int(non_none["answer"].value_counts().mean())
-            none_rows = none_rows.sample(n=min(cap, len(none_rows)), random_state=random_state)
-        balanced = pd.concat([non_none, none_rows]).reset_index(drop=True)
-        if downsample and len(balanced) > downsample:
-            balanced = balanced.sample(n=downsample, random_state=random_state).reset_index(drop=True)
-        out[split] = balanced[["context", "answer", "category"]]
+    for split, sub in out_df.groupby("split"):
+        if downsample and len(sub) > downsample:
+            sub = sub.sample(n=downsample, random_state=random_state).reset_index(drop=True)
+        out[split] = sub[["context", "answer", "category"]].reset_index(drop=True)
 
     return {"action_type": {"train": out["train"], "eval": out["eval"]}}
 
