@@ -73,18 +73,18 @@ def run_dspy_optimization(feature_name, train_df, val_df, test_df, baseline_prom
     best_val_so_far = -1.0
     best_prompt_so_far = baseline_prompt
     for i, trial in enumerate(trial_history):
-        train_score = trial["score"] if trial["score"] is not None else 0.0
-        if train_score > 1.0:
-            train_score = train_score / 100.0
         candidate_prompt = trial["instruction"] or ""
         if candidate_prompt:
+            cand_train_metrics = eval_fn(train_df, candidate_prompt, desc=f"DSPy trial {i} train")
+            candidate_train_accuracy = cand_train_metrics["combined"]
             cand_val_metrics = eval_fn(val_df, candidate_prompt, desc=f"DSPy trial {i} val")
             candidate_val_accuracy = cand_val_metrics["combined"]
         else:
+            candidate_train_accuracy = 0.0
             candidate_val_accuracy = 0.0
         accepted = candidate_val_accuracy > best_val_so_far
         if accepted:
-            best_train_so_far = train_score
+            best_train_so_far = candidate_train_accuracy
             best_val_so_far = candidate_val_accuracy
             best_prompt_so_far = candidate_prompt
         prompt_history.append({
@@ -93,7 +93,7 @@ def run_dspy_optimization(feature_name, train_df, val_df, test_df, baseline_prom
             "train_accuracy": best_train_so_far,
             "val_accuracy": best_val_so_far,
             "candidate_prompt": candidate_prompt,
-            "candidate_train_accuracy": train_score,
+            "candidate_train_accuracy": candidate_train_accuracy,
             "candidate_val_accuracy": candidate_val_accuracy,
             "accepted": accepted,
             "candidate_raw_response": "",

@@ -267,6 +267,7 @@ def plot_per_dataset(dataset_name, results, features, baselines, eval_baselines,
     for ax, feat in zip(axes, features):
         if feat not in baselines:
             continue
+        feat_vals = []
         for name, data in results.items():
             if feat not in data["features"]:
                 continue
@@ -277,17 +278,22 @@ def plot_per_dataset(dataset_name, results, features, baselines, eval_baselines,
             light = _lighten(style["color"])
             ax.plot(x, best, f"{style['marker']}-",
                     label=f"{name} train", color=light, alpha=0.7, markersize=5)
+            feat_vals.extend(best)
             paired_eval = feature_paired_eval_series(
                 data["features"][feat], baselines[feat], eval_baselines.get(feat),
             )
             if paired_eval is not None:
                 ax.plot(x, paired_eval, f"{style['marker']}-",
                         label=f"{name} eval", color=style["color"], alpha=0.9, markersize=5)
+                feat_vals.extend(paired_eval)
 
         ax.set_title(feat)
         ax.set_xlabel("Iteration")
         ax.set_ylabel("Accuracy")
-        ax.set_ylim(0, 1.05)
+        if feat_vals:
+            ax.set_ylim(max(0.0, min(feat_vals) - 0.03), 1.0)
+        else:
+            ax.set_ylim(0, 1.0)
         ax.legend(fontsize=6)
         ax.grid(True, alpha=0.3)
 
@@ -295,18 +301,24 @@ def plot_per_dataset(dataset_name, results, features, baselines, eval_baselines,
     ax_avg = axes[len(features)]
     train_avg = avg_curve(results, features, baselines)
     eval_avg = avg_eval_curve(results, features, baselines, eval_baselines)
+    avg_vals = []
     for name, curve in train_avg.items():
         style = method_styles[name]
         ax_avg.plot(np.arange(11), curve, f"{style['marker']}-",
                     label=f"{name} train", color=_lighten(style["color"]), alpha=0.7, markersize=5)
+        avg_vals.extend(curve)
     for name, curve in eval_avg.items():
         style = method_styles[name]
         ax_avg.plot(np.arange(11), curve, f"{style['marker']}-",
                     label=f"{name} eval", color=style["color"], alpha=0.9, markersize=5)
+        avg_vals.extend(curve)
     ax_avg.set_title("Average (all features)")
     ax_avg.set_xlabel("Iteration")
     ax_avg.set_ylabel("Accuracy")
-    ax_avg.set_ylim(0, 1.05)
+    if avg_vals:
+        ax_avg.set_ylim(max(0.0, min(avg_vals) - 0.03), 1.0)
+    else:
+        ax_avg.set_ylim(0, 1.0)
     ax_avg.legend(fontsize=6)
     ax_avg.grid(True, alpha=0.3)
 
@@ -393,48 +405,48 @@ def plot_2x2(dataset_curves, ylabel, suptitle, out_name, y_range_fn,
             name: np.stack([dataset_curves_light[ds][name] for ds in DATASETS]).mean(axis=0)
             for name in light_common
         }
-    all_vals_list = [c for ds in DATASETS for c in dataset_curves[ds].values()]
-    all_vals_list += list(avg_of_avgs.values())
-    if dataset_curves_light is not None:
-        all_vals_list += [c for ds in DATASETS for c in dataset_curves_light[ds].values()]
-        all_vals_list += list(light_avg_of_avgs.values())
-    all_vals = np.concatenate(all_vals_list)
-    y_min, y_max = y_range_fn(all_vals)
-
     for ax, ds in zip(flat_axes[:len(DATASETS)], DATASETS):
+        ax_vals = []
         if dataset_curves_light is not None:
             for name, curve in dataset_curves_light[ds].items():
                 style = method_styles[name]
                 ax.plot(np.arange(11), curve, f"{style['marker']}-",
                         label=f"{name} train", color=_lighten(style["color"]),
                         alpha=0.6, markersize=5)
+                ax_vals.append(curve)
         for name, curve in dataset_curves[ds].items():
             style = method_styles[name]
             label = f"{name} eval" if dataset_curves_light is not None else name
             ax.plot(np.arange(11), curve, f"{style['marker']}-",
                     label=label, color=style["color"], alpha=0.9, markersize=5)
+            ax_vals.append(curve)
         ax.set_title(f"{ds} (avg across features)")
         ax.set_xlabel("Iteration")
         ax.set_ylabel(ylabel)
-        ax.set_ylim(y_min, y_max)
+        if ax_vals:
+            ax.set_ylim(*y_range_fn(np.concatenate(ax_vals)))
         ax.grid(True, alpha=0.3)
 
     ax = flat_axes[len(DATASETS)]
+    ax_vals = []
     if dataset_curves_light is not None:
         for name in sorted(light_avg_of_avgs):
             style = method_styles[name]
             ax.plot(np.arange(11), light_avg_of_avgs[name], f"{style['marker']}-",
                     label=f"{name} train", color=_lighten(style["color"]),
                     alpha=0.6, markersize=5)
+            ax_vals.append(light_avg_of_avgs[name])
     for name in sorted(common):
         style = method_styles[name]
         label = f"{name} eval" if dataset_curves_light is not None else name
         ax.plot(np.arange(11), avg_of_avgs[name], f"{style['marker']}-",
                 label=label, color=style["color"], alpha=0.9, markersize=5)
+        ax_vals.append(avg_of_avgs[name])
     ax.set_title(f"Average of averages ({' + '.join(DATASETS)})")
     ax.set_xlabel("Iteration")
     ax.set_ylabel(ylabel)
-    ax.set_ylim(y_min, y_max)
+    if ax_vals:
+        ax.set_ylim(*y_range_fn(np.concatenate(ax_vals)))
     ax.legend(fontsize=7, loc="lower right")
     ax.grid(True, alpha=0.3)
 
@@ -452,7 +464,7 @@ def plot_combined(dataset_eval_curves, dataset_train_curves, tag):
         ylabel="Accuracy",
         suptitle="Per-dataset average accuracy (train light, eval bold) and average-of-averages",
         out_name=f"accuracy_comparison_{tag}_combined.png",
-        y_range_fn=lambda vals: (max(0.0, float(vals.min()) - 0.03), 1.05),
+        y_range_fn=lambda vals: (max(0.0, float(vals.min()) - 0.03), 1.0),
         dataset_curves_light=dataset_train_curves,
     )
 
