@@ -25,69 +25,76 @@ def _multichoice_df_to_acne_columns(df):
     return acne_df
 
 
-def run_dspy_optimization(feature_name, train_df, eval_df, baseline_prompt, iterations, n_workers, eval_fn, model_id, dspy_train_df=None, dspy_eval_df=None):
-    """Generic DSPy MIPROv2 optimization. eval_fn(df, prompt_text, desc) -> metrics_dict.
+def run_dspy_optimization(feature_name, train_df, val_df, test_df, baseline_prompt,
+                          iterations, n_workers, eval_fn, model_id,
+                          dspy_train_df=None, dspy_val_df=None, dspy_test_df=None):
+    """DSPy MIPROv2 optimization with val-gated selection and a final test pass.
 
-    dspy_train_df/dspy_eval_df: DataFrames with ACNE-style columns for DSPy (chunk, val_unified, found_keywords).
-    If None, train_df/eval_df are used directly (assumed to already have the right columns).
+    DSPy's compile() trains on train_df; its post-compile dev evaluation uses val_df
+    (so the score MIPROv2 reports is val-set accuracy). The chosen optimized
+    instruction is then evaluated on test_df via native inference.
+
+    dspy_*_df: DataFrames in DSPy/ACNE column format (chunk, val_unified,
+    found_keywords). Pass None to use the corresponding train/val/test_df directly.
     """
     print(f"\nProcessing {feature_name} with DSPy MIPROv2")
-    print(f"Train: {len(train_df)}, Eval: {len(eval_df)}")
+    print(f"Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
 
     dspy_optimizer = DSPyOptimizer(model_id=model_id, n_workers=n_workers)
     dspy_result = dspy_optimizer.optimize(
         dspy_train_df if dspy_train_df is not None else train_df,
-        dspy_eval_df if dspy_eval_df is not None else eval_df,
+        dspy_val_df if dspy_val_df is not None else val_df,
         baseline_prompt=baseline_prompt,
         num_trials=iterations,
     )
 
     optimized_instruction = dspy_result["optimized_instruction"]
-    dspy_eval_score = dspy_result["dspy_eval_score"]
-    print(f"  DSPy eval accuracy: {dspy_eval_score:.1f}%")
+    dspy_val_score = dspy_result["dspy_eval_score"]
+    print(f"  DSPy val accuracy: {dspy_val_score:.1f}%")
 
-    # Evaluate extracted instruction through native inference
-    print("\n--- Evaluating extracted instruction through native inference ---")
-    eval_metrics = eval_fn(eval_df, optimized_instruction, desc="Eval (DSPy instruction, native inference)")
+    # Final test pass on the held-out test split with native inference.
+    print("\n--- Test with optimized instruction (native inference) ---")
+    test_metrics = eval_fn(test_df, optimized_instruction, desc="Test (DSPy instruction, native inference)")
 
     all_records = []
-    for rec in eval_metrics["records"]:
+    for rec in test_metrics["records"]:
         rec["feature"] = feature_name
-        rec["split"] = "eval"
+        rec["split"] = "test"
         rec["iteration"] = iterations - 1
         rec["prompt"] = optimized_instruction
-    all_records.extend(eval_metrics["records"])
+    all_records.extend(test_metrics["records"])
 
-    # Build prompt_history from trial history. Re-evaluate each trial's
-    # instruction on eval_df so analysis can plot a test-acc trajectory.
+    # Build prompt_history mirroring the non-dspy loop format. Each trial's
+    # candidate is re-scored on val_df via native inference for a comparable
+    # val-acc trajectory.
     trial_history = dspy_result.get("trial_history", [])
     prompt_history = []
-    best_so_far = 0.0
+    best_train_so_far = 0.0
+    best_val_so_far = -1.0
     best_prompt_so_far = baseline_prompt
-    best_eval_so_far = 0.0
     for i, trial in enumerate(trial_history):
-        score = trial["score"] if trial["score"] is not None else 0.0
-        if score > 1.0:
-            score = score / 100.0
+        train_score = trial["score"] if trial["score"] is not None else 0.0
+        if train_score > 1.0:
+            train_score = train_score / 100.0
         candidate_prompt = trial["instruction"] or ""
         if candidate_prompt:
-            cand_eval_metrics = eval_fn(eval_df, candidate_prompt, desc=f"DSPy trial {i} eval")
-            candidate_eval_accuracy = cand_eval_metrics["combined"]
+            cand_val_metrics = eval_fn(val_df, candidate_prompt, desc=f"DSPy trial {i} val")
+            candidate_val_accuracy = cand_val_metrics["combined"]
         else:
-            candidate_eval_accuracy = 0.0
-        accepted = score > best_so_far
+            candidate_val_accuracy = 0.0
+        accepted = candidate_val_accuracy > best_val_so_far
         if accepted:
-            best_so_far = score
+            best_train_so_far = train_score
+            best_val_so_far = candidate_val_accuracy
             best_prompt_so_far = candidate_prompt
-            best_eval_so_far = candidate_eval_accuracy
         prompt_history.append({
             "iteration": i,
             "prompt": best_prompt_so_far,
-            "train_accuracy": best_so_far,
-            "eval_accuracy": best_eval_so_far,
+            "train_accuracy": best_train_so_far,
+            "val_accuracy": best_val_so_far,
             "candidate_prompt": candidate_prompt,
-            "candidate_accuracy": score,
-            "candidate_eval_accuracy": candidate_eval_accuracy,
+            "candidate_train_accuracy": train_score,
+            "candidate_val_accuracy": candidate_val_accuracy,
             "accepted": accepted,
             "candidate_raw_response": "",
         })
@@ -96,10 +103,12 @@ def run_dspy_optimization(feature_name, train_df, eval_df, baseline_prompt, iter
         "feature_name": feature_name,
         "baseline_prompt": baseline_prompt,
         "train_chunks": len(train_df),
-        "eval_chunks": len(eval_df),
+        "val_chunks": len(val_df),
+        "test_chunks": len(test_df),
         "train_accuracy_history": [h["train_accuracy"] for h in prompt_history],
-        "best_train_accuracy": best_so_far if prompt_history else dspy_eval_score / 100.0,
-        "eval_metrics": eval_metrics,
+        "val_accuracy_history": [h["val_accuracy"] for h in prompt_history],
+        "best_val_accuracy": best_val_so_far if prompt_history else dspy_val_score / 100.0,
+        "test_metrics": test_metrics,
         "best_prompt": optimized_instruction,
         "prompt_history": prompt_history,
         "records": all_records,

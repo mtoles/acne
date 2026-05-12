@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-DEFAULT_RESULTS_DIR = "auto_prompt/preds/Qwen_Qwen2.5-72B-Instruct-AWQ/paper3"
+DEFAULT_RESULTS_DIR = "auto_prompt/preds/Qwen_Qwen2.5-72B-Instruct-AWQ/paper5"
 DATASETS = ["acne", "odd", "sdoh", "clip"]
 EXCLUDE_FEATURES = {"cancer_family_any"}
 ANALYSIS_DIR = "auto_prompt/analysis"
@@ -27,6 +27,41 @@ method_styles = {
 def _norm(v):
     """Normalize accuracy to 0-1 scale."""
     return v / 100.0 if v > 1.0 else v
+
+
+def _ph_train(h):
+    """Per-iter train accuracy. Same key in old and new format."""
+    return h.get("train_accuracy")
+
+
+def _ph_val(h):
+    """Per-iter val accuracy (new) or eval accuracy (old)."""
+    v = h.get("val_accuracy")
+    return v if v is not None else h.get("eval_accuracy")
+
+
+def _ph_cand_train(h):
+    """Candidate train accuracy. New: candidate_train_accuracy. Old: candidate_accuracy."""
+    v = h.get("candidate_train_accuracy")
+    return v if v is not None else h.get("candidate_accuracy")
+
+
+def _ph_cand_val(h):
+    """Candidate val accuracy (new) or candidate eval accuracy (old)."""
+    v = h.get("candidate_val_accuracy")
+    return v if v is not None else h.get("candidate_eval_accuracy")
+
+
+def _feat_test_combined(fd):
+    """Final test accuracy (new) or eval accuracy (old)."""
+    v = fd.get("test_combined")
+    return v if v is not None else fd.get("eval_combined")
+
+
+def _feat_best_val(fd):
+    """Best val accuracy across iters (new) or best train accuracy (old)."""
+    v = fd.get("best_val_accuracy")
+    return v if v is not None else fd.get("best_train_accuracy")
 
 
 def load_dataset(dataset_name, results_dir, skip_incomplete=False):
@@ -55,11 +90,24 @@ def load_dataset(dataset_name, results_dir, skip_incomplete=False):
 
 
 def feature_baseline(feature_data, key="train_accuracy"):
-    """Iter-0 accuracy for the given key. Returns None if missing or sentinel zero."""
+    """Iter-0 accuracy for the given logical key. `key` is one of:
+       - 'train_accuracy' (same in old + new)
+       - 'val_accuracy'   (new) / 'eval_accuracy' (old)
+    Returns None if missing or sentinel zero.
+    """
     ph = feature_data.get("prompt_history", [])
     if not ph:
         return None
-    val = _norm(ph[0].get(key, 0.0))
+    h0 = ph[0]
+    if key == "val_accuracy":
+        raw = _ph_val(h0)
+    elif key == "eval_accuracy":  # legacy callers
+        raw = _ph_val(h0)
+    else:
+        raw = h0.get(key)
+    if raw is None:
+        return None
+    val = _norm(raw)
     return val if val > 0 else None
 
 
@@ -89,12 +137,13 @@ def consensus_baselines(results, features, dataset_name="", key="train_accuracy"
 
 
 def feature_best_series(feature_data, baseline_acc):
-    """[baseline, running max after each accepted/non-zero candidate].
+    """[baseline, running max after each non-zero candidate train accuracy].
 
-    Drops dspy zero-baseline candidates and entries lacking candidate_accuracy.
+    Drops zero-baseline candidates (DSPy quirk) and entries lacking a candidate
+    train accuracy.
     """
-    ph = [h for h in feature_data["prompt_history"] if "candidate_accuracy" in h]
-    candidates = [_norm(h["candidate_accuracy"]) for h in ph]
+    ph = [h for h in feature_data["prompt_history"] if _ph_cand_train(h) is not None]
+    candidates = [_norm(_ph_cand_train(h)) for h in ph]
     candidates = [c for c in candidates if c > 0]
     series = [baseline_acc]
     bsf = baseline_acc
@@ -105,15 +154,16 @@ def feature_best_series(feature_data, baseline_acc):
 
 
 def feature_paired_eval_series(feature_data, baseline_train, baseline_eval):
-    """Eval accuracy of the candidate that currently holds the train running-max.
+    """Val (new) / eval (old) accuracy of the candidate that currently holds the
+    train running-max.
 
     Index-aligned with feature_best_series: index 0 = baseline; subsequent indices
-    correspond to each surviving (non-zero candidate_accuracy) entry. When a
-    candidate beats the running-max train acc, switch to its eval acc; else hold.
-    Returns None if no eval data is recorded for this feature.
+    correspond to each surviving (non-zero candidate train acc) entry. When a
+    candidate beats the running-max train acc, switch to its val/eval acc; else
+    hold. Returns None if no val/eval data is recorded for this feature.
     """
-    ph = [h for h in feature_data["prompt_history"] if "candidate_accuracy" in h]
-    pairs = [(_norm(h["candidate_accuracy"]), h.get("candidate_eval_accuracy")) for h in ph]
+    ph = [h for h in feature_data["prompt_history"] if _ph_cand_train(h) is not None]
+    pairs = [(_norm(_ph_cand_train(h)), _ph_cand_val(h)) for h in ph]
     pairs = [(c, e) for c, e in pairs if c > 0]
     if baseline_eval is None and not any(e is not None for _, e in pairs):
         return None
@@ -465,14 +515,14 @@ def main():
         features = sorted(all_feats - EXCLUDE_FEATURES)
 
         baselines = consensus_baselines(results, features, ds, key="train_accuracy")
-        eval_baselines = consensus_baselines(results, features, ds, key="eval_accuracy")
+        eval_baselines = consensus_baselines(results, features, ds, key="val_accuracy")
 
         plot_per_dataset(ds, results, features, baselines, eval_baselines, tag)
-        print_ranking(f"[{ds}] Final Train Accuracy Ranking", results, features,
-                      lambda fd: _norm(fd["best_train_accuracy"]),
+        print_ranking(f"[{ds}] Best Val Accuracy Ranking", results, features,
+                      lambda fd: _norm(_feat_best_val(fd)),
                       skip_incomplete=skip_incomplete)
-        print_ranking(f"[{ds}] Final Holdout (Eval) Accuracy Ranking", results, features,
-                      lambda fd: fd["eval_combined"],
+        print_ranking(f"[{ds}] Final Test Accuracy Ranking", results, features,
+                      lambda fd: _feat_test_combined(fd),
                       skip_incomplete=skip_incomplete)
 
         print("\n" + "=" * 60)

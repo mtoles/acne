@@ -187,8 +187,11 @@ class OPROOptimizer(PromptOptimizer):
             for prompt, score in sorted_trajectory
         )
 
-        # Sample problems, fit to token budget
-        shuffled = random.sample(records, len(records))
+        # Sample problems, fit to token budget. Seed by record content so the
+        # same (current_prompt, records) input produces the same meta-prompt
+        # across invocations -- otherwise the LLM cache misses every time.
+        rng = random.Random(hash((current_prompt, tuple(r["chunk"] for r in records))))
+        shuffled = rng.sample(records, len(records))
         problem_texts = [f"Problem:\n{self.format_example(r)}" for r in shuffled]
 
         meta_template = (
@@ -272,10 +275,14 @@ class OursOptimizer(PromptOptimizer):
         for err in errors:
             confusion[(err["ground_truth"], err["prediction"])].append(err)
 
-        # Choose a cell randomly proportional to its prevalence
-        cells = list(confusion.keys())
+        # Choose a cell randomly proportional to its prevalence. Seed by the
+        # confusion structure + current_prompt + rule history length so the
+        # selection is deterministic across re-runs of the same iteration
+        # (cache-friendly) but advances each time the optimizer accepts a rule.
+        cells = sorted(confusion.keys())
         weights = [len(confusion[c]) for c in cells]
-        chosen_cell = random.choices(cells, weights=weights, k=1)[0]
+        rng = random.Random(hash((current_prompt, tuple(cells), tuple(weights), len(self.rule_history))))
+        chosen_cell = rng.choices(cells, weights=weights, k=1)[0]
         cell_errors = confusion[chosen_cell]
 
         accuracy = sum(1 for r in records if r["correct"]) / len(records)
@@ -288,8 +295,10 @@ class OursOptimizer(PromptOptimizer):
                 for rule, accepted, delta in self.rule_history
             ) + "\n"
 
-        # Sample examples from the chosen confusion cell, fit to token budget
-        shuffled_errors = random.sample(cell_errors, len(cell_errors))
+        # Sample examples from the chosen confusion cell, fit to token budget.
+        # Seed by cell content so the same cell yields the same shuffle.
+        rng_cell = random.Random(hash((chosen_cell, tuple(e["chunk"] for e in cell_errors))))
+        shuffled_errors = rng_cell.sample(cell_errors, len(cell_errors))
         error_texts = [
             f"Example {i+1}:\n{self.format_example(err, prompt_text=current_prompt, include_prediction=True)}"
             for i, err in enumerate(shuffled_errors)
@@ -1129,9 +1138,12 @@ class AMPOOptimizer(PromptOptimizer):
 
         accuracy = sum(1 for r in records if r["correct"]) / len(records)
 
-        # Line 9: Sample K failed cases
+        # Line 9: Sample K failed cases. Seed by error chunks + current_prompt
+        # + revision history length so the same iteration is reproducible
+        # (cache-friendly) and successive iterations advance.
         k = min(self.k_failures, len(errors))
-        sampled_errors = random.sample(errors, k)
+        rng = random.Random(hash((current_prompt, tuple(e["chunk"] for e in errors), len(self.revision_history))))
+        sampled_errors = rng.sample(errors, k)
 
         print(f"  AMPO: {len(errors)} errors at {accuracy:.0%}, sampling {k} for analysis")
 
@@ -1215,9 +1227,12 @@ class AMPOOptimizer(PromptOptimizer):
                 print("  No errors on train set -- stopping early")
                 break
 
-            # Line 9: Sample K failed cases
+            # Line 9: Sample K failed cases. Seed by error chunks + current_prompt
+            # + revision history length so the same iteration is reproducible
+            # (cache-friendly) and successive iterations advance.
             k = min(self.k_failures, len(errors))
-            sampled_errors = random.sample(errors, k)
+            rng = random.Random(hash((current_prompt, tuple(e["chunk"] for e in errors), len(self.revision_history))))
+            sampled_errors = rng.sample(errors, k)
             print(f"  AMPO: {len(errors)} errors at {accuracy:.0%}, sampling {k}")
 
             # Line 11: LLM-Analyzer
