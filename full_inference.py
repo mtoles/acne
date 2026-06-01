@@ -47,6 +47,18 @@ def _icd_to_cancer_label(icd_code):
 random.seed(42)
 
 db = create_engine(db_url, pool_size=100, max_overflow=200, pool_timeout=300)
+
+# Free-text note tables scanned for antibiotic-duration extraction, with their
+# (date column, text column). hnp/prg/dis share vis's Report_Date_Time/Report_Text;
+# lno (letters) uses LMRNote_Date/Comments. Columns are aliased to Report_Date_Time/
+# Report_Text at query time so all rows share one schema.
+EXTRA_NOTE_TABLES = [
+    ("hnp", "Report_Date_Time", "Report_Text"),
+    ("prg", "Report_Date_Time", "Report_Text"),
+    ("dis", "Report_Date_Time", "Report_Text"),
+    ("lno", "LMRNote_Date",     "Comments"),
+]
+
 model_id = "Qwen/Qwen2.5-72B-Instruct-AWQ"
 model = MrModel(model_id=model_id)
 
@@ -396,6 +408,15 @@ def make_keyword_filter(keywords):
     return filter_fn
 
 
+def make_substring_filter(substrings):
+    """Create a chunk filter that returns True if any substring is present (no \\b boundaries)."""
+
+    def filter_fn(chunk):
+        return len(has_substring(chunk, substrings)) > 0
+
+    return filter_fn
+
+
 def process_single_block_llm(
     block_records, feature_cls, chunk_filter_fn, short_circuit, all_records
 ):
@@ -415,13 +436,20 @@ def process_single_block_llm(
     global _llm_windows_count, _per_patient_stats, _per_patient_stats_lock
 
     rows = []
-    keywords = feature_cls.keywords
+    # Features defining `substrings` match by substring (e.g. "doxy" in "doxycycline");
+    # all others match by \b-bounded keyword.
+    if getattr(feature_cls, "substrings", None) is not None:
+        keywords = feature_cls.substrings
+        match_fn = has_substring
+    else:
+        keywords = feature_cls.keywords
+        match_fn = has_keyword
 
     if all_records:
         records_to_process = []
         for _, record in block_records.iterrows():
             record_text = record.get("Report_Text", "")
-            if record_text and len(has_keyword(record_text, keywords)) > 0:
+            if record_text and len(match_fn(record_text, keywords)) > 0:
                 records_to_process.append(record)
     else:
         best_record, keyword_count = select_record_with_most_keywords(
@@ -443,7 +471,7 @@ def process_single_block_llm(
                     }
                 _per_patient_stats[_thread_local.current_patient_id]["llm"] += 1
         record_date = record["Report_Date_Time"]
-        record_text = record["Report_Text"]
+        record_text = record["Report_Text"785086]
 
         inconclusive_values = getattr(feature_cls, "inconclusive_values", set())
         found_conclusive = False
@@ -452,7 +480,7 @@ def process_single_block_llm(
             if found_conclusive and short_circuit:
                 break
             if chunk_filter_fn(chunk):
-                found_kws = has_keyword(chunk, keywords)
+                found_kws = match_fn(chunk, keywords)
                 for kw in found_kws:
                     pred = call_llm(feature_cls, chunk, kw)
                     found_supp_kws = []
@@ -636,6 +664,29 @@ def process_pt(pt_id):
         dem_result = conn.execute(dem_query)
         dem_rows = [dict(r) for r in dem_result.mappings().fetchall()]
 
+        # Query the other note tables for free-text antibiotic-duration extraction.
+        # Columns aliased to vis's schema (Report_Date_Time / Report_Text) so they concat cleanly.
+        extra_note_frames = []
+        for tbl, datecol, textcol in EXTRA_NOTE_TABLES:
+            note_query = text(
+                f"SELECT {datecol} AS Report_Date_Time, {textcol} AS Report_Text "
+                f"FROM {tbl} WHERE EMPI = '{pt_id}'"
+            )
+            note_df = pd.DataFrame(conn.execute(note_query).mappings().fetchall())
+            if not note_df.empty:
+                extra_note_frames.append(note_df)
+
+    # Combined free-text notes (vis + hnp + prg + dis + lno) for antibiotic-duration extraction.
+    note_frames = []
+    if not vis_records.empty:
+        note_frames.append(vis_records[["Report_Date_Time", "Report_Text"]])
+    note_frames.extend(extra_note_frames)
+    note_records = (
+        pd.concat(note_frames, ignore_index=True)
+        if note_frames
+        else pd.DataFrame(columns=["Report_Date_Time", "Report_Text"])
+    )
+
     ### Step 3: Define time windows and filter records ###
     # Window 1: All records (for smoking, alcohol, transplant, immunosuppressed_disease)
     all_records = vis_records
@@ -651,8 +702,9 @@ def process_pt(pt_id):
     )
 
     # Window 3: Records between index_date and outcome_window_start_date (for antibiotics)
-    treatment_window_vis_records = filter_records_by_date_range(
-        vis_records, start_date=index_date, end_date=outcome_window_start_date
+    # Spans ALL note tables (vis + hnp + prg + dis + lno) for antibiotic duration
+    treatment_window_note_records = filter_records_by_date_range(
+        note_records, start_date=index_date, end_date=outcome_window_start_date
     )
     med_records = filter_records_by_date_range(
         med_records, start_date=index_date, end_date=outcome_window_start_date
@@ -1008,9 +1060,9 @@ def process_pt(pt_id):
             )
 
     duration_numeric_rows = process_single_block_llm(
-        treatment_window_vis_records,
+        treatment_window_note_records,
         antibiotic_duration_numeric,
-        make_keyword_filter(antibiotic_duration_numeric.keywords),
+        make_substring_filter(antibiotic_duration_numeric.substrings),
         short_circuit=False,
         all_records=True,
     )
@@ -1131,8 +1183,8 @@ parser.add_argument(
     default=[
         # "full_inference_out/records_old_3_wrong-age",
         # "full_inference_out/records_old_4_wrong-recycle",
-        "full_inference_out/records_old_5",
-        "full_inference_out/records_6_no-age-50",
+        # "full_inference_out/records_old_5",
+        "full_inference_out/records_old_7_only-vis",
     ],
     help="One or more paths to previous records/ dirs. For each pt, the first dir containing the pt's .jsonl is used (with age_at_index_date backfilled if missing).",
 )

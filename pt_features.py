@@ -44,8 +44,6 @@ CANCER_STAGE_SYNTHETIC_KEYWORDS = ["in situ", "non-invasive", "non invasive", "s
 CANCER_STAGE_2_PART_KEYWORDS = ["stage", "in situ", "non invasive", "non-invasive", "localized", "local", "confined to ", "regional", "advanced", "metastatic", "metastasis", "mets", "distant", "disseminated", "nodal involvement", "node involvement", "node", "nodes", "nodal", "staging", "unstaged",  "TNM", "T0", "T1", "T2", "T3", "T4", "N0", "N1", "N2", "N3", "M0", "M1"] # dropped "stage x"
 # fmt: on
 
-ABX_SUBSTRINGS = ["tetracy", "tetra", "cycline", "doxy", "mino", "minocycl", "adoxa", "brodspec", "cleeravue", "declomycin", "doryx", "dynacin", "minocin", "nuzyra", "sumycin", "vibramycin", "trimethoprim sulfamethoxazole", "tmp", "smx", "bactrim", "septra", "smz", "sulfameth", "trimeth", "co-trim", "sxt", "amoxicillin", "amoxicot", "amoxil", "amox", "dispermox", "moxatag", "moxilin", "trimox", "cephalex", "keflex", "bio-cef", "panixine", "azith", "zithro", "z-pak", "zpak", "z pak", "zmax", "z-max", "z max"]
-
 CONFOUNDING_DISEASE_CODES = {}
 with open("labeled_data/confounding_disease_codes.jsonl") as _f:
     for _line in _f:
@@ -2032,6 +2030,10 @@ class antibiotics(PtFeatureBase):
         "zmax",
     ]
 
+    # Substring matchers (case-insensitive `in`, no \b word boundaries) used by full_inference
+    # for free-text antibiotic detection, e.g. "doxy" matches "doxycycline".
+    substrings = ["tetracy", "tetra", "cycline", "doxy", "mino", "minocycl", "adoxa", "brodspec", "cleeravue", "declomycin", "doryx", "dynacin", "minocin", "nuzyra", "sumycin", "vibramycin", "trimethoprim sulfamethoxazole", "tmp", "smx", "bactrim", "septra", "smz", "sulfameth", "sulfatrim", "trimeth", "co-trim", "sxt", "amoxicillin", "amoxicot", "amoxil", "amox", "dispermox", "moxatag", "moxilin", "trimox", "cephalex", "keflex", "bio-cef", "panixine", "azith", "zithro", "z-pak", "zpak", "z pak", "zmax", "z-max", "z max"]
+
     @classmethod
     def query(cls, **kwargs):
         """Return the query for antibiotics usage.
@@ -2194,6 +2196,7 @@ class antibiotic_duration_numeric(PtNumericFeatureBase):
         )
 
     keywords = antibiotics.keywords
+    substrings = antibiotics.substrings  # full_inference matches these by substring, not \b-keyword
     val_var = True
     gt_column = "val_unified_numeric"
     data_source_feature = "antibiotic_duration"

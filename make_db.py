@@ -137,12 +137,11 @@ if __name__ == "__main__":
     files = list_all_files(notes_dir) + list_all_files(structured_dir)
     
     for suffix in [
-        # "Vis",
-        # "Dem",
-        # "Dia",
-        # "Med"
-        # "Phy",
-        "Prc",
+        "Hnp",  # history and physical
+        "Prg",  # progress
+        # "Vis",  # visit
+        "Dis",  # discharge
+        "Lno",  # letters
     ]:
         # Collect files for this suffix
         suffix_paths = []
