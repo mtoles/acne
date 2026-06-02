@@ -78,6 +78,9 @@ _thread_local = threading.local()
 # Global records directory (set before processing loop)
 _records_dir = None
 _recycle_dirs = []
+# When True (normal), a recycled patient is copied wholesale. When False (temporary hack),
+# antibiotic_duration_numeric is recomputed fresh because its note source data changed.
+_recycle_abx = True
 
 
 def _json_default(obj):
@@ -471,7 +474,7 @@ def process_single_block_llm(
                     }
                 _per_patient_stats[_thread_local.current_patient_id]["llm"] += 1
         record_date = record["Report_Date_Time"]
-        record_text = record["Report_Text"785086]
+        record_text = record["Report_Text"]
 
         inconclusive_values = getattr(feature_cls, "inconclusive_values", set())
         found_conclusive = False
@@ -539,8 +542,50 @@ def get_chunks_by_keyword(
     return chunks
 
 
+def _load_note_records(conn, pt_id):
+    """All free-text note tables (vis + hnp + prg + dis + lno) for a patient, normalized to
+    Report_Date_Time / Report_Text. lno (letters) is aliased from LMRNote_Date / Comments."""
+    frames = []
+    for tbl, datecol, textcol in [("vis", "Report_Date_Time", "Report_Text")] + EXTRA_NOTE_TABLES:
+        note_df = pd.DataFrame(
+            conn.execute(
+                text(
+                    f"SELECT {datecol} AS Report_Date_Time, {textcol} AS Report_Text "
+                    f"FROM {tbl} WHERE EMPI = '{pt_id}'"
+                )
+            ).mappings().fetchall()
+        )
+        if not note_df.empty:
+            frames.append(note_df)
+    return (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=["Report_Date_Time", "Report_Text"])
+    )
+
+
+def _abx_duration_rows(note_records, index_date):
+    """Fresh antibiotic_duration_numeric extraction over the treatment window [index, index+2yr).
+    Reads the note tables (substring-matched), so it reflects the current source data."""
+    outcome_window_start_date = index_date + pd.Timedelta(days=365 * 2)
+    treatment_window_note_records = filter_records_by_date_range(
+        note_records, start_date=index_date, end_date=outcome_window_start_date
+    )
+    return process_single_block_llm(
+        treatment_window_note_records,
+        antibiotic_duration_numeric,
+        make_substring_filter(antibiotic_duration_numeric.substrings),
+        short_circuit=False,
+        all_records=True,
+    )
+
+
 def _recycle_patient(pt_id, src_path, dst_path):
-    """Copy an existing .jsonl record and backfill age_at_index_date if missing."""
+    """Copy an existing .jsonl record from a prior run, backfilling age_at_index_date if missing.
+
+    Normally (_recycle_abx=True) the record is reused wholesale. As a TEMPORARY HACK, when
+    _recycle_abx is False, the prior run's antibiotic_duration_numeric rows are dropped and
+    recomputed fresh, because that feature's note source data changed."""
     rows = []
     has_age_at_index = False
     index_date_str = None
@@ -550,6 +595,10 @@ def _recycle_patient(pt_id, src_path, dst_path):
             if not line:
                 continue
             rec = json.loads(line)
+            # Temporary hack: when not recycling abx, drop the prior abx duration so we can
+            # recompute it fresh below (its note source data changed).
+            if not _recycle_abx and rec["feature_name"] == "antibiotic_duration_numeric":
+                continue
             rows.append(rec)
             if rec["feature_name"] == "demographics" and rec["keyword"] == "age_at_index_date":
                 has_age_at_index = True
@@ -571,6 +620,14 @@ def _recycle_patient(pt_id, src_path, dst_path):
                     "date": str(index_date),
                     "prediction": f"{age_at_index:.2f}",
                 })
+
+    # Temporary hack: recompute antibiotic_duration_numeric from the current note tables.
+    if not _recycle_abx:
+        assert index_date_str is not None, f"recycled record for {pt_id} ({src_path}) has no index_date row"
+        _thread_local.current_patient_id = pt_id
+        with db.connect() as conn:
+            note_records = _load_note_records(conn, pt_id)
+        rows.extend(_abx_duration_rows(note_records, normalize_date(index_date_str)))
 
     with open(dst_path, "w") as f:
         for row in rows:
@@ -701,11 +758,8 @@ def process_pt(pt_id):
         dia_records, start_date=outcome_window_start_date
     )
 
-    # Window 3: Records between index_date and outcome_window_start_date (for antibiotics)
-    # Spans ALL note tables (vis + hnp + prg + dis + lno) for antibiotic duration
-    treatment_window_note_records = filter_records_by_date_range(
-        note_records, start_date=index_date, end_date=outcome_window_start_date
-    )
+    # Window 3: Records between index_date and outcome_window_start_date (for antibiotics).
+    # The note-based abx duration window is computed inside _abx_duration_rows(note_records, index_date).
     med_records = filter_records_by_date_range(
         med_records, start_date=index_date, end_date=outcome_window_start_date
     )
@@ -1059,14 +1113,7 @@ def process_pt(pt_id):
                 }
             )
 
-    duration_numeric_rows = process_single_block_llm(
-        treatment_window_note_records,
-        antibiotic_duration_numeric,
-        make_substring_filter(antibiotic_duration_numeric.substrings),
-        short_circuit=False,
-        all_records=True,
-    )
-    rows.extend(duration_numeric_rows)
+    rows.extend(_abx_duration_rows(note_records, index_date))
 
     #  Demographics 
     if dem_rows:
@@ -1188,8 +1235,18 @@ parser.add_argument(
     ],
     help="One or more paths to previous records/ dirs. For each pt, the first dir containing the pt's .jsonl is used (with age_at_index_date backfilled if missing).",
 )
+parser.add_argument(
+    "--no-recycle-abx",
+    action="store_false",
+    dest="recycle_abx",
+    default=True,
+    help="TEMPORARY HACK: do NOT recycle antibiotic_duration_numeric from prior records; "
+         "recompute it fresh from the note tables because its source data changed. "
+         "By default (flag omitted) abx duration is recycled along with everything else.",
+)
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
+_recycle_abx = args.recycle_abx
 
 start_time = datetime.now()
 print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1231,6 +1288,8 @@ if args.recycle_from:
             raise FileNotFoundError(f"--recycle-from dir does not exist: {p}")
         _recycle_dirs.append(p)
     print(f"Recycling records from (in priority order): {[str(p) for p in _recycle_dirs]}")
+    if not _recycle_abx:
+        print("  TEMPORARY HACK: --no-recycle-abx -> antibiotic_duration_numeric recomputed fresh (not recycled)")
 
 # Set up LLM call logging
 llm_logger = logging.getLogger("llm_calls")
