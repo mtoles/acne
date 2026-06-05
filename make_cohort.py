@@ -14,7 +14,7 @@ parser = argparse.ArgumentParser(description="Create matched case-control cohort
 parser.add_argument("--n-limit", type=int, default=None, help="Limit to first N patients (N/2 cases, N/2 controls). Default: None (use all)")
 parser.add_argument("--min-match-features", type=int, default=5, help="Minimum number of matching features (out of 6: sex, race, BMI, smoking, alcohol, age±5). Default: 6 (exact match on all)")
 parser.add_argument("--min-age", type=float, default=12, help="Minimum age (inclusive) at index date. Default: 12")
-parser.add_argument("--max-age", type=float, default=45, help="Maximum age (inclusive) at index date. Default: 45")
+parser.add_argument("--max-age", type=float, default=50, help="Maximum age (inclusive) at index date. Default: 45")
 args = parser.parse_args()
 
 N_LIMIT = args.n_limit  # use first N/2 from each cohort for quick test; set to None for full run
@@ -141,7 +141,7 @@ dem_df["study_age"] = (dem_df["index_date"] - dem_df["Date_of_Birth"]).dt.days /
 
 # Filter by age at index date
 pre_age_filter = len(dem_df)
-in_range = dem_df["study_age"].between(args.min_age, args.max_age, inclusive="both")
+in_range = dem_df["study_age"].between(args.min_age, args.max_age, inclusive="left")
 dem_df = dem_df[in_range].reset_index(drop=True)
 print(
     f"Age filter [{args.min_age}, {args.max_age}]: {pre_age_filter} -> {len(dem_df)} patients "

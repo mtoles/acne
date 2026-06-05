@@ -651,7 +651,7 @@ def process_pt(pt_id):
     )
 
     # Window 3: Records between index_date and outcome_window_start_date (for antibiotics)
-    treatment_window_dia_records = filter_records_by_date_range(
+    treatment_window_vis_records = filter_records_by_date_range(
         vis_records, start_date=index_date, end_date=outcome_window_start_date
     )
     med_records = filter_records_by_date_range(
@@ -1008,7 +1008,7 @@ def process_pt(pt_id):
             )
 
     duration_numeric_rows = process_single_block_llm(
-        treatment_window_dia_records,
+        treatment_window_vis_records,
         antibiotic_duration_numeric,
         make_keyword_filter(antibiotic_duration_numeric.keywords),
         short_circuit=False,
@@ -1104,7 +1104,7 @@ def process_pt(pt_id):
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
-    "--n-workers", type=int, default=1, help="Number of worker threads (default: 1)"
+    "--n-workers", type=int, default=80, help="Number of worker threads (default: 1)"
 )
 parser.add_argument(
     "--limit",
@@ -1132,6 +1132,7 @@ parser.add_argument(
         # "full_inference_out/records_old_3_wrong-age",
         # "full_inference_out/records_old_4_wrong-recycle",
         "full_inference_out/records_old_5",
+        "full_inference_out/records_6_no-age-50",
     ],
     help="One or more paths to previous records/ dirs. For each pt, the first dir containing the pt's .jsonl is used (with age_at_index_date backfilled if missing).",
 )
