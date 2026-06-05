@@ -2032,7 +2032,7 @@ class antibiotics(PtFeatureBase):
 
     # Substring matchers (case-insensitive `in`, no \b word boundaries) used by full_inference
     # for free-text antibiotic detection, e.g. "doxy" matches "doxycycline".
-    substrings = ["tetracy", "tetra", "cycline", "doxy", "mino", "minocycl", "adoxa", "brodspec", "cleeravue", "declomycin", "doryx", "dynacin", "minocin", "nuzyra", "sumycin", "vibramycin", "trimethoprim sulfamethoxazole", "tmp", "smx", "bactrim", "septra", "smz", "sulfameth", "sulfatrim", "trimeth", "co-trim", "sxt", "amoxicillin", "amoxicot", "amoxil", "amox", "dispermox", "moxatag", "moxilin", "trimox", "cephalex", "keflex", "bio-cef", "panixine", "azith", "zithro", "z-pak", "zpak", "z pak", "zmax", "z-max", "z max"]
+    substrings = ["tetracy", "tetra", "cycline", "doxy", "minocycline", "minocycl", "adoxa", "brodspec", "cleeravue", "declomycin", "doryx", "dynacin", "minocin", "nuzyra", "sumycin", "vibramycin", "trimethoprim sulfamethoxazole", "tmp", "smx", "bactrim", "septra", "smz", "sulfameth", "sulfatrim", "trimeth", "co-trim", "sxt", "amoxicillin", "amoxicot", "amoxil", "amox", "dispermox", "moxatag", "moxilin", "trimox", "cephalex", "keflex", "bio-cef", "panixine", "azith", "zithro", "z-pak", "zpak", "z pak", "zmax", "z-max", "z max"]
 
     @classmethod
     def query(cls, **kwargs):
@@ -2200,7 +2200,10 @@ class antibiotic_duration_numeric(PtNumericFeatureBase):
     val_var = True
     gt_column = "val_unified_numeric"
     data_source_feature = "antibiotic_duration"
-    inconclusive_values = {"F"}
+    # "0" is treated as inconclusive: a zero-day duration means "nothing found here",
+    # so keep searching the remaining keywords/chunks until a non-zero duration turns up
+    # (pooling_fn then takes the max non-"F" value across the treatment window).
+    inconclusive_values = {"F", "0"}
     short_circuit_per_keyword = True
 
 

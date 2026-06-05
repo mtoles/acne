@@ -78,9 +78,12 @@ _thread_local = threading.local()
 # Global records directory (set before processing loop)
 _records_dir = None
 _recycle_dirs = []
-# When True (normal), a recycled patient is copied wholesale. When False (temporary hack),
-# antibiotic_duration_numeric is recomputed fresh because its note source data changed.
-_recycle_abx = True
+# TEMPORARY HACK: set of recycle-from dirs (resolved paths) whose antibiotic_duration_numeric
+# should NOT be recycled but recomputed fresh, because that feature's note source data changed
+# for those particular prior runs. A recycled patient is copied wholesale (abx included) unless
+# its source dir is in this set. Set from --no-recycle-abx; defaults to records_old_7_only-vi.
+# Remove this whole mechanism once the abx source data stabilizes.
+_no_recycle_abx_dirs = set()
 
 
 def _json_default(obj):
@@ -583,9 +586,11 @@ def _abx_duration_rows(note_records, index_date):
 def _recycle_patient(pt_id, src_path, dst_path):
     """Copy an existing .jsonl record from a prior run, backfilling age_at_index_date if missing.
 
-    Normally (_recycle_abx=True) the record is reused wholesale. As a TEMPORARY HACK, when
-    _recycle_abx is False, the prior run's antibiotic_duration_numeric rows are dropped and
-    recomputed fresh, because that feature's note source data changed."""
+    Normally (recycle_abx=True) the record is reused wholesale. As a TEMPORARY HACK, when this
+    src dir is in _no_recycle_abx_dirs, the prior run's antibiotic_duration_numeric rows are
+    dropped and recomputed fresh, because that feature's note source data changed."""
+    # TEMPORARY HACK: decide per-source-dir whether to recycle abx duration.
+    recycle_abx = Path(src_path).parent.resolve() not in _no_recycle_abx_dirs
     rows = []
     has_age_at_index = False
     index_date_str = None
@@ -597,7 +602,7 @@ def _recycle_patient(pt_id, src_path, dst_path):
             rec = json.loads(line)
             # Temporary hack: when not recycling abx, drop the prior abx duration so we can
             # recompute it fresh below (its note source data changed).
-            if not _recycle_abx and rec["feature_name"] == "antibiotic_duration_numeric":
+            if not recycle_abx and rec["feature_name"] == "antibiotic_duration_numeric":
                 continue
             rows.append(rec)
             if rec["feature_name"] == "demographics" and rec["keyword"] == "age_at_index_date":
@@ -622,7 +627,7 @@ def _recycle_patient(pt_id, src_path, dst_path):
                 })
 
     # Temporary hack: recompute antibiotic_duration_numeric from the current note tables.
-    if not _recycle_abx:
+    if not recycle_abx:
         assert index_date_str is not None, f"recycled record for {pt_id} ({src_path}) has no index_date row"
         _thread_local.current_patient_id = pt_id
         with db.connect() as conn:
@@ -664,8 +669,14 @@ def process_pt(pt_id):
         print(f"Skipping {pt_id} (already has {jsonl_path})")
         return None
 
-    # Recycle from a prior run if available (first dir wins)
-    for _recycle_dir in _recycle_dirs:
+    # Recycle from a prior run if available.
+    # TEMPORARY HACK: prefer a recycle dir that does NOT require an abx recompute (instant copy)
+    # over one that does (slow DB note-load). Within each group, priority order is preserved.
+    # So a patient present in both records_old_7 (slow abx recompute) and records_old_8 (fast
+    # copy) is served from records_old_8. Remove this preference with the rest of the abx hack.
+    fast_dirs = [d for d in _recycle_dirs if d.resolve() not in _no_recycle_abx_dirs]
+    slow_dirs = [d for d in _recycle_dirs if d.resolve() in _no_recycle_abx_dirs]
+    for _recycle_dir in fast_dirs + slow_dirs:
         recycle_path = _recycle_dir / f"{pt_id}.jsonl"
         if recycle_path.exists():
             return _recycle_patient(pt_id, recycle_path, jsonl_path)
@@ -1232,21 +1243,24 @@ parser.add_argument(
         # "full_inference_out/records_old_4_wrong-recycle",
         # "full_inference_out/records_old_5",
         "full_inference_out/records_old_7_only-vis",
+        "full_inference_out/records_old_8_partial-all-docs"
     ],
     help="One or more paths to previous records/ dirs. For each pt, the first dir containing the pt's .jsonl is used (with age_at_index_date backfilled if missing).",
 )
 parser.add_argument(
     "--no-recycle-abx",
-    action="store_false",
-    dest="recycle_abx",
-    default=True,
-    help="TEMPORARY HACK: do NOT recycle antibiotic_duration_numeric from prior records; "
-         "recompute it fresh from the note tables because its source data changed. "
-         "By default (flag omitted) abx duration is recycled along with everything else.",
+    type=str,
+    nargs="*",
+    default=["full_inference_out/records_old_7_only-vis"],
+    help="TEMPORARY HACK: list of recycle-from dirs whose antibiotic_duration_numeric should "
+         "NOT be recycled but recomputed fresh from the note tables (its source data changed). "
+         "Recycle-from dirs not listed here have abx duration recycled along with everything else. "
+         "Defaults to records_old_7_only-vis.",
 )
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
-_recycle_abx = args.recycle_abx
+# TEMPORARY HACK: resolve no-recycle-abx dirs for comparison against each recycle source dir.
+_no_recycle_abx_dirs = {Path(d).resolve() for d in args.no_recycle_abx}
 
 start_time = datetime.now()
 print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1288,8 +1302,8 @@ if args.recycle_from:
             raise FileNotFoundError(f"--recycle-from dir does not exist: {p}")
         _recycle_dirs.append(p)
     print(f"Recycling records from (in priority order): {[str(p) for p in _recycle_dirs]}")
-    if not _recycle_abx:
-        print("  TEMPORARY HACK: --no-recycle-abx -> antibiotic_duration_numeric recomputed fresh (not recycled)")
+    if _no_recycle_abx_dirs:
+        print(f"  TEMPORARY HACK: antibiotic_duration_numeric recomputed fresh (not recycled) for: {[str(p) for p in _no_recycle_abx_dirs]}")
 
 # Set up LLM call logging
 llm_logger = logging.getLogger("llm_calls")
