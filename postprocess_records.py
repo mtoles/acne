@@ -28,6 +28,11 @@ from collections import defaultdict, Counter
 from tqdm import tqdm
 import pandas as pd
 from utils import normalize_date
+from get_followup_time import (
+    compute_followup_aggregates,
+    compute_followup_components,
+    OUTPUT_PATH as FOLLOWUP_OUTPUT_PATH,
+)
 from ydata_profiling import ProfileReport
 # --- Constants ---
 
@@ -176,26 +181,19 @@ def classify_period(record_date, index_date, outcome_window_start):
 def pool_abx_duration_numeric(records):
     """Custom pooling for antibiotic_duration_numeric.
 
-    Take the longest duration at each date, then sum across unique dates.
+    De-duplicate by VALUE within one abx class: identical duration values are assumed to be
+    the same course re-mentioned across notes (counted once), while different values are
+    assumed to be different courses (summed). No time window is needed because abx records
+    are already restricted to the 2-year treatment window. Returns the sum of the distinct
+    positive durations; "F" if the drug was taken but no duration could be determined; else "0".
     """
-    # Group by date
-    by_date = defaultdict(list)
-    for rec in records:
-        by_date[rec["date"]].append(rec["prediction"])
-    # For each date, take max numeric value
-    total = 0
-    for date_key, preds in by_date.items():
-        numeric_preds = []
-        for p in preds:
-            if p != "F":
-                numeric_preds.append(int(p))
-        if numeric_preds:
-            total += max(numeric_preds)
-    if total == 0 and all(
-        rec["prediction"] == "F" for rec in records
-    ):
+    distinct = {int(rec["prediction"]) for rec in records if rec["prediction"] != "F"}
+    distinct.discard(0)
+    if distinct:
+        return str(sum(distinct))
+    if all(rec["prediction"] == "F" for rec in records):
         return "F"
-    return str(total)
+    return "0"
 
 
 def _group_by_period_and_keyword(feature_records, rec_key_fn=None):
@@ -296,7 +294,7 @@ def pool_patient_records(records, index_date):
                     col_name = f"{feature_name}__{period}__{kw}"
                     result[col_name] = pool_earliest_date(preds)
 
-        # --- Antibiotic duration numeric: max per date, then sum ---
+        # --- Antibiotic duration numeric: sum of distinct durations per class (value-dedup) ---
         elif feature_name == "antibiotic_duration_numeric":
             for period, by_kw in _group_by_period_and_keyword(feature_records, rec_key_fn=abx_record_to_class).items():
                 for kw, kw_recs in by_kw.items():
@@ -370,11 +368,43 @@ def main():
     if skipped:
         print(f"Skipped {skipped} patients (no index date found)")
 
-    # Step 4: Build DataFrame and write CSV
+    # Step 4: Build DataFrame
     df = pd.DataFrame(rows)
     df = df.set_index("EMPI")
-    df = df.reindex(sorted(df.columns), axis=1)
 
+    # Step 4b: Follow-up time from source tables. Runs the full get_followup_time
+    # computation here so it's part of this pipeline (no separate script to remember).
+    # compute_followup_aggregates does a SINGLE pass over the large source tables; the
+    # per-patient component step below is pure Python over the cached aggregates.
+    print("Computing follow-up time aggregates from source tables...")
+    last_activity, death_dates, cancer_dates = compute_followup_aggregates()
+
+    followup_rows = []
+    for empi in tqdm(df.index, desc="follow-up time"):
+        comp = compute_followup_components(
+            empi, index_dates[empi], last_activity, death_dates, cancer_dates
+        )
+        comp["EMPI"] = empi
+        comp["index_date"] = pd.Timestamp(index_dates[empi])
+        followup_rows.append(comp)
+
+    followup_df = pd.DataFrame(followup_rows).set_index("EMPI")[
+        [
+            "index_date", "followup_start", "followup_end", "end_reason",
+            "last_activity_date", "death_date", "cancer_date", "follow_up_time_years",
+        ]
+    ]
+    followup_df.to_csv(FOLLOWUP_OUTPUT_PATH)
+    print(f"Wrote follow-up details for {len(followup_df)} patients to {FOLLOWUP_OUTPUT_PATH}")
+    print("Follow-up end reason counts:")
+    print(followup_df["end_reason"].value_counts())
+
+    # Add the follow-up columns to the pooled records (aligned by EMPI). index_date is
+    # already a pooled column, so exclude it to avoid a collision/overwrite.
+    fu_cols = [c for c in followup_df.columns if c != "index_date"]
+    df = df.join(followup_df[fu_cols])
+
+    df = df.reindex(sorted(df.columns), axis=1)
     df.to_csv(OUTPUT_PATH)
     print(f"Wrote {len(df)} patients x {len(df.columns)} columns to {OUTPUT_PATH}")
 
