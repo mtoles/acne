@@ -593,14 +593,18 @@ CANCER_RECOMPUTE_FEATURES = {
 
 
 def _cancer_rows(pt_id, index_date, dia_records=None, vis_records=None):
-    """Fresh cancer extraction over the outcome window [index+2yr, ...).
+    """Fresh cancer extraction.
 
-    cancer_cancer and the diagnosis date come DIRECTLY from structured dia ICD codes (NOT gated on
-    notes); stage is extracted by LLM from vis notes within +/-3 months of the structured diagnosis
-    date. All cancer columns are keyed by the ICD cancer-type label for consistency. Returns rows with
-    raw/letter predictions (cancer "A"; stage "A".."F"; date YYYYMMDD) -- callers map them to
-    descriptions via prediction_to_description before writing. dia/vis are loaded from the DB when not
-    supplied (the recycle path)."""
+    cancer_cancer and the diagnosis date come DIRECTLY from structured dia ICD codes over the WHOLE
+    patient history (NOT gated on notes, NOT windowed) so that prevalent cancers and true earliest
+    diagnosis dates are captured -- downstream postprocess buckets each cancer into pre_index /
+    treatment / outcome by that date. Stage is extracted by LLM from vis notes within +/-3 months of
+    the diagnosis date, but ONLY for cancers first diagnosed in the outcome window [index+2yr, ...);
+    prevalent / treatment-window cancers keep their dx + date but get no stage. All cancer columns are
+    keyed by the ICD cancer-type label for consistency. Returns rows with raw/letter predictions
+    (cancer "A"; stage "A".."F"; date YYYYMMDD) -- callers map them to descriptions via
+    prediction_to_description before writing. dia/vis are loaded from the DB when not supplied (the
+    recycle path)."""
     _thread_local.current_patient_id = pt_id
     outcome_window_start = pd.Timestamp(index_date) + pd.Timedelta(days=365 * 2)
 
@@ -615,11 +619,8 @@ def _cancer_rows(pt_id, index_date, dia_records=None, vis_records=None):
                     conn.execute(text(f"SELECT * FROM vis WHERE EMPI = '{pt_id}'")).mappings().fetchall()
                 )
 
-    outcome_dia = filter_records_by_date_range(dia_records, start_date=outcome_window_start)
-    outcome_vis = filter_records_by_date_range(vis_records, start_date=outcome_window_start)
-
-    # Ungated: cancer hits directly from ALL outcome-window dia ICD rows (no note blocks).
-    hits = [h for h in _extract_structured(cancer_cancer, outcome_dia) if h["pred"] == "A"]
+    # Ungated: cancer hits directly from ALL dia ICD rows over the whole history (no note blocks).
+    hits = [h for h in _extract_structured(cancer_cancer, dia_records) if h["pred"] == "A"]
     if not hits:
         return []
 
@@ -659,8 +660,13 @@ def _cancer_rows(pt_id, index_date, dia_records=None, vis_records=None):
             "prediction": info["date_ts"].strftime("%Y%m%d"),
         })
 
-    # Stage via LLM, per cancer type, on vis notes within +/-3 months of the structured diagnosis date.
+    # Stage via LLM, per cancer type, on vis notes within +/-3 months of the structured diagnosis
+    # date -- but ONLY for cancers first diagnosed in the outcome window [index+2yr, ...). Prevalent
+    # and treatment-window cancers keep their dx + date (above) but are not staged.
     for lab, info in by_label.items():
+        if info["date_ts"] < outcome_window_start:
+            continue
+
         kws = get_kws_from_icd(info["code"])
 
         def stage_filter(chunk):
@@ -670,7 +676,7 @@ def _cancer_rows(pt_id, index_date, dia_records=None, vis_records=None):
             )
 
         near_notes = filter_records_by_date_range(
-            outcome_vis,
+            vis_records,
             start_date=info["date_ts"] - pd.Timedelta(days=91),
             end_date=info["date_ts"] + pd.Timedelta(days=91),
         )
