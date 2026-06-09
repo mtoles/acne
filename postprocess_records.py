@@ -14,7 +14,9 @@ Alcohol amount: majority case
 Transplant: One boolean column per organ (keyword)
 Transplant Date: One date column per organ (keyword) choosing the earliest date for that organ
 Disease: One column per disease name
-Cancer cancer: One column per cancer type keyword
+Cancer cancer: Each cancer type is categorized by its earliest diagnosis date into preexisting
+    (before the outcome window) or outcome (first diagnosed in the outcome window = incident),
+    producing one boolean column per cancer type keyword: cancer_preexisting__<kw> / cancer_outcome__<kw>.
 Cancer stage at diagnosis: One column per cancer type keyword, choosing the highest stage
 Cancer max stage: One column per cancer type keyword, choosing the highest stage
 Cancer family any: One column per cancer type keyword
@@ -43,7 +45,8 @@ OUTPUT_PATH = OUTPUT_DIR / "pooled_records.csv"
 MAJORITY_FEATURES = {"smoking_status", "smoking_amount", "alcohol_status", "alcohol_amount"}
 
 # Features with one boolean column per keyword (any "Yes" -> "Yes")
-BOOLEAN_PER_KEYWORD_FEATURES = {"transplant", "cancer_cancer", "cancer_family_any", "antibiotics"}
+# (cancer_cancer is handled separately: split into cancer_preexisting / cancer_outcome by dx date)
+BOOLEAN_PER_KEYWORD_FEATURES = {"transplant", "cancer_family_any", "antibiotics"}
 
 # Stage features: one column per keyword, pick highest stage
 STAGE_RANK = ["Stage 0", "Stage I", "Stage II or III", "Stage IV"]
@@ -178,6 +181,12 @@ def classify_period(record_date, index_date, outcome_window_start):
         return "outcome"
 
 
+def classify_cancer_period(dx_date, outcome_window_start):
+    """Categorize a cancer diagnosis date as 'preexisting' (diagnosed before the outcome
+    window) or 'outcome' (first diagnosed in the outcome window [index+2yr, ...) = incident)."""
+    return "outcome" if dx_date >= outcome_window_start else "preexisting"
+
+
 def pool_abx_duration_numeric(records):
     """Custom pooling for antibiotic_duration_numeric.
 
@@ -225,10 +234,18 @@ def pool_patient_records(records, index_date):
     # Parse dates and classify periods
     ABX_FEATURES = {"antibiotics", "antibiotic_duration_numeric"}
     TREATMENT_ONLY_FEATURES = {"contraceptives"}
+    # Cancer occurrence/date are split into preexisting/outcome by the diagnosis date.
+    CANCER_DATE_FEATURES = {"cancer_cancer"} | DATE_FEATURES
     for rec in records:
         rec["_parsed_date"] = normalize_date(rec["date"])
-        if rec["feature_name"] in ABX_FEATURES or rec["feature_name"] in TREATMENT_ONLY_FEATURES:
+        fn = rec["feature_name"]
+        if fn in ABX_FEATURES or fn in TREATMENT_ONLY_FEATURES:
             rec["_period"] = "treatment"
+        elif fn in STAGE_FEATURES:
+            # Stage is only extracted for outcome-window cancers (see full_inference._cancer_rows).
+            rec["_period"] = "outcome"
+        elif fn in CANCER_DATE_FEATURES:
+            rec["_period"] = classify_cancer_period(rec["_parsed_date"], outcome_window_start)
         else:
             rec["_period"] = classify_period(rec["_parsed_date"], index_date, outcome_window_start)
 
@@ -261,22 +278,32 @@ def pool_patient_records(records, index_date):
             for period, by_kw in _group_by_period_and_keyword(feature_records, rec_key_fn=rec_key_fn).items():
                 for kw, kw_recs in by_kw.items():
                     preds = [r["prediction"] for r in kw_recs]
-                    # Skip cancer_cancer keywords where no record says "Yes"
-                    # (filters out noise columns from non-cancer ICD codes in existing data)
-                    if feature_name == "cancer_cancer" and "Yes" not in preds:
-                        continue
                     col_name = f"{feature_name}__{period}__{kw}"
                     result[col_name] = pool_any_yes(preds)
-                    # Add ICD codes for cancer
-                    if feature_name == "cancer_cancer":
-                        icds = sorted({r["icd_code"] for r in kw_recs if r.get("icd_code")})
-                        if icds:
-                            result[f"cancer_cancer_icd__{period}__{kw}"] = "; ".join(icds)
                     # Add medication descriptions for antibiotics
                     if feature_name == "antibiotics":
                         meds = sorted({r["Medication_Description"] for r in kw_recs if r.get("Medication_Description")})
                         if meds:
                             result[f"antibiotics_meds__{period}__{kw}"] = "; ".join(meds)
+
+        # --- Cancer occurrence: split each cancer type into preexisting vs outcome by its ---
+        # --- EARLIEST diagnosis date, so prevalent cancers don't count as incident outcomes. ---
+        elif feature_name == "cancer_cancer":
+            by_kw = defaultdict(list)
+            for rec in feature_records:
+                by_kw[rec["keyword"]].append(rec)
+            for kw, kw_recs in by_kw.items():
+                preds = [r["prediction"] for r in kw_recs]
+                # Skip cancer keywords where no record says "Yes"
+                # (filters out noise columns from non-cancer ICD codes in existing data)
+                if "Yes" not in preds:
+                    continue
+                earliest_dx = min(r["_parsed_date"] for r in kw_recs)
+                cat = classify_cancer_period(earliest_dx, outcome_window_start)  # "preexisting" | "outcome"
+                result[f"cancer_{cat}__{kw}"] = pool_any_yes(preds)
+                icds = sorted({r["icd_code"] for r in kw_recs if r["icd_code"]})
+                if icds:
+                    result[f"cancer_{cat}_icd__{kw}"] = "; ".join(icds)
 
         # --- Stage features: highest stage per keyword ---
         elif feature_name in STAGE_FEATURES:
@@ -408,9 +435,9 @@ def main():
     df.to_csv(OUTPUT_PATH)
     print(f"Wrote {len(df)} patients x {len(df.columns)} columns to {OUTPUT_PATH}")
 
-    # --- Cancer rate by abx status ---
+    # --- Cancer OUTCOME rate by abx status (cancers in the outcome window) ---
     abx_cols = [c for c in df.columns if c.startswith("antibiotics__")]
-    cancer_cols = [c for c in df.columns if c.startswith("cancer_cancer__") and not c.startswith("cancer_cancer_icd__")]
+    cancer_cols = [c for c in df.columns if c.startswith("cancer_outcome__") and not c.startswith("cancer_outcome_icd__")]
     has_abx = (df[abx_cols] == "Yes").any(axis=1) if abx_cols else pd.Series(False, index=df.index)
     has_cancer = (df[cancer_cols] == "Yes").any(axis=1) if cancer_cols else pd.Series(False, index=df.index)
 
@@ -420,9 +447,9 @@ def main():
     cancer_no_abx = (~has_abx & has_cancer).sum()
     pct_abx = 100 * cancer_abx / n_abx if n_abx else 0
     pct_no_abx = 100 * cancer_no_abx / n_no_abx if n_no_abx else 0
-    print(f"\nCancer rate by abx status:")
-    print(f"  Abx patients:     {cancer_abx}/{n_abx} ({pct_abx:.1f}%) have cancer")
-    print(f"  Non-abx patients: {cancer_no_abx}/{n_no_abx} ({pct_no_abx:.1f}%) have cancer")
+    print(f"\nCancer outcome rate by abx status:")
+    print(f"  Abx patients:     {cancer_abx}/{n_abx} ({pct_abx:.1f}%) have a cancer outcome")
+    print(f"  Non-abx patients: {cancer_no_abx}/{n_no_abx} ({pct_no_abx:.1f}%) have a cancer outcome")
 
     # Generate pandas profiling report
     profile_path = OUTPUT_DIR / "pooled_records_profile.html"
