@@ -2284,7 +2284,8 @@ def compute_bmi_from_phy(phy_records, index_date):
     if phy_records.empty:
         return None, None
     df = phy_records.copy()
-    df["Date"] = pd.to_datetime(df["Date"], format="mixed", errors="coerce")
+    if not pd.api.types.is_datetime64_any_dtype(df["Date"]):
+        df["Date"] = pd.to_datetime(df["Date"], format="mixed", errors="coerce")
     df = df[df["Code"] == "BMI"]
     if df.empty:
         return None, None
@@ -2309,7 +2310,10 @@ def _closest_non_null_structured(phy_records, index_date, feature_cls):
     if phy_records.empty:
         return None
     df = phy_records.copy()
-    df["_parsed_date"] = pd.to_datetime(df["Date"], format="mixed", errors="coerce")
+    if pd.api.types.is_datetime64_any_dtype(df["Date"]):
+        df["_parsed_date"] = df["Date"]
+    else:
+        df["_parsed_date"] = pd.to_datetime(df["Date"], format="mixed", errors="coerce")
     df = df.dropna(subset=["_parsed_date"])
     if df.empty:
         return None

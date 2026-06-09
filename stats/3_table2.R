@@ -11,7 +11,7 @@ rm(list = ls(all.names = TRUE))
 ## 2. set locations
 ################################################################################
 
-source('/Users/danielkim/Partners HealthCare Dropbox/Daniel Kim/Research/Barbieri/1_cleanup.R')
+source('/home/mtoles/acne/stats/1_cleanup.R')
 
 ################################################################################
 ## 3. table 2

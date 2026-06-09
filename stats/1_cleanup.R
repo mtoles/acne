@@ -18,8 +18,8 @@ library(survminer)
 library(lubridate)
 library(smd)
 
-input  <- '/Users/danielkim/Partners HealthCare Dropbox/Daniel Kim/Research/Barbieri'
-output <- '/Users/danielkim/Partners HealthCare Dropbox/Daniel Kim/Research/Barbieri/eda_output'
+input  <- '/home/mtoles/acne/full_inference_out'
+output <- '/home/mtoles/acne/stats/eda_output'
 
 dir.create(output, showWarnings = FALSE)
 
