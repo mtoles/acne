@@ -78,12 +78,9 @@ _thread_local = threading.local()
 # Global records directory (set before processing loop)
 _records_dir = None
 _recycle_dirs = []
-# Set of recycle-from dirs (resolved paths) whose cancer features should NOT be recycled but
-# recomputed fresh, because cancer_cancer/date/stage extraction changed (now ungated, structured
-# date). A recycled patient is copied wholesale unless its source dir is in this set, in which case
-# the cancer feature rows (CANCER_RECOMPUTE_FEATURES) are dropped and recomputed via _cancer_rows.
-# Set from --no-recycle-cancer.
-_no_recycle_cancer_dirs = set()
+# When True (from --drop-llm-smoking-alc), LLM-generated smoking/alcohol rows are dropped during
+# recycling (structured-data rows for those features are kept).
+_drop_llm_smoking_alc = False
 
 
 def _json_default(obj):
@@ -501,15 +498,6 @@ def _abx_duration_rows(note_records, index_date):
     )
 
 
-# Cancer feature_names produced by _cancer_rows (used by the recycle path to know what to recompute).
-CANCER_RECOMPUTE_FEATURES = {
-    "cancer_cancer",
-    "cancer_date_of_diagnosis",
-    "cancer_stage_at_diagnosis",
-    "cancer_maximum_stage",
-}
-
-
 def _cancer_rows(pt_id, index_date, dia_records=None, vis_records=None):
     """Fresh cancer extraction.
 
@@ -616,14 +604,19 @@ def _cancer_rows(pt_id, index_date, dia_records=None, vis_records=None):
     return rows
 
 
+LLM_SMOKING_ALC_FEATURES = {
+    "smoking_status",
+    "smoking_amount",
+    "alcohol_status",
+    "alcohol_amount",
+}
+
+
 def _recycle_patient(pt_id, src_path, dst_path):
     """Copy an existing .jsonl record from a prior run, backfilling age_at_index_date if missing.
 
-    Normally the record is reused wholesale. When this src dir is in _no_recycle_cancer_dirs, the
-    prior run's cancer feature rows (CANCER_RECOMPUTE_FEATURES) are dropped and recomputed fresh,
-    because cancer extraction changed (now ungated structured dia + structured diagnosis date)."""
-    # Decide per-source-dir whether to recycle the cancer features.
-    recycle_cancer = Path(src_path).parent.resolve() not in _no_recycle_cancer_dirs
+    The record is reused wholesale, except that when _drop_llm_smoking_alc is set, LLM-generated
+    smoking/alcohol rows (keyword != "STRUCTURED_DATA") are dropped (structured rows are kept)."""
     rows = []
     has_age_at_index = False
     index_date_str = None
@@ -633,8 +626,12 @@ def _recycle_patient(pt_id, src_path, dst_path):
             if not line:
                 continue
             rec = json.loads(line)
-            # When not recycling cancer, drop the prior cancer rows so we can recompute them fresh below.
-            if not recycle_cancer and rec["feature_name"] in CANCER_RECOMPUTE_FEATURES:
+            # Drop LLM-generated smoking/alcohol rows when requested (keep structured-data rows).
+            if (
+                _drop_llm_smoking_alc
+                and rec["feature_name"] in LLM_SMOKING_ALC_FEATURES
+                and rec["keyword"] != "STRUCTURED_DATA"
+            ):
                 continue
             rows.append(rec)
             if rec["feature_name"] == "demographics" and rec["keyword"] == "age_at_index_date":
@@ -658,16 +655,10 @@ def _recycle_patient(pt_id, src_path, dst_path):
                     "prediction": f"{age_at_index:.2f}",
                 })
 
-    # Recompute the cancer features fresh (ungated structured dia + LLM stage) from the current tables.
-    if not recycle_cancer:
-        assert index_date_str is not None, f"recycled record for {pt_id} ({src_path}) has no index_date row"
-        rows.extend(_cancer_rows(pt_id, normalize_date(index_date_str)))
-
     with open(dst_path, "w") as f:
         for row in rows:
             out_row = dict(row)
-            # Idempotent: already-described recycled rows pass through unchanged; freshly recomputed
-            # cancer rows get mapped (cancer "A"->"Yes", stage letter->description).
+            # Idempotent: already-described recycled rows pass through unchanged.
             out_row["prediction"] = prediction_to_description(
                 out_row["feature_name"], out_row["prediction"]
             )
@@ -704,13 +695,8 @@ def process_pt(pt_id):
         print(f"Skipping {pt_id} (already has {jsonl_path})")
         return None
 
-    # Recycle from a prior run if available.
-    # Prefer a recycle dir that does NOT require a cancer recompute (instant copy) over one that
-    # does (slow DB dia/note load + LLM stage). Within each group, priority order is preserved, so
-    # a patient present in both a stale-cancer dir and a fresh-cancer dir is served from the fresh one.
-    fast_dirs = [d for d in _recycle_dirs if d.resolve() not in _no_recycle_cancer_dirs]
-    slow_dirs = [d for d in _recycle_dirs if d.resolve() in _no_recycle_cancer_dirs]
-    for _recycle_dir in fast_dirs + slow_dirs:
+    # Recycle from a prior run if available, in priority order.
+    for _recycle_dir in _recycle_dirs:
         recycle_path = _recycle_dir / f"{pt_id}.jsonl"
         if recycle_path.exists():
             return _recycle_patient(pt_id, recycle_path, jsonl_path)
@@ -1200,19 +1186,14 @@ parser.add_argument(
     help="One or more paths to previous records/ dirs. For each pt, the first dir containing the pt's .jsonl is used (with age_at_index_date backfilled if missing).",
 )
 parser.add_argument(
-    "--no-recycle-cancer",
-    type=str,
-    nargs="*",
-    default=["full_inference_out/records_old_9_cancer-llm"],
-    help="List of recycle-from dirs whose cancer features (cancer_cancer, cancer_date_of_diagnosis, "
-         "cancer_stage_at_diagnosis, cancer_maximum_stage) should NOT be recycled but recomputed fresh "
-         "(now ungated structured dia + structured diagnosis date). Recycle-from dirs not listed here "
-         "have cancer recycled along with everything else. Defaults to records_old_9_cancer-llm.",
+    "--drop-llm-smoking-alc",
+    action="store_true",
+    help="When recycling, drop LLM-generated smoking/alcohol rows (smoking_status, smoking_amount, "
+         "alcohol_status, alcohol_amount with keyword != STRUCTURED_DATA). Structured-data rows are kept.",
 )
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
-# Resolve no-recycle-cancer dirs for comparison against each recycle source dir.
-_no_recycle_cancer_dirs = {Path(d).resolve() for d in args.no_recycle_cancer}
+_drop_llm_smoking_alc = args.drop_llm_smoking_alc
 
 start_time = datetime.now()
 print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1254,8 +1235,8 @@ if args.recycle_from:
             raise FileNotFoundError(f"--recycle-from dir does not exist: {p}")
         _recycle_dirs.append(p)
     print(f"Recycling records from (in priority order): {[str(p) for p in _recycle_dirs]}")
-    if _no_recycle_cancer_dirs:
-        print(f"  Cancer features recomputed fresh (not recycled) for: {[str(p) for p in _no_recycle_cancer_dirs]}")
+    if _drop_llm_smoking_alc:
+        print("  Dropping LLM-generated smoking/alcohol rows during recycling (structured rows kept)")
 
 # Set up LLM call logging
 llm_logger = logging.getLogger("llm_calls")
