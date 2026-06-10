@@ -8,6 +8,8 @@ import argparse
 from vllm import LLM, SamplingParams
 import os
 import random
+import threading
+from contextlib import contextmanager
 from urllib.parse import urlparse
 import yaml
 from Levenshtein import distance
@@ -138,12 +140,29 @@ class MrModel:
         self.base_urls = [u.strip() for u in base_url.split(",") if u.strip()]
         self.clients = [_make_openai_client(u, api_key) for u in self.base_urls]
         self.client = self.clients[0]  # back-compat: default/first endpoint
+        # Outstanding-request count per endpoint, for least-loaded routing (see _route).
+        self._inflight = [0] * len(self.base_urls)
+        self._lb_lock = threading.Lock()
+
+    @contextmanager
+    def _route(self):
+        """Route a request to the endpoint with the FEWEST in-flight requests (random
+        tiebreak), holding a slot for the duration of the call. Unlike uniform-random
+        routing, this adapts to per-server speed: a slow/overloaded server accumulates
+        in-flight requests and stops being picked, so fast servers (e.g. coffee) keep
+        getting work instead of sitting idle while workers pile up on a slow one."""
+        with self._lb_lock:
+            i = min(range(len(self.clients)), key=lambda j: (self._inflight[j], random.random()))
+            self._inflight[i] += 1
+        try:
+            yield self.base_urls[i], self.clients[i]
+        finally:
+            with self._lb_lock:
+                self._inflight[i] -= 1
 
     def _pick(self):
-        """Pick a vLLM endpoint at random to balance load across all configured servers.
-        Random per-request assignment self-balances: a faster server frees its worker sooner
-        and so handles proportionally more requests."""
-        i = random.randrange(len(self.clients))
+        """Back-compat single-shot endpoint pick (no in-flight tracking). Prefer _route."""
+        i = min(range(len(self.clients)), key=lambda j: (self._inflight[j], random.random()))
         return self.base_urls[i], self.clients[i]
 
     @classmethod
@@ -159,16 +178,16 @@ class MrModel:
         assert "role" in history[0] and "content" in history[0]
         
         # Get model response with logprobs
-        _, client = self._pick()
-        response = client.chat.completions.create(
-            model=self.model_id,
-            messages=history,
-            logprobs=True,
-            top_logprobs=20,
-            max_tokens=1, 
-            # max_tokens=100, # TESTING
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}}
-        )
+        with self._route() as (_, client):
+            response = client.chat.completions.create(
+                model=self.model_id,
+                messages=history,
+                logprobs=True,
+                top_logprobs=20,
+                max_tokens=1,
+                # max_tokens=100, # TESTING
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}}
+            )
         print(f"response text: {response.choices[0].message.content}")
         # Get the top generated token ID that is a valid output choice
         # print(response.choices[0].logprobs.content[0].top_logprobs)
@@ -200,16 +219,16 @@ class MrModel:
         # TODO: test on dates
         for attempt in range(attempts):
             temperature = 1.0 if sample else 0.0
-            base_url, _ = self._pick()
-            response_text = _cached_llm_call(
-                self.model_id,
-                base_url,
-                self.api_key,
-                history,
-                max_tokens,
-                temperature,
-                1.0,
-            )
+            with self._route() as (base_url, _):
+                response_text = _cached_llm_call(
+                    self.model_id,
+                    base_url,
+                    self.api_key,
+                    history,
+                    max_tokens,
+                    temperature,
+                    1.0,
+                )
             # Strip <think>...</think> blocks for answer extraction (e.g. DeepSeek-R1, Qwen3)
             # For free-form (options=None), keep content but strip tags
             response_text = self._strip_think_tags(response_text, keep_content=(options is None))

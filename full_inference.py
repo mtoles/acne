@@ -1182,6 +1182,7 @@ parser.add_argument(
         # "full_inference_out/records_old_7_only-vis",
         # "full_inference_out/records_old_8_partial-all-docs"
         # "full_inference_out/records_old_9_cancer-llm"
+        "full_inference_out/records_old_11-extra-smoking-alc"
     ],
     help="One or more paths to previous records/ dirs. For each pt, the first dir containing the pt's .jsonl is used (with age_at_index_date backfilled if missing).",
 )
