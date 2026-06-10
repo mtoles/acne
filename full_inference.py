@@ -344,67 +344,6 @@ def _extract_structured(feature_cls, block_records):
     return structured_hits
 
 
-def process_single_block_structured(
-    block_records, feature_cls, phy_records=None, dia_records=None
-):
-    """
-    Process a feature for a single time block using structured data only.
-
-    Args:
-        block_records: List of vis table record dictionaries (used for date)
-        feature_cls: Feature class (e.g., smoking_status)
-        phy_records: List of phy table record dictionaries (for structured data extraction)
-        dia_records: List of dia table record dictionaries (for diagnosis-based structured data extraction)
-        med_records: List of med table record dictionaries (for medication-based structured data extraction)
-    Returns:
-        List of result row dictionaries (empty if no structured data found)
-    """
-    global _structured_windows_count, _per_patient_stats, _per_patient_stats_lock
-
-    rows = []
-
-    # For cancer_cancer, use dia_records; for other features, use phy_records
-    if feature_cls.__name__ == "cancer_cancer":
-        structured_records = dia_records if dia_records is not None else pd.DataFrame()
-    else:
-        structured_records = phy_records if phy_records is not None else pd.DataFrame()
-    structured_hits = _extract_structured(feature_cls, structured_records)
-
-    if structured_hits:
-        # Pool the hits
-        structured_value = feature_cls.pooling_fn([x["pred"] for x in structured_hits])
-        # Track structured window usage
-        _structured_windows_count += 1
-        if (
-            hasattr(_thread_local, "current_patient_id")
-            and _thread_local.current_patient_id
-        ):
-            with _per_patient_stats_lock:
-                if _thread_local.current_patient_id not in _per_patient_stats:
-                    _per_patient_stats[_thread_local.current_patient_id] = {
-                        "structured": 0,
-                        "llm": 0,
-                    }
-                _per_patient_stats[_thread_local.current_patient_id]["structured"] += 1
-
-        # Use the most recent record date for the block
-        if not block_records.empty:
-            record_date = block_records["Report_Date_Time"].max()
-        else:
-            record_date = None
-
-        rows.append(
-            {
-                "feature_name": feature_cls.__name__,
-                "keyword": "STRUCTURED_DATA",
-                "date": record_date,
-                "prediction": structured_value,
-            }
-        )
-
-    return rows, structured_hits
-
-
 def make_keyword_filter(keywords):
     """Create a chunk filter that returns True if any keyword is present."""
 
@@ -545,27 +484,6 @@ def get_chunks_by_keyword(
     return chunks
 
 
-def _load_note_records(conn, pt_id):
-    """All free-text note tables (vis + hnp + prg + dis + lno) for a patient, normalized to
-    Report_Date_Time / Report_Text. lno (letters) is aliased from LMRNote_Date / Comments."""
-    frames = []
-    for tbl, datecol, textcol in [("vis", "Report_Date_Time", "Report_Text")] + EXTRA_NOTE_TABLES:
-        note_df = pd.DataFrame(
-            conn.execute(
-                text(
-                    f"SELECT {datecol} AS Report_Date_Time, {textcol} AS Report_Text "
-                    f"FROM {tbl} WHERE EMPI = '{pt_id}'"
-                )
-            ).mappings().fetchall()
-        )
-        if not note_df.empty:
-            frames.append(note_df)
-    return (
-        pd.concat(frames, ignore_index=True)
-        if frames
-        else pd.DataFrame(columns=["Report_Date_Time", "Report_Text"])
-    )
-
 
 def _abx_duration_rows(note_records, index_date):
     """Fresh antibiotic_duration_numeric extraction over the treatment window [index, index+2yr).
@@ -684,7 +602,7 @@ def _cancer_rows(pt_id, index_date, dia_records=None, vis_records=None):
             continue
         for feat_cls, feat_name in (
             (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis"),
-            (cancer_maximum_stage, "cancer_maximum_stage"),
+            # (cancer_maximum_stage, "cancer_maximum_stage"),
         ):
             stage_rows = process_single_block_llm(
                 near_notes, feat_cls, chunk_filter_fn=stage_filter,
@@ -935,37 +853,40 @@ def process_pt(pt_id):
                 "prediction": hit["pred"],
             })
 
-    # Smoking status: LLM fallback on vis blocks without structured data
-    for block_index, block_records in smoking_blocks.items():
-        _thread_local.block_id = f"smoking_{block_index}"
-        _thread_local.block_dates = (
-            f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}"
-            if not block_records.empty
-            else ""
-        )
-        block_rows = process_single_block_llm(
-            block_records,
-            smoking_status,
-            make_keyword_filter(smoking_status.keywords),
-            short_circuit=True,
-            all_records=False,
-        )
-        rows.extend(block_rows)
-        if block_rows:
-            pooled_value = smoking_status.pooling_fn(
-                [row["prediction"] for row in block_rows]
+    # Smoking status: LLM fallback on vis blocks ONLY when no structured data exists
+    # (structured phy hits are authoritative; running the LLM anyway both wastes compute
+    # and dilutes the structured value in the downstream majority vote).
+    if not smoking_structured_hits:
+        for block_index, block_records in smoking_blocks.items():
+            _thread_local.block_id = f"smoking_{block_index}"
+            _thread_local.block_dates = (
+                f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}"
+                if not block_records.empty
+                else ""
             )
-            if pooled_value == "C":
-                follow_up_rows = process_single_block_llm(
-                    block_records,
-                    smoking_amount,
-                    make_keyword_filter(smoking_amount.keywords),
-                    short_circuit=True,
-                    all_records=False,
+            block_rows = process_single_block_llm(
+                block_records,
+                smoking_status,
+                make_keyword_filter(smoking_status.keywords),
+                short_circuit=True,
+                all_records=False,
+            )
+            rows.extend(block_rows)
+            if block_rows:
+                pooled_value = smoking_status.pooling_fn(
+                    [row["prediction"] for row in block_rows]
                 )
-                for row in follow_up_rows:
-                    row["feature_name"] = "smoking_amount"
-                rows.extend(follow_up_rows)
+                if pooled_value == "C":
+                    follow_up_rows = process_single_block_llm(
+                        block_records,
+                        smoking_amount,
+                        make_keyword_filter(smoking_amount.keywords),
+                        short_circuit=True,
+                        all_records=False,
+                    )
+                    for row in follow_up_rows:
+                        row["feature_name"] = "smoking_amount"
+                    rows.extend(follow_up_rows)
 
     # Alcohol status: structured from phy
     alcohol_structured_hits = _extract_structured(alcohol_status, phy_records)
@@ -987,37 +908,39 @@ def process_pt(pt_id):
                 "prediction": hit["pred"],
             })
 
-    # Alcohol status: LLM fallback on vis blocks
-    for block_index, block_records in alcohol_blocks.items():
-        _thread_local.block_id = f"alcohol_{block_index}"
-        _thread_local.block_dates = (
-            f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}"
-            if not block_records.empty
-            else ""
-        )
-        block_rows = process_single_block_llm(
-            block_records,
-            alcohol_status,
-            make_keyword_filter(alcohol_status.keywords),
-            short_circuit=True,
-            all_records=False,
-        )
-        rows.extend(block_rows)
-        if block_rows:
-            pooled_value = alcohol_status.pooling_fn(
-                [row["prediction"] for row in block_rows]
+    # Alcohol status: LLM fallback on vis blocks ONLY when no structured data exists
+    # (structured phy hits are authoritative; see smoking note above).
+    if not alcohol_structured_hits:
+        for block_index, block_records in alcohol_blocks.items():
+            _thread_local.block_id = f"alcohol_{block_index}"
+            _thread_local.block_dates = (
+                f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}"
+                if not block_records.empty
+                else ""
             )
-            if pooled_value == "A":
-                follow_up_rows = process_single_block_llm(
-                    block_records,
-                    alcohol_amount,
-                    make_keyword_filter(alcohol_amount.keywords),
-                    short_circuit=True,
-                    all_records=False,
+            block_rows = process_single_block_llm(
+                block_records,
+                alcohol_status,
+                make_keyword_filter(alcohol_status.keywords),
+                short_circuit=True,
+                all_records=False,
+            )
+            rows.extend(block_rows)
+            if block_rows:
+                pooled_value = alcohol_status.pooling_fn(
+                    [row["prediction"] for row in block_rows]
                 )
-                for row in follow_up_rows:
-                    row["feature_name"] = "alcohol_amount"
-                rows.extend(follow_up_rows)
+                if pooled_value == "A":
+                    follow_up_rows = process_single_block_llm(
+                        block_records,
+                        alcohol_amount,
+                        make_keyword_filter(alcohol_amount.keywords),
+                        short_circuit=True,
+                        all_records=False,
+                    )
+                    for row in follow_up_rows:
+                        row["feature_name"] = "alcohol_amount"
+                    rows.extend(follow_up_rows)
 
     # Transplant: earliest records to outcome window start
     # Use LLM if no structured: no
@@ -1272,7 +1195,7 @@ parser.add_argument(
         # "full_inference_out/records_old_5",
         # "full_inference_out/records_old_7_only-vis",
         # "full_inference_out/records_old_8_partial-all-docs"
-        "full_inference_out/records_old_9_cancer-llm"
+        # "full_inference_out/records_old_9_cancer-llm"
     ],
     help="One or more paths to previous records/ dirs. For each pt, the first dir containing the pt's .jsonl is used (with age_at_index_date backfilled if missing).",
 )

@@ -7,6 +7,8 @@ import re
 import argparse
 from vllm import LLM, SamplingParams
 import os
+import random
+from urllib.parse import urlparse
 import yaml
 from Levenshtein import distance
 from utils import OptionType
@@ -20,12 +22,21 @@ COT_SUFFIX = "\n\n### Instructions:\n\nThink step by step, then answer the quest
 _client_cache = {}
 
 
+def _is_local_url(base_url):
+    """True if base_url points at this host (so it must NOT go through the tailnet proxy)."""
+    host = urlparse(base_url).hostname or ""
+    return host in ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+
+
 def _make_openai_client(base_url, api_key):
     """Build (and reuse) an OpenAI client for base_url. When VLLM_PROXY is set (e.g. mgb
     running Tailscale in userspace mode), route through that local proxy so requests reach
-    the remote vLLM. Cached per (base_url, api_key, proxy) so connections are pooled and the
-    joblib cache key (which excludes the proxy) stays stable."""
+    the remote vLLM -- but only for non-local endpoints, since localhost must connect directly.
+    Cached per (base_url, api_key, proxy) so connections are pooled and the joblib cache key
+    (which excludes the proxy) stays stable."""
     proxy = os.environ.get("VLLM_PROXY")
+    if proxy and _is_local_url(base_url):
+        proxy = None  # a local endpoint must connect directly, not through the tailnet proxy
     key = (base_url, api_key, proxy)
     if key not in _client_cache:
         http_client = (
@@ -120,8 +131,20 @@ class MrModel:
             vllm_port = os.environ.get("VLLM_PORT", "8010")
             base_url = f"http://localhost:{vllm_port}/v1"
         self.model_id = model_id
-        # Routes through VLLM_PROXY (tailscaled userspace proxy) when set; see _make_openai_client.
-        self.client = _make_openai_client(base_url, api_key)
+        self.api_key = api_key
+        # One or more comma-separated endpoints (e.g. local + remote vLLM); requests are
+        # round-robined across them so several servers share the load. Each routes through
+        # VLLM_PROXY only if non-local; see _make_openai_client.
+        self.base_urls = [u.strip() for u in base_url.split(",") if u.strip()]
+        self.clients = [_make_openai_client(u, api_key) for u in self.base_urls]
+        self.client = self.clients[0]  # back-compat: default/first endpoint
+
+    def _pick(self):
+        """Pick a vLLM endpoint at random to balance load across all configured servers.
+        Random per-request assignment self-balances: a faster server frees its worker sooner
+        and so handles proportionally more requests."""
+        i = random.randrange(len(self.clients))
+        return self.base_urls[i], self.clients[i]
 
     @classmethod
     def format_chunk_qs(cls, q: str, chunk: str, options: list[str]):
@@ -136,7 +159,8 @@ class MrModel:
         assert "role" in history[0] and "content" in history[0]
         
         # Get model response with logprobs
-        response = self.client.chat.completions.create(
+        _, client = self._pick()
+        response = client.chat.completions.create(
             model=self.model_id,
             messages=history,
             logprobs=True,
@@ -176,10 +200,11 @@ class MrModel:
         # TODO: test on dates
         for attempt in range(attempts):
             temperature = 1.0 if sample else 0.0
+            base_url, _ = self._pick()
             response_text = _cached_llm_call(
                 self.model_id,
-                str(self.client.base_url),
-                self.client.api_key,
+                base_url,
+                self.api_key,
                 history,
                 max_tokens,
                 temperature,
