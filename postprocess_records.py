@@ -25,6 +25,7 @@ Contraceptives: One boolean column (pooled) – "Yes" if any contraceptive recor
 """
 
 import json
+from enum import StrEnum
 from pathlib import Path
 from collections import defaultdict, Counter
 from tqdm import tqdm
@@ -181,10 +182,19 @@ def classify_period(record_date, index_date, outcome_window_start):
         return "outcome"
 
 
+class CancerPeriod(StrEnum):
+    """The two buckets a cancer diagnosis date can fall into, relative to the outcome window.
+    A StrEnum so members interpolate directly into column names as their string value while
+    still constraining equality comparisons to these two options."""
+
+    PREEXISTING = "preexisting"  # diagnosed before the outcome window
+    OUTCOME = "outcome"  # first diagnosed in the outcome window [index+2yr, ...) = incident
+
+
 def classify_cancer_period(dx_date, outcome_window_start):
-    """Categorize a cancer diagnosis date as 'preexisting' (diagnosed before the outcome
-    window) or 'outcome' (first diagnosed in the outcome window [index+2yr, ...) = incident)."""
-    return "outcome" if dx_date >= outcome_window_start else "preexisting"
+    """Categorize a cancer diagnosis date as preexisting (diagnosed before the outcome
+    window) or outcome (first diagnosed in the outcome window [index+2yr, ...) = incident)."""
+    return CancerPeriod.OUTCOME if dx_date >= outcome_window_start else CancerPeriod.PREEXISTING
 
 
 def pool_abx_duration_numeric(records):
@@ -299,7 +309,7 @@ def pool_patient_records(records, index_date):
                 if "Yes" not in preds:
                     continue
                 earliest_dx = min(r["_parsed_date"] for r in kw_recs)
-                cat = classify_cancer_period(earliest_dx, outcome_window_start)  # "preexisting" | "outcome"
+                cat = classify_cancer_period(earliest_dx, outcome_window_start)  # CancerPeriod
                 result[f"cancer_{cat}__{kw}"] = pool_any_yes(preds)
                 icds = sorted({r["icd_code"] for r in kw_recs if r["icd_code"]})
                 if icds:
