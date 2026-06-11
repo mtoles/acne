@@ -11,9 +11,70 @@ import yaml
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from pt_features import PtFeaturesMeta, PtNumericFeatureBase
+from pt_features import (
+    PtFeaturesMeta,
+    PtNumericFeatureBase,
+    find_baseline_prompt_from_prompt_iteration_labels,
+)
 from models import MrModel
 from utils import OptionType, get_dataset, compute_numeric_pct_error, compute_numeric_abs_error
+
+
+# Residents-study "special" features shown at the TOP of the feature dropdown. Each reuses an
+# existing feature class but populates the query box with the ORIGINAL short one-sentence prompt
+# (not the full optimized prompt). They always run on mgb data (the app's only data source).
+# (display_name, real_feature_class_name, override_query_or_None)
+#   override None  -> use that class's baseline prompt from the prompt-tuning sheet
+#   override set   -> use this literal query (the numeric duration feature has no short baseline)
+SPECIAL_FEATURES_ORDER = [
+    ("Residents Study 1 - Alcohol Amount", "alcohol_amount", None),
+    ("Residents Study 2 - Cancer Stage at Diagnosis", "cancer_stage_at_diagnosis", None),
+    (
+        "Residents Study 3 - Antibiotic Duration Numeric",
+        "antibiotic_duration_numeric",
+        "How many days total did the patient take {keyword}? Answer with a single integer for "
+        "the total number of days, 0 if there is no indication of antibiotic use, or F if taken "
+        "but the duration is unknown.",
+    ),
+]
+
+# display_name -> real feature class name
+SPECIAL_FEATURE_TO_REAL = {disp: real for disp, real, _ in SPECIAL_FEATURES_ORDER}
+
+
+def resolve_feature_name(feature_name):
+    """Map a Residents-study display name to its underlying feature class name; pass others through."""
+    if feature_name in SPECIAL_FEATURE_TO_REAL:
+        return SPECIAL_FEATURE_TO_REAL[feature_name]
+    return feature_name
+
+
+def serialize_options(target_cls):
+    """Convert a feature class's options to a JSON-serializable form (list, or "numeric"/"date")."""
+    options = target_cls.options if hasattr(target_cls, "options") else []
+    if isinstance(options, enum.Enum):
+        return options.value
+    if not isinstance(options, list):
+        return str(options)
+    return options
+
+
+def build_special_feature_entries():
+    """Build the /api/features entries for the Residents-study features, in defined order."""
+    entries = []
+    for display_name, real_name, override_query in SPECIAL_FEATURES_ORDER:
+        target_cls = PtFeaturesMeta.registry[real_name]
+        if override_query is not None:
+            query = override_query
+        else:
+            # keyword="{keyword}" keeps the placeholder so it's substituted per-chunk at run time
+            query = find_baseline_prompt_from_prompt_iteration_labels(real_name, keyword="{keyword}")
+        entries.append({
+            "name": display_name,
+            "query": query,
+            "options": serialize_options(target_cls),
+        })
+    return entries
 
 
 def build_feature_metadata(feature_name):
@@ -90,7 +151,9 @@ def get_features():
                     'options': options
                 })
     
-    return jsonify({'features': sorted(features, key=lambda x: x['name'])})
+    # Residents-study special features pinned to the top, then the rest sorted by name.
+    special_entries = build_special_feature_entries()
+    return jsonify({'features': special_entries + sorted(features, key=lambda x: x['name'])})
 
 @app.route('/api/check_server', methods=['GET'])
 def check_server():
@@ -102,10 +165,12 @@ def check_server():
 def get_dataset_size():
     """Get the size of the train dataset for a given feature"""
     feature_name = request.args.get('feature')
-    
+
     if not feature_name:
         return jsonify({'error': 'Feature name is required'}), 400
-    
+
+    feature_name = resolve_feature_name(feature_name)
+
     try:
         # Load labeled data using utils.get_dataset (includes both natural and synthetic)
         datasets = get_dataset(
@@ -136,7 +201,7 @@ def get_dataset_size():
 def run_query():
     """Run the comparison query"""
     data = request.json
-    feature_name = data.get('feature')
+    feature_name = resolve_feature_name(data.get('feature'))
     n = int(data.get('n', 100))
     custom_query = data.get('query', '').strip()
     options_str = data.get('options', '').strip()

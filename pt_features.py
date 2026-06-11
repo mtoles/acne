@@ -229,6 +229,46 @@ def find_best_prompt_from_prompt_iteration_labels(class_name: str, **kwargs) -> 
     return str(best_prompt)
 
 
+def find_baseline_prompt_from_prompt_iteration_labels(class_name: str, **kwargs) -> str:
+    """Return the ORIGINAL baseline prompt for a class (the short, pre-optimization
+    one-sentence prompt), read from the 'Prompt #1 (baseline)' column of the
+    'Prompt Tuning' sheet -- as opposed to find_best_prompt_from_prompt_iteration_labels,
+    which returns the highest-accuracy optimized prompt.
+
+    Mirrors the keyword-substitution behavior of find_best_prompt_from_prompt_iteration_labels.
+    """
+    excel_path = "labeled_data/LLM Adjustment Tracking.xlsx"
+    df = pd.read_excel(excel_path, sheet_name="Prompt Tuning")
+
+    matching_rows = df[df["Data Point"] == class_name]
+    assert (
+        len(matching_rows) > 0
+    ), f"No rows found for class '{class_name}' in Excel file"
+
+    baseline_col = (
+        "Prompt #1 (baseline)"
+        if "Prompt #1 (baseline)" in df.columns
+        else "Prompt #1"
+    )
+
+    baseline_prompt = None
+    for idx in matching_rows.index.tolist():
+        val = df.loc[idx, baseline_col]
+        if pd.notna(val):
+            baseline_prompt = val
+            break
+
+    assert baseline_prompt is not None and not pd.isna(
+        baseline_prompt
+    ), f"No baseline prompt found for class '{class_name}' in column '{baseline_col}'"
+
+    baseline_prompt = str(baseline_prompt)
+    keyword = kwargs["keyword"] if "keyword" in kwargs else ""
+    baseline_prompt = re.sub(r"\{keyword\}", keyword, baseline_prompt)
+    baseline_prompt = re.sub(r"\{kwargs\['keyword'\]\}", keyword, baseline_prompt)
+    return baseline_prompt
+
+
 def _build_option_descriptions():
     """Build a dict mapping class_name -> {letter: description} from the Excel Response Options column."""
     excel_path = "labeled_data/LLM Adjustment Tracking.xlsx"
