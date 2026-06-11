@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-DEFAULT_RESULTS_DIR = "auto_prompt/preds/Qwen_Qwen2.5-72B-Instruct-AWQ/paper5"
+DEFAULT_RESULTS_DIR = "auto_prompt/preds/Qwen_Qwen2.5-72B-Instruct-AWQ/paper6_test-set-plot"
 DATASETS = ["acne", "odd", "sdoh", "clip"]
 EXCLUDE_FEATURES = {"cancer_family_any"}
 ANALYSIS_DIR = "auto_prompt/analysis"
@@ -22,6 +22,11 @@ method_styles = {
     opt: {"color": _cmap(i), "marker": _markers[i]}
     for i, opt in enumerate(ALL_OPTIMIZERS)
 }
+DISPLAY_NAMES = {"ours": "chimp (ours)"}
+
+
+def _disp(name):
+    return DISPLAY_NAMES.get(name, name)
 
 
 def _norm(v):
@@ -50,6 +55,16 @@ def _ph_cand_val(h):
     """Candidate val accuracy (new) or candidate eval accuracy (old)."""
     v = h.get("candidate_val_accuracy")
     return v if v is not None else h.get("candidate_eval_accuracy")
+
+
+def _ph_test(h):
+    """Per-iter test accuracy (current prompt). None for legacy runs without it."""
+    return h.get("test_accuracy")
+
+
+def _ph_cand_test(h):
+    """Candidate test accuracy. None for legacy runs without it."""
+    return h.get("candidate_test_accuracy")
 
 
 def _feat_test_combined(fd):
@@ -153,28 +168,27 @@ def feature_best_series(feature_data, baseline_acc):
     return series
 
 
-def feature_paired_eval_series(feature_data, baseline_train, baseline_eval):
-    """Val (new) / eval (old) accuracy of the candidate that currently holds the
-    train running-max.
+def feature_paired_test_series(feature_data, baseline_train, baseline_test):
+    """Test accuracy of the candidate that currently holds the train running-max.
 
     Index-aligned with feature_best_series: index 0 = baseline; subsequent indices
     correspond to each surviving (non-zero candidate train acc) entry. When a
-    candidate beats the running-max train acc, switch to its val/eval acc; else
-    hold. Returns None if no val/eval data is recorded for this feature.
+    candidate beats the running-max train acc, switch to its test acc; else hold.
+    Returns None if no test data is recorded for this feature.
     """
     ph = [h for h in feature_data["prompt_history"] if _ph_cand_train(h) is not None]
-    pairs = [(_norm(_ph_cand_train(h)), _ph_cand_val(h)) for h in ph]
-    pairs = [(c, e) for c, e in pairs if c > 0]
-    if baseline_eval is None and not any(e is not None for _, e in pairs):
+    pairs = [(_norm(_ph_cand_train(h)), _ph_cand_test(h)) for h in ph]
+    pairs = [(c, t) for c, t in pairs if c > 0]
+    if baseline_test is None and not any(t is not None for _, t in pairs):
         return None
-    series = [baseline_eval if baseline_eval is not None else 0.0]
+    series = [baseline_test if baseline_test is not None else 0.0]
     best_train = baseline_train
-    best_eval = series[0]
-    for c_train, c_eval in pairs:
-        if c_train > best_train and c_eval is not None:
+    best_test = series[0]
+    for c_train, c_test in pairs:
+        if c_train > best_train and c_test is not None:
             best_train = c_train
-            best_eval = _norm(c_eval)
-        series.append(best_eval)
+            best_test = _norm(c_test)
+        series.append(best_test)
     return series
 
 
@@ -200,18 +214,18 @@ def avg_curve(results, features, baselines):
     return out
 
 
-def avg_eval_curve(results, features, train_baselines, eval_baselines):
-    """Per-optimizer average eval-acc curve paired with train running-max."""
+def avg_test_curve(results, features, train_baselines, test_baselines):
+    """Per-optimizer average test-acc curve paired with train running-max."""
     out = {}
     for name, data in results.items():
         series = []
         for feat in features:
             if feat not in data["features"] or feat not in train_baselines:
                 continue
-            s = feature_paired_eval_series(
+            s = feature_paired_test_series(
                 data["features"][feat],
                 train_baselines[feat],
-                eval_baselines.get(feat),
+                test_baselines.get(feat),
             )
             if s is not None:
                 series.append(s)
@@ -227,34 +241,45 @@ def _lighten(color, amount=0.55):
     return (r + (1 - r) * amount, g + (1 - g) * amount, b + (1 - b) * amount, a)
 
 
-def feature_length_series(feature_data):
-    """Active-prompt length per iteration, with iter 0 = baseline prompt length."""
-    series = [len(feature_data["baseline_prompt"])]
-    ph = [h for h in feature_data["prompt_history"] if "candidate_accuracy" in h]
-    candidates = [(_norm(h["candidate_accuracy"]), h) for h in ph]
-    candidates = [(c, h) for c, h in candidates if c > 0]
-    # Track the active prompt length after each step using the same filter as the
-    # accuracy curve: take len(prompt) at each surviving entry.
-    for _, h in candidates:
-        series.append(len(h["prompt"]))
+def feature_length_series(feature_data, baseline_train):
+    """Active-prompt length paired with the running-max train accuracy.
+
+    Iter 0 = baseline prompt length. Subsequent indices align with
+    feature_best_series / feature_paired_test_series: switch to the
+    candidate's prompt length only when it beats the running-max train acc.
+    """
+    series = [len(feature_data["baseline_prompt"].split())]
+    ph = [h for h in feature_data["prompt_history"] if _ph_cand_train(h) is not None]
+    pairs = [(_norm(_ph_cand_train(h)), h) for h in ph]
+    pairs = [(c, h) for c, h in pairs if c > 0]
+    best_train = baseline_train
+    best_len = series[0]
+    for c, h in pairs:
+        if c > best_train:
+            best_train = c
+            # auto_prompt.py stores the proposed prompt at "candidate_prompt";
+            # dspy_optimizer.py only stores the running-best at "prompt".
+            cand_prompt = h.get("candidate_prompt") or h.get("prompt", "")
+            best_len = len(cand_prompt.split())
+        series.append(best_len)
     return series
 
 
-def avg_length_curve(results, features):
+def avg_length_curve(results, features, baselines):
     """Per-optimizer average prompt-length curve, iter 0 = baseline length."""
     out = {}
     for name, data in results.items():
         series = []
         for feat in features:
-            if feat not in data["features"]:
+            if feat not in data["features"] or feat not in baselines:
                 continue
-            series.append(feature_length_series(data["features"][feat]))
+            series.append(feature_length_series(data["features"][feat], baselines[feat]))
         if series:
             out[name] = np.mean([resample_to_11(s) for s in series], axis=0)
     return out
 
 
-def plot_per_dataset(dataset_name, results, features, baselines, eval_baselines, tag):
+def plot_per_dataset(dataset_name, results, features, baselines, test_baselines, tag):
     """Per-feature figure with an average subplot at the end. Iter 0 = baseline."""
     n_plots = len(features) + 1
     ncols = min(3, n_plots)
@@ -271,21 +296,16 @@ def plot_per_dataset(dataset_name, results, features, baselines, eval_baselines,
         for name, data in results.items():
             if feat not in data["features"]:
                 continue
-            best = feature_best_series(data["features"][feat], baselines[feat])
-            n_pts = len(best)
-            x = list(range(n_pts))  # 0 = baseline, 1..N = each surviving candidate
-            style = method_styles[name]
-            light = _lighten(style["color"])
-            ax.plot(x, best, f"{style['marker']}-",
-                    label=f"{name} train", color=light, alpha=0.7, markersize=5)
-            feat_vals.extend(best)
-            paired_eval = feature_paired_eval_series(
-                data["features"][feat], baselines[feat], eval_baselines.get(feat),
+            paired_test = feature_paired_test_series(
+                data["features"][feat], baselines[feat], test_baselines.get(feat),
             )
-            if paired_eval is not None:
-                ax.plot(x, paired_eval, f"{style['marker']}-",
-                        label=f"{name} eval", color=style["color"], alpha=0.9, markersize=5)
-                feat_vals.extend(paired_eval)
+            if paired_test is None:
+                continue
+            style = method_styles[name]
+            x = list(range(len(paired_test)))
+            ax.plot(x, paired_test, f"{style['marker']}-",
+                    label=_disp(name), color=style["color"], alpha=0.9, markersize=5)
+            feat_vals.extend(paired_test)
 
         ax.set_title(feat)
         ax.set_xlabel("Iteration")
@@ -299,18 +319,12 @@ def plot_per_dataset(dataset_name, results, features, baselines, eval_baselines,
 
     # Average subplot
     ax_avg = axes[len(features)]
-    train_avg = avg_curve(results, features, baselines)
-    eval_avg = avg_eval_curve(results, features, baselines, eval_baselines)
+    test_avg = avg_test_curve(results, features, baselines, test_baselines)
     avg_vals = []
-    for name, curve in train_avg.items():
+    for name, curve in test_avg.items():
         style = method_styles[name]
         ax_avg.plot(np.arange(11), curve, f"{style['marker']}-",
-                    label=f"{name} train", color=_lighten(style["color"]), alpha=0.7, markersize=5)
-        avg_vals.extend(curve)
-    for name, curve in eval_avg.items():
-        style = method_styles[name]
-        ax_avg.plot(np.arange(11), curve, f"{style['marker']}-",
-                    label=f"{name} eval", color=style["color"], alpha=0.9, markersize=5)
+                    label=_disp(name), color=style["color"], alpha=0.9, markersize=5)
         avg_vals.extend(curve)
     ax_avg.set_title("Average (all features)")
     ax_avg.set_xlabel("Iteration")
@@ -379,7 +393,7 @@ def print_ranking(title, results, features, value_fn, skip_incomplete=False):
 
 
 def plot_2x2(dataset_curves, ylabel, suptitle, out_name, y_range_fn,
-             dataset_curves_light=None):
+             dataset_feat_counts, dataset_curves_light=None):
     """Grid figure: one subplot per dataset + avg-of-avgs. Legend only on the avg.
 
     If dataset_curves_light is provided, those curves are drawn first in a
@@ -392,19 +406,23 @@ def plot_2x2(dataset_curves, ylabel, suptitle, out_name, y_range_fn,
     flat_axes = axes.flatten()
     for ax in flat_axes[n_plots:]:
         ax.set_visible(False)
+    top_right_ax = axes[0, -1]
 
-    common = set.intersection(*[set(c) for c in dataset_curves.values()])
-    avg_of_avgs = {
-        name: np.stack([dataset_curves[ds][name] for ds in DATASETS]).mean(axis=0)
-        for name in common
-    }
-    light_avg_of_avgs = {}
-    if dataset_curves_light is not None:
-        light_common = set.intersection(*[set(c) for c in dataset_curves_light.values()])
-        light_avg_of_avgs = {
-            name: np.stack([dataset_curves_light[ds][name] for ds in DATASETS]).mean(axis=0)
-            for name in light_common
+    def _micro_avg(curves_by_ds):
+        common = set.intersection(*[set(c) for c in curves_by_ds.values()])
+        weights = np.array([dataset_feat_counts[ds] for ds in DATASETS], dtype=float)
+        if weights.sum() == 0:
+            return {}
+        return {
+            name: np.average(
+                np.stack([curves_by_ds[ds][name] for ds in DATASETS]),
+                axis=0, weights=weights,
+            )
+            for name in common
         }
+
+    avg_of_avgs = _micro_avg(dataset_curves)
+    light_avg_of_avgs = _micro_avg(dataset_curves_light) if dataset_curves_light is not None else {}
     for ax, ds in zip(flat_axes[:len(DATASETS)], DATASETS):
         ax_vals = []
         if dataset_curves_light is not None:
@@ -416,7 +434,7 @@ def plot_2x2(dataset_curves, ylabel, suptitle, out_name, y_range_fn,
                 ax_vals.append(curve)
         for name, curve in dataset_curves[ds].items():
             style = method_styles[name]
-            label = f"{name} eval" if dataset_curves_light is not None else name
+            label = f"{_disp(name)} test" if dataset_curves_light is not None else _disp(name)
             ax.plot(np.arange(11), curve, f"{style['marker']}-",
                     label=label, color=style["color"], alpha=0.9, markersize=5)
             ax_vals.append(curve)
@@ -436,19 +454,22 @@ def plot_2x2(dataset_curves, ylabel, suptitle, out_name, y_range_fn,
                     label=f"{name} train", color=_lighten(style["color"]),
                     alpha=0.6, markersize=5)
             ax_vals.append(light_avg_of_avgs[name])
-    for name in sorted(common):
+    for name in sorted(avg_of_avgs):
         style = method_styles[name]
-        label = f"{name} eval" if dataset_curves_light is not None else name
+        label = f"{_disp(name)} eval" if dataset_curves_light is not None else _disp(name)
         ax.plot(np.arange(11), avg_of_avgs[name], f"{style['marker']}-",
                 label=label, color=style["color"], alpha=0.9, markersize=5)
         ax_vals.append(avg_of_avgs[name])
-    ax.set_title(f"Average of averages ({' + '.join(DATASETS)})")
+    ax.set_title(f"Micro-avg across features ({' + '.join(DATASETS)})")
     ax.set_xlabel("Iteration")
     ax.set_ylabel(ylabel)
     if ax_vals:
         ax.set_ylim(*y_range_fn(np.concatenate(ax_vals)))
-    ax.legend(fontsize=7, loc="lower right")
     ax.grid(True, alpha=0.3)
+
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        top_right_ax.legend(handles, labels, fontsize=7, loc="upper right")
 
     fig.suptitle(suptitle, fontsize=14)
     fig.tight_layout()
@@ -458,18 +479,25 @@ def plot_2x2(dataset_curves, ylabel, suptitle, out_name, y_range_fn,
     print(f"Saved {out_path}")
 
 
-def plot_combined(dataset_eval_curves, dataset_train_curves, tag):
+def plot_combined(dataset_test_curves, dataset_feat_counts, tag):
+    # Place all data in the middle 80% of the y axis: pad each side by
+    # range / 8 so that [lo, hi] maps to [10%, 90%] of the visible range.
+    def y_range(vals):
+        lo, hi = float(vals.min()), float(vals.max())
+        pad = (hi - lo) / 8.0 if hi > lo else 0.01
+        return (lo - pad, hi + pad)
+
     plot_2x2(
-        dataset_eval_curves,
+        dataset_test_curves,
         ylabel="Accuracy",
-        suptitle="Per-dataset average accuracy (train light, eval bold) and average-of-averages",
+        suptitle="Per-dataset average test accuracy and feature-weighted average",
         out_name=f"accuracy_comparison_{tag}_combined.png",
-        y_range_fn=lambda vals: (max(0.0, float(vals.min()) - 0.03), 1.0),
-        dataset_curves_light=dataset_train_curves,
+        y_range_fn=y_range,
+        dataset_feat_counts=dataset_feat_counts,
     )
 
 
-def plot_length_combined(dataset_length_curves, tag):
+def plot_length_combined(dataset_length_curves, dataset_feat_counts, tag):
     def y_range(vals):
         lo, hi = float(vals.min()), float(vals.max())
         pad = (hi - lo) * 0.05 or 1.0
@@ -477,10 +505,11 @@ def plot_length_combined(dataset_length_curves, tag):
 
     plot_2x2(
         dataset_length_curves,
-        ylabel="Prompt length (chars)",
-        suptitle="Per-dataset average prompt length and average-of-averages",
+        ylabel="Prompt length (words)",
+        suptitle="Per-dataset average prompt length and feature-weighted average",
         out_name=f"prompt_length_{tag}_combined.png",
         y_range_fn=y_range,
+        dataset_feat_counts=dataset_feat_counts,
     )
 
 
@@ -510,15 +539,15 @@ def main():
         for ds, r in raw_results.items()
     }
 
-    dataset_train_curves = {}
-    dataset_eval_curves = {}
+    dataset_test_curves = {}
     dataset_length_curves = {}
+    dataset_feat_counts = {}
     for ds, results in results_by_ds.items():
         if skip_incomplete and not results:
             warnings.warn(f"Skipping dataset {ds}: no results loaded.")
-            dataset_train_curves[ds] = {}
-            dataset_eval_curves[ds] = {}
+            dataset_test_curves[ds] = {}
             dataset_length_curves[ds] = {}
+            dataset_feat_counts[ds] = 0
             continue
 
         all_feats = set()
@@ -527,9 +556,9 @@ def main():
         features = sorted(all_feats - EXCLUDE_FEATURES)
 
         baselines = consensus_baselines(results, features, ds, key="train_accuracy")
-        eval_baselines = consensus_baselines(results, features, ds, key="val_accuracy")
+        test_baselines = consensus_baselines(results, features, ds, key="test_accuracy")
 
-        plot_per_dataset(ds, results, features, baselines, eval_baselines, tag)
+        plot_per_dataset(ds, results, features, baselines, test_baselines, tag)
         print_ranking(f"[{ds}] Best Val Accuracy Ranking", results, features,
                       lambda fd: _norm(_feat_best_val(fd)),
                       skip_incomplete=skip_incomplete)
@@ -554,17 +583,17 @@ def main():
             if lengths:
                 print(f"  {name:20s} {np.mean(lengths):>8.0f}")
 
-        dataset_train_curves[ds] = avg_curve(results, features, baselines)
-        dataset_eval_curves[ds] = avg_eval_curve(results, features, baselines, eval_baselines)
-        dataset_length_curves[ds] = avg_length_curve(results, features)
+        dataset_test_curves[ds] = avg_test_curve(results, features, baselines, test_baselines)
+        dataset_length_curves[ds] = avg_length_curve(results, features, baselines)
+        dataset_feat_counts[ds] = len(features)
 
-    if any(dataset_eval_curves.values()) or any(dataset_train_curves.values()):
-        plot_combined(dataset_eval_curves, dataset_train_curves, tag)
+    if any(dataset_test_curves.values()):
+        plot_combined(dataset_test_curves, dataset_feat_counts, tag)
     elif skip_incomplete:
         warnings.warn("No data available for combined accuracy plot; skipping.")
 
     if any(dataset_length_curves.values()):
-        plot_length_combined(dataset_length_curves, tag)
+        plot_length_combined(dataset_length_curves, dataset_feat_counts, tag)
     elif skip_incomplete:
         warnings.warn("No data available for combined length plot; skipping.")
 
