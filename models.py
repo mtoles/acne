@@ -9,6 +9,7 @@ from vllm import LLM, SamplingParams
 import os
 import random
 import threading
+import time
 from contextlib import contextmanager
 from urllib.parse import urlparse
 import yaml
@@ -16,7 +17,11 @@ from Levenshtein import distance
 from utils import OptionType
 from joblib import Memory
 
-_cache = Memory(".llm_cache", verbose=0)
+# Set LLM_CACHE=0 to disable the joblib cache (Memory(location=None) becomes a pass-through that
+# just calls the function directly -- useful for testing whether cache hashing/unpickling under the
+# GIL is the throughput bottleneck).
+_cache_location = None if os.environ.get("LLM_CACHE", "1") == "0" else ".llm_cache"
+_cache = Memory(_cache_location, verbose=0)
 
 COT_SUFFIX = "\n\n### Instructions:\n\nThink step by step, then answer the question."
 
@@ -58,6 +63,42 @@ def _make_openai_client(base_url, api_key):
         )
         _client_cache[key] = OpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
     return _client_cache[key]
+
+
+def _metrics_url(base_url):
+    """vLLM serves Prometheus metrics at /metrics (NOT under /v1). Turn an OpenAI base_url
+    like http://host:8000/v1 into http://host:8000/metrics."""
+    root = base_url.rstrip("/")
+    if root.endswith("/v1"):
+        root = root[: -len("/v1")]
+    return root + "/metrics"
+
+
+def _make_metrics_client(base_url):
+    """httpx client for polling a server's /metrics, mirroring the proxy logic in
+    _make_openai_client (remote endpoints go through VLLM_PROXY, local ones connect direct).
+    Short timeout -- a slow/unreachable poll should not stall routing."""
+    proxy = os.environ.get("VLLM_PROXY")
+    if proxy and _is_local_url(base_url):
+        proxy = None
+    key = ("metrics", base_url, proxy)
+    if key not in _client_cache:
+        _client_cache[key] = httpx.Client(proxy=proxy, timeout=httpx.Timeout(3.0))
+    return _client_cache[key]
+
+
+# Regex to pull the numeric value out of a vLLM gauge line, e.g.
+#   vllm:num_requests_running{engine="0",model_name="..."} 66.0
+_GAUGE_RE = re.compile(r"^vllm:(num_requests_running|num_requests_waiting)\b[^ ]* ([0-9.eE+-]+)", re.M)
+
+
+def _parse_outstanding(metrics_text):
+    """Sum running + waiting requests across all engines from a /metrics body. This is the
+    server's true outstanding-request count, aggregated over every client/process hitting it."""
+    total = 0.0
+    for _, val in _GAUGE_RE.findall(metrics_text):
+        total += float(val)
+    return total
 
 
 @_cache.cache
@@ -140,19 +181,62 @@ class MrModel:
         self.base_urls = [u.strip() for u in base_url.split(",") if u.strip()]
         self.clients = [_make_openai_client(u, api_key) for u in self.base_urls]
         self.client = self.clients[0]  # back-compat: default/first endpoint
-        # Outstanding-request count per endpoint, for least-loaded routing (see _route).
+        # Routing signal #1: each server's OWN outstanding-request count (running + waiting),
+        # polled from its /metrics in a background thread. This is the aggregate across every
+        # process hitting that server -- so it sees load the other run_both processes add,
+        # which this process's local in-flight count cannot. Starts at 0 (looks empty) until
+        # the first poll lands, so early picks fall back to local in-flight below.
+        self._server_load = [0.0] * len(self.base_urls)
+        # Routing signal #2: requests THIS process has dispatched but not yet gotten back.
+        # Corrects for poll staleness -- without it, a burst between polls all sees the same
+        # stale load and dogpiles one server. (see _route)
         self._inflight = [0] * len(self.base_urls)
         self._lb_lock = threading.Lock()
+        self._poll_interval = float(os.environ.get("VLLM_POLL_INTERVAL", "1.0"))
+        # Only worth polling when there's a choice to make.
+        if len(self.base_urls) > 1:
+            self._poll_clients = [_make_metrics_client(u) for u in self.base_urls]
+            t = threading.Thread(target=self._poll_loop, daemon=True)
+            t.start()
+
+    def _poll_loop(self):
+        """Background: refresh each server's outstanding-request count from its /metrics.
+        An unreachable/erroring server is parked at +inf so it is never picked until it
+        recovers (a down server would just fail the request anyway)."""
+        while True:
+            for j, url in enumerate(self.base_urls):
+                load = self._fetch_outstanding(j, url)
+                with self._lb_lock:
+                    self._server_load[j] = load
+            time.sleep(self._poll_interval)
+
+    def _fetch_outstanding(self, j, url):
+        # Narrow try/except (user-approved): ONLY for transient transport errors, so a brief
+        # network blip parks the server at +inf instead of killing the poller thread. A parse
+        # error or bad status is NOT caught -- that's a real problem and should surface.
+        try:
+            resp = self._poll_clients[j].get(_metrics_url(url))
+        except httpx.TransportError:
+            return float("inf")
+        if resp.status_code != 200:
+            return float("inf")
+        return _parse_outstanding(resp.text)
+
+    def _score(self, j):
+        """Routing cost for endpoint j: the server's own outstanding requests (running +
+        waiting, polled from /metrics -- aggregated across ALL processes) plus this process's
+        in-flight requests not yet reflected in a poll. Lower = send here. Because a powerful
+        server (e.g. coffee) drains its queue fast, its outstanding count stays low and it keeps
+        getting work; a weak server backs up and is skipped. random.random() breaks ties."""
+        return (self._server_load[j] + self._inflight[j], random.random())
 
     @contextmanager
     def _route(self):
-        """Route a request to the endpoint with the FEWEST in-flight requests (random
-        tiebreak), holding a slot for the duration of the call. Unlike uniform-random
-        routing, this adapts to per-server speed: a slow/overloaded server accumulates
-        in-flight requests and stops being picked, so fast servers (e.g. coffee) keep
-        getting work instead of sitting idle while workers pile up on a slow one."""
+        """Route to the endpoint with the lowest _score (least outstanding work), holding a
+        slot for the duration of the call so a burst within one poll interval spreads out
+        instead of dogpiling whichever server last looked empty."""
         with self._lb_lock:
-            i = min(range(len(self.clients)), key=lambda j: (self._inflight[j], random.random()))
+            i = min(range(len(self.clients)), key=self._score)
             self._inflight[i] += 1
         try:
             yield self.base_urls[i], self.clients[i]
@@ -161,8 +245,9 @@ class MrModel:
                 self._inflight[i] -= 1
 
     def _pick(self):
-        """Back-compat single-shot endpoint pick (no in-flight tracking). Prefer _route."""
-        i = min(range(len(self.clients)), key=lambda j: (self._inflight[j], random.random()))
+        """Back-compat single-shot endpoint pick (no slot held). Prefer _route."""
+        with self._lb_lock:
+            i = min(range(len(self.clients)), key=self._score)
         return self.base_urls[i], self.clients[i]
 
     @classmethod

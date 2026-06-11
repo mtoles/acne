@@ -1192,6 +1192,14 @@ parser.add_argument(
     help="When recycling, drop LLM-generated smoking/alcohol rows (smoking_status, smoking_amount, "
          "alcohol_status, alcohol_amount with keyword != STRUCTURED_DATA). Structured-data rows are kept.",
 )
+parser.add_argument(
+    "--seed",
+    type=int,
+    default=42,
+    help="Seed for the EMPI shuffle. When running several processes in parallel (see run_both.sh), "
+         "give each a distinct seed so they traverse patients in different random orders and "
+         "self-partition via the skip-if-already-processed check (instead of all racing the same EMPIs).",
+)
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
 _drop_llm_smoking_alc = args.drop_llm_smoking_alc
@@ -1215,13 +1223,15 @@ if args.limit is not None:
     pt_ids = pt_ids[: args.limit]
 
 pt_ids = args.target_empis + pt_ids
-random.shuffle(pt_ids)
+# Per-process seed so parallel processes shuffle into different orders (own RNG, doesn't disturb global).
+random.Random(args.seed).shuffle(pt_ids)
 
 print(f"Processing {len(matched_case_empis)} matched cases + {len(matched_control_empis)} matched controls = {len(pt_ids)} patients")
 
 # Create output directory with timestamp
 timestamp_str = start_time.strftime("%Y%m%d_%H%M%S")
-output_dir = Path(f"full_inference_out/{timestamp_str}")
+# Include seed so parallel processes (same start second) get distinct output dirs / logs.
+output_dir = Path(f"full_inference_out/{timestamp_str}_seed{args.seed}")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # Create records directory for per-EMPI JSONL files
