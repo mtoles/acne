@@ -510,7 +510,7 @@ CLIP_LABEL_TO_LETTER = {
 # G ("Other") is treated as unlabeled (allowed in context). H ("Multiple"-label
 # sentences) and I ("None"-label sentences) are excluded from the targets.
 CLIP_OPTIONS = ["A", "B", "C", "D", "E", "F"]
-CLIP_BASELINE_PROMPT = """Which of the following action type best describes the marked sentence (between >>> and <<<)?
+CLIP_BASELINE_PROMPT = """Which of the following actions occurs in the passage?
 
 A. Patient Instructions
 
@@ -582,6 +582,29 @@ def _split_by_key(df, key_col, train_split, random_state):
     return df[df[key_col].isin(train_keys)].copy(), df[~df[key_col].isin(train_keys)].copy()
 
 
+def _split_by_key_three_way(df, key_col, fractions, random_state):
+    """Partition df into (train_df, val_df, test_df) by shuffling unique values of key_col.
+
+    fractions: (train_frac, val_frac, test_frac); must sum to 1.0.
+    """
+    import numpy as np
+    train_frac, val_frac, _ = fractions
+    keys = df[key_col].unique().copy()
+    rng = np.random.RandomState(random_state)
+    rng.shuffle(keys)
+    n = len(keys)
+    cut_train = int(n * train_frac)
+    cut_val = int(n * (train_frac + val_frac))
+    train_keys = set(keys[:cut_train])
+    val_keys = set(keys[cut_train:cut_val])
+    test_keys = set(keys[cut_val:])
+    return (
+        df[df[key_col].isin(train_keys)].copy(),
+        df[df[key_col].isin(val_keys)].copy(),
+        df[df[key_col].isin(test_keys)].copy(),
+    )
+
+
 def _normalize_binary_rows(df, feature, text_col):
     """Extract one feature's rows as context/label/category columns."""
     out = df[[text_col, feature]].copy()
@@ -592,41 +615,62 @@ def _normalize_binary_rows(df, feature, text_col):
     return out
 
 
-def _build_binary_splits(train_df, eval_df, feature_names, text_col, downsample, random_state):
-    """Build per-feature {train, eval} splits from pre-partitioned DataFrames.
+def _build_binary_splits(train_df, val_df, test_df, feature_names, text_col, downsample, random_state):
+    """Build per-feature {train, val, test, test_full} splits from pre-partitioned DataFrames.
 
-    train_df and eval_df must share text_col and a binary column per feature in feature_names.
-    Output rows have columns: context, label, category.
+    All three input DataFrames must share text_col and a binary column per feature.
+    Output rows have columns: context, label, category. train/val/test are
+    downsampled per the --downsample flag (test downsampling caps per-iter eval
+    cost). test_full is always the un-downsampled test pool, used for the final
+    test accuracy report.
     """
     datasets = {}
     for feat in feature_names:
         feat_train = _normalize_binary_rows(train_df, feat, text_col)
-        feat_eval = _normalize_binary_rows(eval_df, feat, text_col)
+        feat_val = _normalize_binary_rows(val_df, feat, text_col)
+        feat_test_full = _normalize_binary_rows(test_df, feat, text_col).reset_index(drop=True)
+        feat_test = feat_test_full
         if downsample:
             feat_train = feat_train.sample(n=min(downsample, len(feat_train)), random_state=random_state)
-        datasets[feat] = {"train": feat_train.reset_index(drop=True), "eval": feat_eval.reset_index(drop=True)}
+            feat_val = feat_val.sample(n=min(downsample, len(feat_val)), random_state=random_state)
+            feat_test = feat_test_full.sample(n=min(downsample, len(feat_test_full)), random_state=random_state)
+        datasets[feat] = {
+            "train": feat_train.reset_index(drop=True),
+            "val": feat_val.reset_index(drop=True),
+            "test": feat_test.reset_index(drop=True),
+            "test_full": feat_test_full,
+        }
     return datasets
 
 
-def load_odd_dataset(train_split=0.5, downsample=None, random_state=42):
-    """Load the ODD MIMIC dataset, split by note_id, return {category: {train: df, eval: df}}."""
+def load_odd_dataset(downsample=None, random_state=42):
+    """Load ODD MIMIC, split by note_id 1/3 train, 1/3 val, 1/3 test.
+
+    Returns {category: {"train": df, "val": df, "test": df}}. All splits are
+    downsampled per --downsample.
+    """
     csv_path = "auto_prompt/datasets/odd-a-benchmark-dataset-for-the-nlp-based-opioid-related-aberrant-behavior-detection-1.0.0/ORAB_Annotation_MIMIC.csv"
     df = pd.read_csv(csv_path).rename(columns=ODD_COL_RENAME)
-    train_df, eval_df = _split_by_key(df, "note_id", train_split, random_state)
+    train_df, val_df, test_df = _split_by_key_three_way(
+        df, "note_id", (1/3, 1/3, 1/3), random_state,
+    )
     return _build_binary_splits(
-        train_df, eval_df, list(ODD_CATEGORIES.keys()), text_col="context",
+        train_df, val_df, test_df, list(ODD_CATEGORIES.keys()), text_col="context",
         downsample=downsample, random_state=random_state,
     )
 
 
 def load_sdoh_dataset(downsample=None, random_state=42):
-    """Load SDoH (pregnancy) with MIMIC-IV as train and MIMIC-III as eval/test."""
+    """Load SDoH (pregnancy): MIMIC-IV split 50/50 by subject_id into train+val,
+    MIMIC-III used in full as test (preserves OOD test design).
+    """
     base = "auto_prompt/datasets/annotated-social-determinants-of-health-dataset-for-adverse-pregnancy-outcomes-1.0.0"
-    train_df = pd.read_csv(f"{base}/MIMICIV_annotations_PregnancySDoH.csv", encoding="latin-1")
-    eval_df = pd.read_csv(f"{base}/MIMICIII_annotations_PregnancySDoH.csv", encoding="latin-1")
-    eval_df = eval_df.rename(columns={"SUBJECT_ID": "subject_id", "TEXT": "text"})
+    miv_df = pd.read_csv(f"{base}/MIMICIV_annotations_PregnancySDoH.csv", encoding="latin-1")
+    miii_df = pd.read_csv(f"{base}/MIMICIII_annotations_PregnancySDoH.csv", encoding="latin-1")
+    miii_df = miii_df.rename(columns={"SUBJECT_ID": "subject_id", "TEXT": "text"})
+    train_df, val_df = _split_by_key(miv_df, "subject_id", train_split=0.5, random_state=random_state)
     return _build_binary_splits(
-        train_df, eval_df, list(SDOH_PROMPTS.keys()), text_col="text",
+        train_df, val_df, miii_df, list(SDOH_PROMPTS.keys()), text_col="text",
         downsample=downsample, random_state=random_state,
     )
 
@@ -643,8 +687,9 @@ def load_clip_dataset(downsample=None, random_state=42):
     sentences in the same document, including any sentence that is not itself
     a single A-F or multi-label sentence (so unlabeled or G-only sentences are
     absorbed). Walking stops at the document boundary or at the next labeled
-    sentence (single A-F or multi-label H). The target sentence is wrapped in
-    `>>>...<<<` so the model knows which one to classify.
+    sentence (single A-F or multi-label H). The expansion guarantees that the
+    *only* action-bearing sentence inside `context` is the target itself, so
+    "which action occurs in the passage?" has a single correct answer.
     """
     import ast as _ast
     base = "auto_prompt/datasets/clip-a-dataset-for-extracting-action-items-for-physicians-from-hospital-discharge-notes-1.0.0"
@@ -676,8 +721,9 @@ def load_clip_dataset(downsample=None, random_state=42):
     df["is_boundary"] = [c[1] for c in classification]
 
     df["split"] = None
-    df.loc[df["doc_id"].isin(train_ids | val_ids), "split"] = "train"
-    df.loc[df["doc_id"].isin(test_ids), "split"] = "eval"
+    df.loc[df["doc_id"].isin(train_ids), "split"] = "train"
+    df.loc[df["doc_id"].isin(val_ids), "split"] = "val"
+    df.loc[df["doc_id"].isin(test_ids), "split"] = "test"
     df = df.dropna(subset=["split"]).reset_index(drop=True)
 
     rows = []
@@ -699,7 +745,7 @@ def load_clip_dataset(downsample=None, random_state=42):
             hi = i
             while hi + 1 < n and not boundary[hi + 1]:
                 hi += 1
-            parts = list(texts[lo:i]) + [f">>>{texts[i]}<<<"] + list(texts[i + 1:hi + 1])
+            parts = list(texts[lo:hi + 1])
             rows.append({
                 "context": " ".join(parts),
                 "answer": targets[i],
@@ -709,12 +755,19 @@ def load_clip_dataset(downsample=None, random_state=42):
 
     out_df = pd.DataFrame(rows)
     out = {}
+    test_full = None
     for split, sub in out_df.groupby("split"):
+        sub_full = sub[["context", "answer", "category"]].reset_index(drop=True)
+        if split == "test":
+            test_full = sub_full
         if downsample and len(sub) > downsample:
             sub = sub.sample(n=downsample, random_state=random_state).reset_index(drop=True)
         out[split] = sub[["context", "answer", "category"]].reset_index(drop=True)
 
-    return {"action_type": {"train": out["train"], "eval": out["eval"]}}
+    return {"action_type": {
+        "train": out["train"], "val": out["val"],
+        "test": out["test"], "test_full": test_full,
+    }}
 
 
 def make_odd_baseline_prompt(category):
@@ -728,42 +781,67 @@ def make_odd_baseline_prompt(category):
     )
 
 
-def _run_optimization_loop(feature_name, train_df, eval_df, baseline_prompt, optimizer, iterations, n_workers, eval_fn):
-    """Generic optimization loop. eval_fn(df, prompt_text, desc) -> metrics_dict."""
+def _run_optimization_loop(feature_name, train_df, val_df, test_df, baseline_prompt,
+                           optimizer, iterations, n_workers, eval_fn, test_full_df=None):
+    """Generic optimization loop with val-gated acceptance.
+
+    Each iteration:
+      1. Score current prompt on train (records used for rule generation) and val.
+      2. Optimizer proposes a candidate from the train errors.
+      3. Score the candidate on train and val.
+      4. Accept iff candidate val_acc > current val_acc.
+    The best prompt across iterations is the one with the highest val_acc seen.
+    After all iterations a single test pass with that best prompt is recorded.
+
+    test_df is used for per-iter test tracking (cheap, plotting-only). test_full_df
+    is used for the final test accuracy report; if None, falls back to test_df.
+    """
+    if test_full_df is None:
+        test_full_df = test_df
     print(f"\nProcessing: {feature_name}")
-    print(f"Train: {len(train_df)}, Eval: {len(eval_df)}")
+    print(f"Train: {len(train_df)}, Val: {len(val_df)}, Test (per-iter): {len(test_df)}, Test (final): {len(test_full_df)}")
 
     current_prompt = baseline_prompt
     best_prompt = current_prompt
-    best_train_accuracy = 0.0
+    best_val_accuracy = -1.0  # any real run will beat this on the first scoring
     train_accuracy_history = []
+    val_accuracy_history = []
+    test_accuracy_history = []
     prompt_history = []
     all_records = []
     cached_train_metrics = None
-    cached_eval_metrics = None
+    cached_val_metrics = None
+    cached_test_metrics = None
 
     for iteration in range(iterations):
-        print(f"\n--- Iteration {iteration} (train) ---")
+        print(f"\n--- Iteration {iteration} ---")
         print(f"Prompt ({len(current_prompt)} chars): {current_prompt[:120]}...")
 
         if cached_train_metrics is not None:
             train_metrics = cached_train_metrics
-            eval_metrics_iter = cached_eval_metrics
+            val_metrics_iter = cached_val_metrics
+            test_metrics_iter = cached_test_metrics
             cached_train_metrics = None
-            cached_eval_metrics = None
-            print(f"  (reusing previous eval)")
+            cached_val_metrics = None
+            cached_test_metrics = None
+            print(f"  (reusing previous train+val+test scoring)")
         else:
             train_metrics = eval_fn(train_df, current_prompt, desc=f"Train iter {iteration}")
-            eval_metrics_iter = eval_fn(eval_df, current_prompt, desc=f"Eval iter {iteration}")
+            val_metrics_iter = eval_fn(val_df, current_prompt, desc=f"Val iter {iteration}")
+            test_metrics_iter = eval_fn(test_df, current_prompt, desc=f"Test iter {iteration} (plotting only)")
 
         train_accuracy = train_metrics["combined"]
-        eval_accuracy = eval_metrics_iter["combined"]
+        val_accuracy = val_metrics_iter["combined"]
+        test_accuracy = test_metrics_iter["combined"]
         train_accuracy_history.append(train_accuracy)
+        val_accuracy_history.append(val_accuracy)
+        test_accuracy_history.append(test_accuracy)
         prompt_history.append({
             "iteration": iteration,
             "prompt": current_prompt,
             "train_accuracy": train_accuracy,
-            "eval_accuracy": eval_accuracy,
+            "val_accuracy": val_accuracy,
+            "test_accuracy": test_accuracy,
         })
 
         for rec in train_metrics["records"]:
@@ -773,8 +851,8 @@ def _run_optimization_loop(feature_name, train_df, eval_df, baseline_prompt, opt
             rec["prompt"] = current_prompt
         all_records.extend(train_metrics["records"])
 
-        if train_accuracy > best_train_accuracy:
-            best_train_accuracy = train_accuracy
+        if val_accuracy > best_val_accuracy:
+            best_val_accuracy = val_accuracy
             best_prompt = current_prompt
 
         if not train_metrics["errors"]:
@@ -786,48 +864,56 @@ def _run_optimization_loop(feature_name, train_df, eval_df, baseline_prompt, opt
         prompt_history[-1]["candidate_prompt"] = candidate_prompt
         prompt_history[-1]["candidate_raw_response"] = optimizer_result["raw_response"]
 
-        candidate_metrics = eval_fn(train_df, candidate_prompt, desc=f"Candidate iter {iteration}")
-        candidate_eval_metrics = eval_fn(eval_df, candidate_prompt, desc=f"Candidate eval iter {iteration}")
-        candidate_accuracy = candidate_metrics["combined"]
-        candidate_eval_accuracy = candidate_eval_metrics["combined"]
-        accuracy_delta = candidate_accuracy - train_accuracy
-        accepted = bool(candidate_accuracy > train_accuracy)
-        prompt_history[-1]["candidate_accuracy"] = candidate_accuracy
-        prompt_history[-1]["candidate_eval_accuracy"] = candidate_eval_accuracy
+        candidate_train_metrics = eval_fn(train_df, candidate_prompt, desc=f"Candidate train iter {iteration}")
+        candidate_val_metrics = eval_fn(val_df, candidate_prompt, desc=f"Candidate val iter {iteration}")
+        candidate_test_metrics = eval_fn(test_df, candidate_prompt, desc=f"Candidate test iter {iteration} (plotting only)")
+        candidate_train_accuracy = candidate_train_metrics["combined"]
+        candidate_val_accuracy = candidate_val_metrics["combined"]
+        candidate_test_accuracy = candidate_test_metrics["combined"]
+        val_delta = candidate_val_accuracy - val_accuracy
+        accepted = bool(candidate_val_accuracy > val_accuracy)
+        prompt_history[-1]["candidate_train_accuracy"] = candidate_train_accuracy
+        prompt_history[-1]["candidate_val_accuracy"] = candidate_val_accuracy
+        prompt_history[-1]["candidate_test_accuracy"] = candidate_test_accuracy
         prompt_history[-1]["accepted"] = accepted
 
         rule = optimizer_result.get("rule", candidate_prompt)
-        optimizer.feedback(rule, accepted, accuracy_delta)
+        optimizer.feedback(rule, accepted, val_delta)
 
         if accepted:
-            print(f"  ACCEPTED candidate (train {train_accuracy:.3f} -> {candidate_accuracy:.3f} {accuracy_delta:+.3f}, eval {eval_accuracy:.3f} -> {candidate_eval_accuracy:.3f})")
+            print(f"  ACCEPTED candidate (val {val_accuracy:.3f} -> {candidate_val_accuracy:.3f} {val_delta:+.3f}, train {train_accuracy:.3f} -> {candidate_train_accuracy:.3f}, test {test_accuracy:.3f} -> {candidate_test_accuracy:.3f})")
             current_prompt = candidate_prompt
-            cached_train_metrics = candidate_metrics
-            cached_eval_metrics = candidate_eval_metrics
+            cached_train_metrics = candidate_train_metrics
+            cached_val_metrics = candidate_val_metrics
+            cached_test_metrics = candidate_test_metrics
         else:
-            print(f"  REJECTED candidate (train {train_accuracy:.3f} -> {candidate_accuracy:.3f} {accuracy_delta:+.3f}, eval {eval_accuracy:.3f} -> {candidate_eval_accuracy:.3f})")
+            print(f"  REJECTED candidate (val {val_accuracy:.3f} -> {candidate_val_accuracy:.3f} {val_delta:+.3f}, train {train_accuracy:.3f} -> {candidate_train_accuracy:.3f}, test {test_accuracy:.3f} -> {candidate_test_accuracy:.3f})")
             cached_train_metrics = train_metrics
-            cached_eval_metrics = eval_metrics_iter
+            cached_val_metrics = val_metrics_iter
+            cached_test_metrics = test_metrics_iter
 
-    # Final eval
-    print(f"\n--- Final eval with best prompt (train acc={best_train_accuracy:.3f}) ---")
-    eval_metrics = eval_fn(eval_df, best_prompt, desc="Eval (best prompt)")
+    # Final test pass with best prompt (selected by val_acc), on the full test set.
+    print(f"\n--- Test with best prompt (val acc={best_val_accuracy:.3f}) on full test set ({len(test_full_df)}) ---")
+    test_metrics = eval_fn(test_full_df, best_prompt, desc="Test (best prompt, full)")
 
-    for rec in eval_metrics["records"]:
+    for rec in test_metrics["records"]:
         rec["feature"] = feature_name
-        rec["split"] = "eval"
+        rec["split"] = "test"
         rec["iteration"] = len(train_accuracy_history) - 1
         rec["prompt"] = best_prompt
-    all_records.extend(eval_metrics["records"])
+    all_records.extend(test_metrics["records"])
 
     return {
         "feature_name": feature_name,
         "baseline_prompt": baseline_prompt,
         "train_chunks": len(train_df),
-        "eval_chunks": len(eval_df),
+        "val_chunks": len(val_df),
+        "test_chunks": len(test_full_df),
         "train_accuracy_history": train_accuracy_history,
-        "best_train_accuracy": best_train_accuracy,
-        "eval_metrics": eval_metrics,
+        "val_accuracy_history": val_accuracy_history,
+        "test_accuracy_history": test_accuracy_history,
+        "best_val_accuracy": best_val_accuracy,
+        "test_metrics": test_metrics,
         "best_prompt": best_prompt,
         "prompt_history": prompt_history,
         "records": all_records,
@@ -835,7 +921,13 @@ def _run_optimization_loop(feature_name, train_df, eval_df, baseline_prompt, opt
 
 
 def _load_acne_feature_data(feature_name, data_source, downsample):
-    """Load and split ACNE feature data. Returns (train_df, eval_df, target_cls)."""
+    """Load and 3-way split ACNE feature data.
+
+    Returns (train_df, val_df, test_df, test_full_df, target_cls). The split is
+    1/3 train, 1/3 val, 1/3 test of the per-feature corpus. train/val/test are
+    downsampled per --downsample (test downsampling caps per-iter eval cost).
+    test_full is always the un-downsampled test pool for the final report.
+    """
     target_cls = PtFeaturesMeta.registry[feature_name]
     feature_metadata = {}
     if getattr(target_cls, "data_source_feature", None) or getattr(target_cls, "gt_column", "val_unified") != "val_unified":
@@ -844,11 +936,14 @@ def _load_acne_feature_data(feature_name, data_source, downsample):
             "gt_column": getattr(target_cls, "gt_column", "val_unified"),
         }
 
+    # NOTE: utils.get_dataset's `train_split` argument actually controls the
+    # *eval* fraction (eval_size = int(total * train_split)). To get 2/3 in the
+    # train pool and 1/3 in eval (which we'll use as test), we pass 1/3.
     datasets = get_dataset(
         data_source=data_source or "mgb",
         feature_names=[feature_name],
-        train_split=0.5,
-        downsample=downsample,
+        train_split=1/3,
+        downsample=None,
         random_state=42,
         feature_metadata=feature_metadata,
     )
@@ -856,11 +951,29 @@ def _load_acne_feature_data(feature_name, data_source, downsample):
     if feature_name not in datasets:
         raise ValueError(f"Dataset not found for feature: {feature_name}")
 
-    train_df = datasets[feature_name]["train"].copy()
-    eval_df = datasets[feature_name]["eval"].copy()
+    train_pool = datasets[feature_name]["train"].copy()
+    test_df = datasets[feature_name]["eval"].copy()
+
+    # Carve val from train_pool: shuffle and split 50/50.
+    train_pool = train_pool.sample(frac=1.0, random_state=42).reset_index(drop=True)
+    half = len(train_pool) // 2
+    val_df = train_pool.iloc[:half].copy()
+    train_df = train_pool.iloc[half:].copy()
+
+    test_full_df = test_df.copy()
+    if downsample:
+        if len(train_df) > downsample:
+            train_df = train_df.sample(n=downsample, random_state=42).reset_index(drop=True)
+        if len(val_df) > downsample:
+            val_df = val_df.sample(n=downsample, random_state=42).reset_index(drop=True)
+        if len(test_df) > downsample:
+            test_df = test_df.sample(n=downsample, random_state=42).reset_index(drop=True)
+
     train_df = train_df[train_df["val_unified"] != "DROP"]
-    eval_df = eval_df[eval_df["val_unified"] != "DROP"]
-    return train_df, eval_df, target_cls
+    val_df = val_df[val_df["val_unified"] != "DROP"]
+    test_df = test_df[test_df["val_unified"] != "DROP"]
+    test_full_df = test_full_df[test_full_df["val_unified"] != "DROP"]
+    return train_df, val_df, test_df, test_full_df, target_cls
 
 
 def _make_acne_eval_fn(feature_name, target_cls, inference_type, n_workers):
@@ -878,15 +991,21 @@ def _make_acne_eval_fn(feature_name, target_cls, inference_type, n_workers):
 def process_file(file_path, inference_type, downsample=None, data_source=None,
                  baseline_prompts=None, feature_name_override=None, optimizer=None, iterations=3, n_workers=50, note="default"):
     feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
-    train_df, eval_df, target_cls = _load_acne_feature_data(feature_name, data_source, downsample)
+    train_df, val_df, test_df, test_full_df, target_cls = _load_acne_feature_data(feature_name, data_source, downsample)
 
-    print(f"Train: {len(train_df)} ({len(train_df[train_df['is_synthetic'] == False])} natural, {len(train_df[train_df['is_synthetic'] == True])} synthetic)")
-    print(f"Eval: {len(eval_df)} ({len(eval_df[eval_df['is_synthetic'] == False])} natural, {len(eval_df[eval_df['is_synthetic'] == True])} synthetic)")
+    def _split_summary(df, name):
+        nat = len(df[df['is_synthetic'] == False])
+        syn = len(df[df['is_synthetic'] == True])
+        print(f"{name}: {len(df)} ({nat} natural, {syn} synthetic)")
+    _split_summary(train_df, "Train")
+    _split_summary(val_df, "Val")
+    _split_summary(test_df, "Test (per-iter)")
+    _split_summary(test_full_df, "Test (final)")
 
     eval_fn = _make_acne_eval_fn(feature_name, target_cls, inference_type, n_workers)
     return _run_optimization_loop(
-        feature_name, train_df, eval_df, baseline_prompts[feature_name],
-        optimizer, iterations, n_workers, eval_fn,
+        feature_name, train_df, val_df, test_df, baseline_prompts[feature_name],
+        optimizer, iterations, n_workers, eval_fn, test_full_df=test_full_df,
     )
 
 
@@ -895,12 +1014,13 @@ def process_file_dspy(file_path, data_source, downsample, baseline_prompts,
     """Run DSPy MIPROv2 optimization for a single ACNE feature."""
     from dspy_optimizer import run_dspy_optimization
     feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
-    train_df, eval_df, target_cls = _load_acne_feature_data(feature_name, data_source, downsample)
+    train_df, val_df, test_df, test_full_df, target_cls = _load_acne_feature_data(feature_name, data_source, downsample)
 
     eval_fn = _make_acne_eval_fn(feature_name, target_cls, "cot", n_workers)
     return run_dspy_optimization(
-        feature_name, train_df, eval_df, baseline_prompts[feature_name],
+        feature_name, train_df, val_df, test_df, baseline_prompts[feature_name],
         iterations, n_workers, eval_fn, model_id,
+        test_full_df=test_full_df,
     )
 
 
@@ -949,10 +1069,12 @@ def main():
                 feat: {
                     "baseline_prompt": r["baseline_prompt"],
                     "train_accuracy_history": r["train_accuracy_history"],
-                    "best_train_accuracy": r["best_train_accuracy"],
-                    "eval_combined": r["eval_metrics"]["combined"],
-                    "eval_natural": r["eval_metrics"].get("natural", 0),
-                    "eval_synthetic": r["eval_metrics"].get("synthetic", 0),
+                    "val_accuracy_history": r["val_accuracy_history"],
+                    "test_accuracy_history": r.get("test_accuracy_history", []),
+                    "best_val_accuracy": r["best_val_accuracy"],
+                    "test_combined": r["test_metrics"]["combined"],
+                    "test_natural": r["test_metrics"].get("natural", 0),
+                    "test_synthetic": r["test_metrics"].get("synthetic", 0),
                     "best_prompt": r["best_prompt"],
                     "prompt_history": r["prompt_history"],
                 }
@@ -963,8 +1085,9 @@ def main():
             json.dump(serializable, f, indent=2)
 
         train_hist = " -> ".join(f"{a:.3f}" for a in results["train_accuracy_history"])
-        eval_acc = results["eval_metrics"]["combined"]
-        line = f"  >> {feature_name}: train=[{train_hist}] eval={eval_acc:.3f}"
+        val_hist = " -> ".join(f"{a:.3f}" for a in results["val_accuracy_history"])
+        test_acc = results["test_metrics"]["combined"]
+        line = f"  >> {feature_name}: train=[{train_hist}] val=[{val_hist}] test={test_acc:.3f}"
         print(line)
         print(f"  >> Saved to: {results_path}")
 
@@ -1006,8 +1129,9 @@ def main():
 
         for feature, results in all_results.items():
             train_hist = " -> ".join(f"{a:.3f}" for a in results["train_accuracy_history"])
-            eval_acc = results["eval_metrics"]["combined"]
-            line = f"{feature}: train=[{train_hist}] eval={eval_acc:.3f}"
+            val_hist = " -> ".join(f"{a:.3f}" for a in results["val_accuracy_history"])
+            test_acc = results["test_metrics"]["combined"]
+            line = f"{feature}: train=[{train_hist}] val=[{val_hist}] test={test_acc:.3f}"
             print(line)
             f.write(line + "\n")
 
@@ -1032,7 +1156,7 @@ def _run_multichoice_dataset(args, optimizer, is_dspy, target_features, all_resu
                              datasets, baseline_prompts, options):
     """Run optimization on an n-way multiple-choice dataset (e.g. CLIP).
 
-    datasets: {feature: {"train": df, "eval": df}} — rows have context + answer (letter).
+    datasets: {feature: {"train": df, "val": df, "test": df}} — rows have context + answer (letter).
     options: list of single-letter answer tokens, e.g. ["A","B",...,"I"].
     """
     features = target_features or list(datasets.keys())
@@ -1047,22 +1171,26 @@ def _run_multichoice_dataset(args, optimizer, is_dspy, target_features, all_resu
         print(f"{'='*80}")
 
         train_df = datasets[feature]["train"]
-        eval_df = datasets[feature]["eval"]
+        val_df = datasets[feature]["val"]
+        test_df = datasets[feature]["test"]
+        test_full_df = datasets[feature].get("test_full", test_df)
         baseline_prompt = baseline_prompts[feature]
         eval_fn = _make_multichoice_eval_fn(args.n_workers, options)
 
         if is_dspy:
             from dspy_optimizer import run_dspy_optimization, _multichoice_df_to_acne_columns
             results = run_dspy_optimization(
-                feature, train_df, eval_df, baseline_prompt,
+                feature, train_df, val_df, test_df, baseline_prompt,
                 args.iterations, args.n_workers, eval_fn, model_id,
+                test_full_df=test_full_df,
                 dspy_train_df=_multichoice_df_to_acne_columns(train_df),
-                dspy_eval_df=_multichoice_df_to_acne_columns(eval_df),
+                dspy_val_df=_multichoice_df_to_acne_columns(val_df),
+                dspy_test_df=_multichoice_df_to_acne_columns(test_df),
             )
         else:
             results = _run_optimization_loop(
-                feature, train_df, eval_df, baseline_prompt, optimizer,
-                args.iterations, args.n_workers, eval_fn,
+                feature, train_df, val_df, test_df, baseline_prompt, optimizer,
+                args.iterations, args.n_workers, eval_fn, test_full_df=test_full_df,
             )
         if results:
             all_results[feature] = results
@@ -1073,7 +1201,7 @@ def _run_binary_dataset(args, optimizer, is_dspy, target_features, all_results, 
                         datasets, baseline_prompts):
     """Run optimization on a binary-classification dataset (ODD or SDoH).
 
-    datasets: {feature: {"train": df, "eval": df}} — rows have context + label (0/1).
+    datasets: {feature: {"train": df, "val": df, "test": df}} — rows have context + label (0/1).
     baseline_prompts: {feature: str}. Prompts must elicit Yes/No answers.
     """
     features = target_features or list(datasets.keys())
@@ -1088,22 +1216,26 @@ def _run_binary_dataset(args, optimizer, is_dspy, target_features, all_results, 
         print(f"{'='*80}")
 
         train_df = datasets[feature]["train"]
-        eval_df = datasets[feature]["eval"]
+        val_df = datasets[feature]["val"]
+        test_df = datasets[feature]["test"]
+        test_full_df = datasets[feature].get("test_full", test_df)
         baseline_prompt = baseline_prompts[feature]
         eval_fn = _make_binary_eval_fn(args.n_workers)
 
         if is_dspy:
             from dspy_optimizer import run_dspy_optimization, _binary_df_to_acne_columns
             results = run_dspy_optimization(
-                feature, train_df, eval_df, baseline_prompt,
+                feature, train_df, val_df, test_df, baseline_prompt,
                 args.iterations, args.n_workers, eval_fn, model_id,
+                test_full_df=test_full_df,
                 dspy_train_df=_binary_df_to_acne_columns(train_df),
-                dspy_eval_df=_binary_df_to_acne_columns(eval_df),
+                dspy_val_df=_binary_df_to_acne_columns(val_df),
+                dspy_test_df=_binary_df_to_acne_columns(test_df),
             )
         else:
             results = _run_optimization_loop(
-                feature, train_df, eval_df, baseline_prompt, optimizer,
-                args.iterations, args.n_workers, eval_fn,
+                feature, train_df, val_df, test_df, baseline_prompt, optimizer,
+                args.iterations, args.n_workers, eval_fn, test_full_df=test_full_df,
             )
         if results:
             all_results[feature] = results
