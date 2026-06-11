@@ -48,6 +48,25 @@ def has_keyword(text, keywords):
     
     return list(set(found_keywords))  # Remove duplicates and return as list
 
+
+def has_substring(text, substrings):
+    """
+    Check which substrings appear in the text via case-insensitive substring match.
+
+    Unlike has_keyword (which uses \\b word boundaries), this matches partial words,
+    e.g. "doxy" matches "doxycycline".
+
+    Args:
+        text (str): The text to search in
+        substrings (list): List of substrings to search for
+
+    Returns:
+        list: List of substrings found in the text (empty list if none found)
+    """
+    text_lower = text.lower()
+    return list({s for s in substrings if s.lower() in text_lower})
+
+
 class OptionType(enum.Enum):
     DATE = "date"
     CHOICES = "choices"

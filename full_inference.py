@@ -47,6 +47,18 @@ def _icd_to_cancer_label(icd_code):
 random.seed(42)
 
 db = create_engine(db_url, pool_size=100, max_overflow=200, pool_timeout=300)
+
+# Free-text note tables scanned for antibiotic-duration extraction, with their
+# (date column, text column). hnp/prg/dis share vis's Report_Date_Time/Report_Text;
+# lno (letters) uses LMRNote_Date/Comments. Columns are aliased to Report_Date_Time/
+# Report_Text at query time so all rows share one schema.
+EXTRA_NOTE_TABLES = [
+    ("hnp", "Report_Date_Time", "Report_Text"),
+    ("prg", "Report_Date_Time", "Report_Text"),
+    ("dis", "Report_Date_Time", "Report_Text"),
+    ("lno", "LMRNote_Date",     "Comments"),
+]
+
 model_id = "Qwen/Qwen2.5-72B-Instruct-AWQ"
 model = MrModel(model_id=model_id)
 
@@ -65,6 +77,13 @@ _thread_local = threading.local()
 
 # Global records directory (set before processing loop)
 _records_dir = None
+_recycle_dirs = []
+# Set of recycle-from dirs (resolved paths) whose cancer features should NOT be recycled but
+# recomputed fresh, because cancer_cancer/date/stage extraction changed (now ungated, structured
+# date). A recycled patient is copied wholesale unless its source dir is in this set, in which case
+# the cancer feature rows (CANCER_RECOMPUTE_FEATURES) are dropped and recomputed via _cancer_rows.
+# Set from --no-recycle-cancer.
+_no_recycle_cancer_dirs = set()
 
 
 def _json_default(obj):
@@ -395,6 +414,15 @@ def make_keyword_filter(keywords):
     return filter_fn
 
 
+def make_substring_filter(substrings):
+    """Create a chunk filter that returns True if any substring is present (no \\b boundaries)."""
+
+    def filter_fn(chunk):
+        return len(has_substring(chunk, substrings)) > 0
+
+    return filter_fn
+
+
 def process_single_block_llm(
     block_records, feature_cls, chunk_filter_fn, short_circuit, all_records
 ):
@@ -414,13 +442,20 @@ def process_single_block_llm(
     global _llm_windows_count, _per_patient_stats, _per_patient_stats_lock
 
     rows = []
-    keywords = feature_cls.keywords
+    # Features defining `substrings` match by substring (e.g. "doxy" in "doxycycline");
+    # all others match by \b-bounded keyword.
+    if getattr(feature_cls, "substrings", None) is not None:
+        keywords = feature_cls.substrings
+        match_fn = has_substring
+    else:
+        keywords = feature_cls.keywords
+        match_fn = has_keyword
 
     if all_records:
         records_to_process = []
         for _, record in block_records.iterrows():
             record_text = record.get("Report_Text", "")
-            if record_text and len(has_keyword(record_text, keywords)) > 0:
+            if record_text and len(match_fn(record_text, keywords)) > 0:
                 records_to_process.append(record)
     else:
         best_record, keyword_count = select_record_with_most_keywords(
@@ -451,7 +486,7 @@ def process_single_block_llm(
             if found_conclusive and short_circuit:
                 break
             if chunk_filter_fn(chunk):
-                found_kws = has_keyword(chunk, keywords)
+                found_kws = match_fn(chunk, keywords)
                 for kw in found_kws:
                     pred = call_llm(feature_cls, chunk, kw)
                     found_supp_kws = []
@@ -510,6 +545,229 @@ def get_chunks_by_keyword(
     return chunks
 
 
+def _load_note_records(conn, pt_id):
+    """All free-text note tables (vis + hnp + prg + dis + lno) for a patient, normalized to
+    Report_Date_Time / Report_Text. lno (letters) is aliased from LMRNote_Date / Comments."""
+    frames = []
+    for tbl, datecol, textcol in [("vis", "Report_Date_Time", "Report_Text")] + EXTRA_NOTE_TABLES:
+        note_df = pd.DataFrame(
+            conn.execute(
+                text(
+                    f"SELECT {datecol} AS Report_Date_Time, {textcol} AS Report_Text "
+                    f"FROM {tbl} WHERE EMPI = '{pt_id}'"
+                )
+            ).mappings().fetchall()
+        )
+        if not note_df.empty:
+            frames.append(note_df)
+    return (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=["Report_Date_Time", "Report_Text"])
+    )
+
+
+def _abx_duration_rows(note_records, index_date):
+    """Fresh antibiotic_duration_numeric extraction over the treatment window [index, index+2yr).
+    Reads the note tables (substring-matched), so it reflects the current source data."""
+    outcome_window_start_date = index_date + pd.Timedelta(days=365 * 2)
+    treatment_window_note_records = filter_records_by_date_range(
+        note_records, start_date=index_date, end_date=outcome_window_start_date
+    )
+    return process_single_block_llm(
+        treatment_window_note_records,
+        antibiotic_duration_numeric,
+        make_substring_filter(antibiotic_duration_numeric.substrings),
+        short_circuit=False,
+        all_records=True,
+    )
+
+
+# Cancer feature_names produced by _cancer_rows (used by the recycle path to know what to recompute).
+CANCER_RECOMPUTE_FEATURES = {
+    "cancer_cancer",
+    "cancer_date_of_diagnosis",
+    "cancer_stage_at_diagnosis",
+    "cancer_maximum_stage",
+}
+
+
+def _cancer_rows(pt_id, index_date, dia_records=None, vis_records=None):
+    """Fresh cancer extraction over the outcome window [index+2yr, ...).
+
+    cancer_cancer and the diagnosis date come DIRECTLY from structured dia ICD codes (NOT gated on
+    notes); stage is extracted by LLM from vis notes within +/-3 months of the structured diagnosis
+    date. All cancer columns are keyed by the ICD cancer-type label for consistency. Returns rows with
+    raw/letter predictions (cancer "A"; stage "A".."F"; date YYYYMMDD) -- callers map them to
+    descriptions via prediction_to_description before writing. dia/vis are loaded from the DB when not
+    supplied (the recycle path)."""
+    _thread_local.current_patient_id = pt_id
+    outcome_window_start = pd.Timestamp(index_date) + pd.Timedelta(days=365 * 2)
+
+    if dia_records is None or vis_records is None:
+        with db.connect() as conn:
+            if dia_records is None:
+                dia_records = pd.DataFrame(
+                    conn.execute(text(f"SELECT * FROM dia WHERE EMPI = '{pt_id}'")).mappings().fetchall()
+                )
+            if vis_records is None:
+                vis_records = pd.DataFrame(
+                    conn.execute(text(f"SELECT * FROM vis WHERE EMPI = '{pt_id}'")).mappings().fetchall()
+                )
+
+    outcome_dia = filter_records_by_date_range(dia_records, start_date=outcome_window_start)
+    outcome_vis = filter_records_by_date_range(vis_records, start_date=outcome_window_start)
+
+    # Ungated: cancer hits directly from ALL outcome-window dia ICD rows (no note blocks).
+    hits = [h for h in _extract_structured(cancer_cancer, outcome_dia) if h["pred"] == "A"]
+    if not hits:
+        return []
+
+    # Earliest dia Date per distinct ICD code; label each by its cancer type.
+    by_code = {}
+    for h in hits:
+        code = h["Code"]
+        ts = normalize_date(h["Date"])
+        if code not in by_code or ts < by_code[code]["date_ts"]:
+            by_code[code] = {"label": _icd_to_cancer_label(code), "date_raw": h["Date"], "date_ts": ts}
+
+    # Earliest date per cancer TYPE label (for date + stage, which are per-type columns).
+    by_label = {}
+    for code, info in by_code.items():
+        lab = info["label"]
+        if lab not in by_label or info["date_ts"] < by_label[lab]["date_ts"]:
+            by_label[lab] = {"date_raw": info["date_raw"], "date_ts": info["date_ts"], "code": code}
+
+    rows = []
+    # cancer_cancer: one row per distinct ICD code (keeps icd_code for the derived cancer_cancer_icd col).
+    for code, info in by_code.items():
+        rows.append({
+            "feature_name": "cancer_cancer",
+            "keyword": info["label"],
+            "icd_code": code,
+            "date": info["date_raw"],
+            "prediction": "A",
+        })
+
+    # cancer_date_of_diagnosis: structured earliest date per type as YYYYMMDD (what pool_earliest_date wants).
+    for lab, info in by_label.items():
+        rows.append({
+            "feature_name": "cancer_date_of_diagnosis",
+            "keyword": lab,
+            "icd_code": info["code"],
+            "date": info["date_raw"],
+            "prediction": info["date_ts"].strftime("%Y%m%d"),
+        })
+
+    # Stage via LLM, per cancer type, on vis notes within +/-3 months of the structured diagnosis date.
+    for lab, info in by_label.items():
+        kws = get_kws_from_icd(info["code"])
+
+        def stage_filter(chunk):
+            return (
+                len(has_keyword(chunk, kws)) > 0
+                and len(has_keyword(chunk, CANCER_STAGE_2_PART_KEYWORDS)) > 0
+            )
+
+        near_notes = filter_records_by_date_range(
+            outcome_vis,
+            start_date=info["date_ts"] - pd.Timedelta(days=91),
+            end_date=info["date_ts"] + pd.Timedelta(days=91),
+        )
+        if near_notes.empty:
+            continue
+        for feat_cls, feat_name in (
+            (cancer_stage_at_diagnosis, "cancer_stage_at_diagnosis"),
+            (cancer_maximum_stage, "cancer_maximum_stage"),
+        ):
+            stage_rows = process_single_block_llm(
+                near_notes, feat_cls, chunk_filter_fn=stage_filter,
+                short_circuit=True, all_records=False,
+            )
+            for r in stage_rows:
+                r["feature_name"] = feat_name
+                r["keyword"] = lab  # unify the column key on the cancer-type label
+            rows.extend(stage_rows)
+
+    return rows
+
+
+def _recycle_patient(pt_id, src_path, dst_path):
+    """Copy an existing .jsonl record from a prior run, backfilling age_at_index_date if missing.
+
+    Normally the record is reused wholesale. When this src dir is in _no_recycle_cancer_dirs, the
+    prior run's cancer feature rows (CANCER_RECOMPUTE_FEATURES) are dropped and recomputed fresh,
+    because cancer extraction changed (now ungated structured dia + structured diagnosis date)."""
+    # Decide per-source-dir whether to recycle the cancer features.
+    recycle_cancer = Path(src_path).parent.resolve() not in _no_recycle_cancer_dirs
+    rows = []
+    has_age_at_index = False
+    index_date_str = None
+    with open(src_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            # When not recycling cancer, drop the prior cancer rows so we can recompute them fresh below.
+            if not recycle_cancer and rec["feature_name"] in CANCER_RECOMPUTE_FEATURES:
+                continue
+            rows.append(rec)
+            if rec["feature_name"] == "demographics" and rec["keyword"] == "age_at_index_date":
+                has_age_at_index = True
+            if rec["feature_name"] == "index_date":
+                index_date_str = rec["prediction"]
+
+    if not has_age_at_index and index_date_str is not None:
+        with db.connect() as conn:
+            q = text(f"SELECT Date_of_Birth FROM dem WHERE EMPI = '{pt_id}' LIMIT 1")
+            dem_row = conn.execute(q).mappings().fetchone()
+        if dem_row is not None:
+            dob = pd.to_datetime(dem_row["Date_of_Birth"], errors="coerce")
+            index_date = normalize_date(index_date_str)
+            if pd.notna(dob):
+                age_at_index = (index_date - dob).days / 365.25
+                rows.append({
+                    "feature_name": "demographics",
+                    "keyword": "age_at_index_date",
+                    "date": str(index_date),
+                    "prediction": f"{age_at_index:.2f}",
+                })
+
+    # Recompute the cancer features fresh (ungated structured dia + LLM stage) from the current tables.
+    if not recycle_cancer:
+        assert index_date_str is not None, f"recycled record for {pt_id} ({src_path}) has no index_date row"
+        rows.extend(_cancer_rows(pt_id, normalize_date(index_date_str)))
+
+    with open(dst_path, "w") as f:
+        for row in rows:
+            out_row = dict(row)
+            # Idempotent: already-described recycled rows pass through unchanged; freshly recomputed
+            # cancer rows get mapped (cancer "A"->"Yes", stage letter->description).
+            out_row["prediction"] = prediction_to_description(
+                out_row["feature_name"], out_row["prediction"]
+            )
+            json.dump(out_row, f, default=_json_default)
+            f.write("\n")
+
+    feature_counts = Counter()
+    structured_feature_counts = Counter()
+    llm_feature_counts = Counter()
+    for row in rows:
+        feature_counts[row["feature_name"]] += 1
+        if row["keyword"] == "STRUCTURED_DATA":
+            structured_feature_counts[row["feature_name"]] += 1
+        else:
+            llm_feature_counts[row["feature_name"]] += 1
+
+    return {
+        "feature_counts": feature_counts,
+        "structured_feature_counts": structured_feature_counts,
+        "llm_feature_counts": llm_feature_counts,
+        "total_rows": len(rows),
+    }
+
+
 def process_pt(pt_id):
     """
     Process a single patient.
@@ -521,6 +779,17 @@ def process_pt(pt_id):
     if jsonl_path.exists():
         print(f"Skipping {pt_id} (already has {jsonl_path})")
         return None
+
+    # Recycle from a prior run if available.
+    # Prefer a recycle dir that does NOT require a cancer recompute (instant copy) over one that
+    # does (slow DB dia/note load + LLM stage). Within each group, priority order is preserved, so
+    # a patient present in both a stale-cancer dir and a fresh-cancer dir is served from the fresh one.
+    fast_dirs = [d for d in _recycle_dirs if d.resolve() not in _no_recycle_cancer_dirs]
+    slow_dirs = [d for d in _recycle_dirs if d.resolve() in _no_recycle_cancer_dirs]
+    for _recycle_dir in fast_dirs + slow_dirs:
+        recycle_path = _recycle_dir / f"{pt_id}.jsonl"
+        if recycle_path.exists():
+            return _recycle_patient(pt_id, recycle_path, jsonl_path)
 
     ### Step 1: Determine index date and calculate time windows ###
     with db.connect() as conn:
@@ -573,24 +842,37 @@ def process_pt(pt_id):
         dem_result = conn.execute(dem_query)
         dem_rows = [dict(r) for r in dem_result.mappings().fetchall()]
 
+        # Query the other note tables for free-text antibiotic-duration extraction.
+        # Columns aliased to vis's schema (Report_Date_Time / Report_Text) so they concat cleanly.
+        extra_note_frames = []
+        for tbl, datecol, textcol in EXTRA_NOTE_TABLES:
+            note_query = text(
+                f"SELECT {datecol} AS Report_Date_Time, {textcol} AS Report_Text "
+                f"FROM {tbl} WHERE EMPI = '{pt_id}'"
+            )
+            note_df = pd.DataFrame(conn.execute(note_query).mappings().fetchall())
+            if not note_df.empty:
+                extra_note_frames.append(note_df)
+
+    # Combined free-text notes (vis + hnp + prg + dis + lno) for antibiotic-duration extraction.
+    note_frames = []
+    if not vis_records.empty:
+        note_frames.append(vis_records[["Report_Date_Time", "Report_Text"]])
+    note_frames.extend(extra_note_frames)
+    note_records = (
+        pd.concat(note_frames, ignore_index=True)
+        if note_frames
+        else pd.DataFrame(columns=["Report_Date_Time", "Report_Text"])
+    )
+
     ### Step 3: Define time windows and filter records ###
     # Window 1: All records (for smoking, alcohol, transplant, immunosuppressed_disease)
     all_records = vis_records
 
-    # Window 2: Records after outcome_window_start_date (for cancer features)
-    outcome_records = filter_records_by_date_range(
-        vis_records, start_date=outcome_window_start_date
-    )
+    # (Cancer outcome-window filtering now lives inside _cancer_rows(); no longer needed here.)
 
-    # Filter dia_records for outcome window (note: dia table uses "Date" field, not "Report_Date_Time")
-    outcome_dia_records = filter_records_by_date_range(
-        dia_records, start_date=outcome_window_start_date
-    )
-
-    # Window 3: Records between index_date and outcome_window_start_date (for antibiotics)
-    treatment_window_dia_records = filter_records_by_date_range(
-        vis_records, start_date=index_date, end_date=outcome_window_start_date
-    )
+    # Window 3: Records between index_date and outcome_window_start_date (for antibiotics).
+    # The note-based abx duration window is computed inside _abx_duration_rows(note_records, index_date).
     med_records = filter_records_by_date_range(
         med_records, start_date=index_date, end_date=outcome_window_start_date
     )
@@ -610,11 +892,6 @@ def process_pt(pt_id):
         filter_records_by_date_range(all_records, end_date=outcome_window_start_date),
         index_date,
         block_size_months=3,
-    )
-
-    # Cancer cancer: 1 per 3 months
-    cancer_cancer_blocks = group_records_by_time_blocks(
-        outcome_records, index_date, block_size_months=3
     )
 
     # Cancer family any: earliest records to outcome window start, 1 per 6 months
@@ -808,84 +1085,9 @@ def process_pt(pt_id):
 
     # # === Features using outcome window (after outcome_window_start_date) ===
 
-    # Cancer cancer: process each 3-month block using structured data from dia table
-    # Structured only, no LLM fallback
-    for block_index, block_records in cancer_cancer_blocks.items():
-        _thread_local.block_id = f"cancer_{block_index}"
-        _thread_local.block_dates = (
-            f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}"
-            if not block_records.empty
-            else ""
-        )
-        block_start_date = (
-            block_records.iloc[0]["block_start_date"] if not block_records.empty else ""
-        )
-        block_end_date = (
-            block_records.iloc[0]["block_end_date"] if not block_records.empty else ""
-        )
-        block_dia_records = filter_records_by_date_range(
-            outcome_dia_records, start_date=block_start_date, end_date=block_end_date
-        )
-        block_rows, structured_hits = process_single_block_structured(
-            block_records, cancer_cancer, dia_records=block_dia_records
-        )
-        cancer_hits = [x for x in structured_hits if x["pred"] == "A"]
-        for hit in cancer_hits:
-            rows.append({
-                "feature_name": "cancer_cancer",
-                "keyword": _icd_to_cancer_label(hit["Code"]),
-                "icd_code": hit["Code"],
-                "date": hit["Date"],
-                "prediction": hit["pred"],
-            })
-        # Follow-up features if any prediction is "A"
-        # if any(row["prediction"].upper() == "A" for row in block_rows):
-        for cancer_hit in cancer_hits:
-            icd = cancer_hit["Code"]
-            kws = get_kws_from_icd(icd)
-
-            # Follow-ups use LLM (no structured data for these)
-            def cancer_date_filter(chunk):
-                has_kw = len(has_keyword(chunk, kws)) > 0
-                has_date = contains_date(chunk)
-                return has_kw and has_date
-
-            date_rows = process_single_block_llm(
-                block_records,
-                cancer_date_of_diagnosis,
-                chunk_filter_fn=cancer_date_filter,
-                short_circuit=True,
-                all_records=False,
-            )
-            for row in date_rows:
-                row["feature_name"] = "cancer_date_of_diagnosis"
-            rows.extend(date_rows)
-
-            def cancer_stage_filter(chunk):
-                # check if cancer kws are present
-                has_cancer_kw = len(has_keyword(chunk, kws)) > 0
-                has_stage_kw = len(has_keyword(chunk, CANCER_STAGE_2_PART_KEYWORDS)) > 0
-                return has_cancer_kw and has_stage_kw
-
-            stage_rows = process_single_block_llm(
-                block_records,
-                cancer_stage_at_diagnosis,
-                chunk_filter_fn=cancer_stage_filter,
-                short_circuit=True,
-                all_records=False,
-            )
-            for row in stage_rows:
-                row["feature_name"] = "cancer_stage_at_diagnosis"
-            rows.extend(stage_rows)
-
-            max_stage_rows = process_single_block_llm(
-                block_records, cancer_maximum_stage, chunk_filter_fn=cancer_stage_filter,
-                short_circuit=True, all_records=False,
-            )
-            for row in max_stage_rows:
-                row["feature_name"] = "cancer_maximum_stage"
-            rows.extend(max_stage_rows)
-    # print(f"Completed cancer cancer for {pt_id}")
+    # Cancer cancer / date / stage: structured dia ICD codes (ungated, no note blocks) for presence and
+    # diagnosis date; LLM stage from vis notes within +/-3 months of the structured diagnosis date.
+    rows.extend(_cancer_rows(pt_id, index_date, dia_records=dia_records, vis_records=vis_records))
 
     # Cancer family any: process each 6-month block (LLM only)
     def cancer_family_filter(chunk):
@@ -944,21 +1146,18 @@ def process_pt(pt_id):
                 }
             )
 
-    duration_numeric_rows = process_single_block_llm(
-        treatment_window_dia_records,
-        antibiotic_duration_numeric,
-        make_keyword_filter(antibiotic_duration_numeric.keywords),
-        short_circuit=False,
-        all_records=True,
-    )
-    rows.extend(duration_numeric_rows)
+    rows.extend(_abx_duration_rows(note_records, index_date))
 
-    # --- Demographics ---
+    #  Demographics 
     if dem_rows:
         dem_row = dem_rows[0]
         rows.append({"feature_name": "demographics", "keyword": "sex", "date": str(index_date), "prediction": compute_sex(dem_row)})
         rows.append({"feature_name": "demographics", "keyword": "race", "date": str(index_date), "prediction": compute_race(dem_row)})
         rows.append({"feature_name": "demographics", "keyword": "age", "date": str(index_date), "prediction": str(compute_age(dem_row))})
+        dob = pd.to_datetime(dem_row["Date_of_Birth"], errors="coerce")
+        if pd.notna(dob):
+            age_at_index = (index_date - dob).days / 365.25
+            rows.append({"feature_name": "demographics", "keyword": "age_at_index_date", "date": str(index_date), "prediction": f"{age_at_index:.2f}"})
         bmi_val, bmi_cat = compute_bmi_from_phy(phy_records, index_date)
         if bmi_val is not None:
             rows.append({"feature_name": "demographics", "keyword": "bmi", "date": str(index_date), "prediction": str(round(bmi_val, 1))})
@@ -968,7 +1167,8 @@ def process_pt(pt_id):
         death_dates = []
         for dr in dem_rows:
             dod = str(dr["Date_Of_Death"]).strip()
-            if dod:
+            # if dod:
+            if dod and dod.lower() not in ("unknown", "nan", "none", "nat", ""):
                 parsed = normalize_date(dod)
                 if parsed is not None:
                     death_dates.append(parsed)
@@ -996,6 +1196,8 @@ def process_pt(pt_id):
             "date": str(index_date),
             "prediction": str(max(last_dates)),
         })
+
+    rows.append({"feature_name": "index_date", "keyword": "index_date", "date": str(index_date), "prediction": str(index_date)})
 
     # Save per-patient JSONL
     if rows:
@@ -1034,7 +1236,7 @@ def process_pt(pt_id):
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
-    "--n-workers", type=int, default=1, help="Number of worker threads (default: 1)"
+    "--n-workers", type=int, default=80, help="Number of worker threads (default: 1)"
 )
 parser.add_argument(
     "--limit",
@@ -1054,8 +1256,34 @@ parser.add_argument(
     nargs="*",
     help="List of specific EMPIs to process (default: None, process all in cohort)",
 )
+parser.add_argument(
+    "--recycle-from",
+    type=str,
+    nargs="*",
+    default=[
+        # "full_inference_out/records_old_3_wrong-age",
+        # "full_inference_out/records_old_4_wrong-recycle",
+        # "full_inference_out/records_old_5",
+        # "full_inference_out/records_old_7_only-vis",
+        # "full_inference_out/records_old_8_partial-all-docs"
+        "full_inference_out/records_old_9_cancer-llm"
+    ],
+    help="One or more paths to previous records/ dirs. For each pt, the first dir containing the pt's .jsonl is used (with age_at_index_date backfilled if missing).",
+)
+parser.add_argument(
+    "--no-recycle-cancer",
+    type=str,
+    nargs="*",
+    default=["full_inference_out/records_old_9_cancer-llm"],
+    help="List of recycle-from dirs whose cancer features (cancer_cancer, cancer_date_of_diagnosis, "
+         "cancer_stage_at_diagnosis, cancer_maximum_stage) should NOT be recycled but recomputed fresh "
+         "(now ungated structured dia + structured diagnosis date). Recycle-from dirs not listed here "
+         "have cancer recycled along with everything else. Defaults to records_old_9_cancer-llm.",
+)
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
+# Resolve no-recycle-cancer dirs for comparison against each recycle source dir.
+_no_recycle_cancer_dirs = {Path(d).resolve() for d in args.no_recycle_cancer}
 
 start_time = datetime.now()
 print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1088,6 +1316,17 @@ output_dir.mkdir(parents=True, exist_ok=True)
 # Create records directory for per-EMPI JSONL files
 _records_dir = Path("full_inference_out/records")
 _records_dir.mkdir(parents=True, exist_ok=True)
+
+# Optional recycle-from directories
+if args.recycle_from:
+    for d in args.recycle_from:
+        p = Path(d)
+        if not p.is_dir():
+            raise FileNotFoundError(f"--recycle-from dir does not exist: {p}")
+        _recycle_dirs.append(p)
+    print(f"Recycling records from (in priority order): {[str(p) for p in _recycle_dirs]}")
+    if _no_recycle_cancer_dirs:
+        print(f"  Cancer features recomputed fresh (not recycled) for: {[str(p) for p in _no_recycle_cancer_dirs]}")
 
 # Set up LLM call logging
 llm_logger = logging.getLogger("llm_calls")

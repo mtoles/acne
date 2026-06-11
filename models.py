@@ -1,5 +1,6 @@
 from typing import Union, Optional
 import torch
+import httpx
 from openai import OpenAI
 from tqdm import tqdm
 import re
@@ -16,14 +17,40 @@ _cache = Memory(".llm_cache", verbose=0)
 COT_SUFFIX = "\n\n### Instructions:\n\nThink step by step, then answer the question."
 
 
-@_cache.cache(ignore=["base_url", "api_key"])
-def _cached_llm_call(model_id, base_url, api_key, messages, max_tokens, temperature, top_p):
-    """Cached LLM API call. Takes only serializable args (no client object).
+_client_cache = {}
 
-    base_url and api_key are excluded from the cache key — they describe transport,
-    not model output, so a different vLLM port should hit the same entry.
-    """
-    client = OpenAI(base_url=base_url, api_key=api_key)
+
+def _make_openai_client(base_url, api_key):
+    """Build (and reuse) an OpenAI client for base_url. When VLLM_PROXY is set (e.g. mgb
+    running Tailscale in userspace mode), route through that local proxy so requests reach
+    the remote vLLM. Cached per (base_url, api_key, proxy) so connections are pooled and the
+    joblib cache key (which excludes the proxy) stays stable."""
+    proxy = os.environ.get("VLLM_PROXY")
+    key = (base_url, api_key, proxy)
+    if key not in _client_cache:
+        http_client = (
+            httpx.Client(
+                proxy=proxy,
+                timeout=httpx.Timeout(600.0),
+                # Allow enough concurrent connections to feed a high server-side max_num_seqs;
+                # otherwise this pool (not the GPU) caps in-flight requests. Tunable via
+                # VLLM_MAX_CONNECTIONS.
+                limits=httpx.Limits(
+                    max_connections=int(os.environ.get("VLLM_MAX_CONNECTIONS", "1024")),
+                    max_keepalive_connections=256,
+                ),
+            )
+            if proxy
+            else None
+        )
+        _client_cache[key] = OpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
+    return _client_cache[key]
+
+
+@_cache.cache
+def _cached_llm_call(model_id, base_url, api_key, messages, max_tokens, temperature, top_p):
+    """Cached LLM API call. Takes only serializable args (no client object)."""
+    client = _make_openai_client(base_url, api_key)
     response = client.chat.completions.create(
         model=model_id,
         messages=messages,
@@ -86,13 +113,15 @@ class MrModel:
         api_key="token-abc123",
     ):
         if base_url is None:
+            # VLLM_BASE_URL (a full URL, e.g. the remote coffee endpoint) takes precedence;
+            # otherwise fall back to a local port-based default.
+            base_url = os.environ.get("VLLM_BASE_URL")
+        if base_url is None:
             vllm_port = os.environ.get("VLLM_PORT", "8010")
             base_url = f"http://localhost:{vllm_port}/v1"
         self.model_id = model_id
-        self.client = OpenAI(
-            base_url=base_url,
-            api_key=api_key,
-        )
+        # Routes through VLLM_PROXY (tailscaled userspace proxy) when set; see _make_openai_client.
+        self.client = _make_openai_client(base_url, api_key)
 
     @classmethod
     def format_chunk_qs(cls, q: str, chunk: str, options: list[str]):
