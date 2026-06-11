@@ -24,6 +24,17 @@ method_styles = {
 }
 DISPLAY_NAMES = {"ours": "chimp (ours)"}
 
+# Human prompt-tuning log: each acne feature was tuned by two annotators,
+# DM (Dorsa) and JC (James), with per-iteration accuracies recorded in
+# "Accuracy #1".."Accuracy #8" columns ("Accuracy #1" == baseline prompt).
+HUMAN_PROMPT_HISTORY_PATH = "labeled_data/LLM Adjustment Tracking.xlsx"
+HUMAN_TUNERS = {"DM": "Dorsa", "JC": "James"}
+HUMAN_ACC_COLS = [f"Accuracy #{i}" for i in range(1, 9)]
+human_styles = {
+    "DM": {"color": "tab:blue", "marker": "o"},
+    "JC": {"color": "tab:orange", "marker": "s"},
+}
+
 
 def _disp(name):
     return DISPLAY_NAMES.get(name, name)
@@ -345,6 +356,113 @@ def plot_per_dataset(dataset_name, results, features, baselines, test_baselines,
     print(f"Saved {out_path}")
 
 
+def load_human_tuner_series():
+    """Per-feature {tuner: [acc per iter]} from the human prompt-tuning workbook.
+
+    Returns {feature: {"DM": [...], "JC": [...]}} with non-null iteration
+    accuracies normalized to 0-1, or None if pandas or the workbook is missing.
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        warnings.warn("pandas not available; skipping dorsa/james acne plot.")
+        return None
+    if not os.path.isfile(HUMAN_PROMPT_HISTORY_PATH):
+        warnings.warn(
+            f"Missing {HUMAN_PROMPT_HISTORY_PATH}; skipping dorsa/james acne plot."
+        )
+        return None
+    df = pd.read_excel(HUMAN_PROMPT_HISTORY_PATH)
+    out = {}
+    for _, row in df.iterrows():
+        feat, tuner = row.get("Data Point"), row.get("Prompt Tuner")
+        if pd.isna(feat) or tuner not in HUMAN_TUNERS:
+            continue
+        series = []
+        for c in HUMAN_ACC_COLS:
+            if c not in row or pd.isna(row[c]):
+                continue
+            v = pd.to_numeric(row[c], errors="coerce")
+            if pd.notna(v):
+                series.append(_norm(float(v)))
+        if series:
+            out.setdefault(feat, {})[tuner] = series
+    return out
+
+
+def plot_acne_human_tuners(features, tag):
+    """Per-feature Dorsa-vs-James accuracy-by-iteration grid (acne only).
+
+    Mirrors plot_per_dataset's layout but draws only the two human prompt
+    tuners, with an average-across-features subplot at the end.
+    """
+    human = load_human_tuner_series()
+    if not human:
+        return
+    feats = [f for f in features if f in human]
+    if not feats:
+        warnings.warn("No acne features had dorsa/james data; skipping plot.")
+        return
+
+    n_plots = len(feats) + 1
+    ncols = min(3, n_plots)
+    nrows = math.ceil(n_plots / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows), squeeze=False)
+    axes = axes.flatten()
+    for ax in axes[n_plots:]:
+        ax.set_visible(False)
+
+    for ax, feat in zip(axes, feats):
+        feat_vals = []
+        for tuner, label in HUMAN_TUNERS.items():
+            series = human[feat].get(tuner)
+            if not series:
+                continue
+            style = human_styles[tuner]
+            ax.plot(range(len(series)), series, f"{style['marker']}-",
+                    label=label, color=style["color"], alpha=0.9, markersize=5)
+            feat_vals.extend(series)
+        ax.set_title(feat)
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Accuracy")
+        if feat_vals:
+            ax.set_ylim(max(0.0, min(feat_vals) - 0.03), 1.0)
+        else:
+            ax.set_ylim(0, 1.0)
+        ax.legend(fontsize=6)
+        ax.grid(True, alpha=0.3)
+
+    # Average subplot: stretch each feature onto 11 positions, avg per tuner.
+    ax_avg = axes[len(feats)]
+    avg_vals = []
+    for tuner, label in HUMAN_TUNERS.items():
+        curves = [resample_to_11(human[f][tuner]) for f in feats if human[f].get(tuner)]
+        if not curves:
+            continue
+        curve = np.mean(curves, axis=0)
+        style = human_styles[tuner]
+        ax_avg.plot(np.arange(11), curve, f"{style['marker']}-",
+                    label=label, color=style["color"], alpha=0.9, markersize=5)
+        avg_vals.extend(curve)
+    ax_avg.set_title("Average (all features)")
+    ax_avg.set_xlabel("Iteration")
+    ax_avg.set_ylabel("Accuracy")
+    if avg_vals:
+        ax_avg.set_ylim(max(0.0, min(avg_vals) - 0.03), 1.0)
+    else:
+        ax_avg.set_ylim(0, 1.0)
+    ax_avg.legend(fontsize=6)
+    ax_avg.grid(True, alpha=0.3)
+
+    fig.suptitle("[acne] Dorsa vs James: human prompt-tuning accuracy by iteration",
+                 fontsize=14)
+    fig.tight_layout()
+    out_path = os.path.join(ANALYSIS_DIR, f"accuracy_comparison_{tag}_acne_human.png")
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved {out_path}")
+
+
 def print_ranking(title, results, features, value_fn, skip_incomplete=False):
     print("\n" + "=" * 60)
     print(title)
@@ -559,6 +677,8 @@ def main():
         test_baselines = consensus_baselines(results, features, ds, key="test_accuracy")
 
         plot_per_dataset(ds, results, features, baselines, test_baselines, tag)
+        if ds == "acne":
+            plot_acne_human_tuners(features, tag)
         print_ranking(f"[{ds}] Best Val Accuracy Ranking", results, features,
                       lambda fd: _norm(_feat_best_val(fd)),
                       skip_incomplete=skip_incomplete)
