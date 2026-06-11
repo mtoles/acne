@@ -17,7 +17,9 @@ from pt_features import (
     find_baseline_prompt_from_prompt_iteration_labels,
 )
 from models import MrModel
-from utils import OptionType, get_dataset, compute_numeric_pct_error, compute_numeric_abs_error
+from utils import OptionType, compute_numeric_pct_error, compute_numeric_abs_error
+# Shared with auto_prompt so the UI uses byte-identical train/val/test splits (no drift).
+from feature_data import load_acne_feature_data
 
 
 # Residents-study "special" features shown at the TOP of the feature dropdown. Each reuses an
@@ -77,16 +79,19 @@ def build_special_feature_entries():
     return entries
 
 
-def build_feature_metadata(feature_name):
-    """Build feature_metadata dict for get_dataset from class attributes."""
-    target_cls = PtFeaturesMeta.registry[feature_name]
-    feature_metadata = {}
-    if getattr(target_cls, "data_source_feature", None) or getattr(target_cls, "gt_column", "val_unified") != "val_unified":
-        feature_metadata[feature_name] = {
-            "data_source_feature": getattr(target_cls, "data_source_feature", None) or feature_name,
-            "gt_column": getattr(target_cls, "gt_column", "val_unified"),
-        }
-    return feature_metadata
+def load_train_val_split(feature_name):
+    """The UI is the procedurally-identical human version of auto_prompt's optimization loop, so
+    it reuses auto_prompt's exact split via the shared feature_data.load_acne_feature_data.
+
+    Returns (train_df, val_df) on the mgb data. The test third is intentionally dropped here --
+    the human optimizer must never see it (it is auto_prompt's final holdout). downsample=None;
+    any example-count cap is applied by the caller (see /api/run).
+    """
+    train_df, val_df, _test_df, _test_full_df, _target_cls = load_acne_feature_data(
+        feature_name, data_source="mgb", downsample=None
+    )
+    return train_df, val_df
+
 
 app = Flask(__name__)
 
@@ -172,24 +177,14 @@ def get_dataset_size():
     feature_name = resolve_feature_name(feature_name)
 
     try:
-        # Load labeled data using utils.get_dataset (includes both natural and synthetic)
-        datasets = get_dataset(
-            data_source="mgb",
-            feature_names=[feature_name],
-            train_split=0.5,
-            random_state=42,
-            feature_metadata=build_feature_metadata(feature_name),
-        )
-
-        if feature_name not in datasets:
+        # Use the same train/val split the run uses (auto_prompt-identical). Default the UI's
+        # example count to the full train size; val size is reported for display only.
+        train_df, val_df = load_train_val_split(feature_name)
+        if train_df is None:
             return jsonify({'error': f'Labeled data not found for {feature_name}'}), 404
 
-        # Get the train dataset and filter out DROP values
-        train_df = datasets[feature_name]["train"].copy()
-        train_df = train_df[train_df["val_unified"] != "DROP"]
+        return jsonify({'size': len(train_df), 'val_size': len(val_df)})
 
-        return jsonify({'size': len(train_df)})
-        
     except Exception as e:
         import traceback
         return jsonify({
@@ -223,148 +218,141 @@ def run_query():
         target_cls = PtFeaturesMeta.registry.get(feature_name)
         if not target_cls:
             return jsonify({'error': f'Feature {feature_name} not found'}), 400
-        
+
         # Initialize model
         model = MrModel(model_id=MODEL_ID)
-        
-        # Load labeled data using utils.get_dataset (includes both natural and synthetic)
-        datasets = get_dataset(
-            data_source="mgb",
-            feature_names=[feature_name],
-            train_split=0.5,
-            random_state=42,
-            feature_metadata=build_feature_metadata(feature_name),
-        )
 
-        if feature_name not in datasets:
+        # auto_prompt-identical train/val split (see load_train_val_split). The human plays the
+        # optimizer: they see ALL errors on TRAIN and edit the prompt; VAL is reported as a bare
+        # accuracy number (no examples) -- the accept/reject signal. TEST is never shown here.
+        train_df, val_df = load_train_val_split(feature_name)
+        if train_df is None:
             return jsonify({'error': f'Labeled data not found for {feature_name}'}), 404
 
-        # Get the combined dataset (includes both natural and synthetic)
-        annot_df = datasets[feature_name]["train"].copy()
-        
-        # Filter out DROP values
-        annot_df = annot_df[annot_df["val_unified"] != "DROP"]
-        
-        # Check if there are any labeled examples
-        if len(annot_df) == 0:
+        if len(train_df) == 0:
             return jsonify({'error': f'There are no labeled examples for {feature_name}'}), 400
-        
-        # Limit to n examples
-        if len(annot_df) > n:
-            annot_df = annot_df.sample(n=n, random_state=42).sort_index()
-        
-        chunk_df = annot_df.copy()
-        
-        # Process chunks
-        def process_single_chunk(args):
-            idx, chunk, found_kw = args
-            kwargs = {}
-            if custom_query and custom_query.strip():
-                # Substitute {keyword} placeholder with the actual found keyword
-                kwargs['custom_query'] = custom_query.replace("{keyword}", found_kw)
-            if custom_options:
-                kwargs['custom_options'] = custom_options
-            
-            pred_dict = target_cls.forward(
-                model=model, 
-                chunk=chunk, 
-                keyword=found_kw, 
-                inference_type="cot",
-                **kwargs
-            ) 
-            return idx, pred_dict
-        
-        # Prepare arguments - use actual DataFrame index to avoid alignment issues
-        chunk_args = [
-            (idx, chunk, found_kw)
-            for idx, chunk, found_kw in zip(
-                chunk_df.index,
-                chunk_df["chunk"],
-                chunk_df["found_keywords"]
-            )
-        ]
-        
-        # Process with ThreadPoolExecutor
-        predictions = {}
-        with ThreadPoolExecutor(max_workers=100) as executor:
-            future_to_index = {
-                executor.submit(process_single_chunk, args): args[0] for args in chunk_args
-            }
-            
-            for future in as_completed(future_to_index):
-                idx, preds_for_chunk = future.result()
-                for key, value in preds_for_chunk.items():
-                    if key not in predictions:
-                        predictions[key] = {}
-                    predictions[key][idx] = value
-        
-        # Add predictions to dataframe - use loc to ensure proper alignment
-        for key, pred_dict in predictions.items():
-            for idx, value in pred_dict.items():
-                chunk_df.loc[idx, key] = value
-        
-        # Get prediction column
-        pred_columns = [col for col in chunk_df.columns if col == feature_name]
-        if not pred_columns:
-            pred_columns = [col for col in predictions.keys()]
-        
-        if not pred_columns:
-            return jsonify({'error': 'No predictions generated'}), 500
-        
-        pred_col = pred_columns[0]
-        ground_truth = chunk_df["val_unified"]
-        preds = chunk_df[pred_col]
-        
-        # Normalize numeric predictions/gt for comparison
+
+        # Optional speed cap applied equally to TRAIN and VAL (the analog of auto_prompt's
+        # --downsample, which caps every split). Default n is the full train size, so by default
+        # both splits run in full. Same seed -> deterministic subsample.
+        if len(train_df) > n:
+            train_df = train_df.sample(n=n, random_state=42).sort_index()
+        if len(val_df) > n:
+            val_df = val_df.sample(n=n, random_state=42).sort_index()
+
         is_numeric_feature = issubclass(target_cls, PtNumericFeatureBase)
-        if is_numeric_feature:
-            def normalize_numeric(val):
-                val_str = str(val).strip()
-                if val_str.upper() == "F":
-                    return "F"
-                try:
-                    return str(int(float(val_str)))
-                except (ValueError, TypeError):
-                    return val_str
-            chunk_df[pred_col] = chunk_df[pred_col].apply(normalize_numeric)
-            chunk_df["val_unified"] = chunk_df["val_unified"].apply(normalize_numeric)
 
-        ground_truth = chunk_df["val_unified"]
-        preds = chunk_df[pred_col]
+        def normalize_numeric(val):
+            val_str = str(val).strip()
+            if val_str.upper() == "F":
+                return "F"
+            try:
+                return str(int(float(val_str)))
+            except (ValueError, TypeError):
+                return val_str
 
-        # Calculate metrics
-        correct_mask = preds == ground_truth
-        correct = correct_mask.sum()
-        total = len(preds)
-        accuracy = correct / total if total > 0 else 0
+        def run_inference(df):
+            """Run the prompt over df's chunks; return (chunk_df_with_preds, pred_col)."""
+            chunk_df = df.copy()
 
-        # Calculate avg percent error for numeric features
-        avg_pct_error = None
-        avg_abs_error = None
-        if is_numeric_feature and total > 0:
-            pct_errors = [compute_numeric_pct_error(p, g) for p, g in zip(preds, ground_truth)]
-            avg_pct_error = sum(pct_errors) / len(pct_errors)
-            abs_errors = [compute_numeric_abs_error(p, g) for p, g in zip(preds, ground_truth)]
-            abs_errors_valid = [e for e in abs_errors if e is not None]
-            avg_abs_error = sum(abs_errors_valid) / len(abs_errors_valid) if abs_errors_valid else None
+            def process_single_chunk(args):
+                idx, chunk, found_kw = args
+                kwargs = {}
+                if custom_query and custom_query.strip():
+                    # Substitute {keyword} placeholder with the actual found keyword
+                    kwargs['custom_query'] = custom_query.replace("{keyword}", found_kw)
+                if custom_options:
+                    kwargs['custom_options'] = custom_options
+                pred_dict = target_cls.forward(
+                    model=model,
+                    chunk=chunk,
+                    keyword=found_kw,
+                    inference_type="cot",
+                    **kwargs
+                )
+                return idx, pred_dict
 
-        # Prepare results
+            # Use the actual DataFrame index to avoid alignment issues
+            chunk_args = [
+                (idx, chunk, found_kw)
+                for idx, chunk, found_kw in zip(
+                    chunk_df.index, chunk_df["chunk"], chunk_df["found_keywords"]
+                )
+            ]
+
+            predictions = {}
+            with ThreadPoolExecutor(max_workers=100) as executor:
+                future_to_index = {
+                    executor.submit(process_single_chunk, args): args[0] for args in chunk_args
+                }
+                for future in as_completed(future_to_index):
+                    idx, preds_for_chunk = future.result()
+                    for key, value in preds_for_chunk.items():
+                        if key not in predictions:
+                            predictions[key] = {}
+                        predictions[key][idx] = value
+
+            for key, pred_dict in predictions.items():
+                for idx, value in pred_dict.items():
+                    chunk_df.loc[idx, key] = value
+
+            pred_columns = [col for col in chunk_df.columns if col == feature_name]
+            if not pred_columns:
+                pred_columns = [col for col in predictions.keys()]
+            pred_col = pred_columns[0] if pred_columns else None
+            return chunk_df, pred_col
+
+        def score(chunk_df, pred_col):
+            """Compute accuracy and (for numeric features) error metrics on a scored chunk_df.
+            Mutates chunk_df's pred/gt columns to normalized numeric form when applicable."""
+            if is_numeric_feature:
+                chunk_df[pred_col] = chunk_df[pred_col].apply(normalize_numeric)
+                chunk_df["val_unified"] = chunk_df["val_unified"].apply(normalize_numeric)
+            ground_truth = chunk_df["val_unified"]
+            preds = chunk_df[pred_col]
+            total = len(preds)
+            correct = int((preds == ground_truth).sum())
+            accuracy = correct / total if total > 0 else 0
+            avg_pct_error = None
+            avg_abs_error = None
+            if is_numeric_feature and total > 0:
+                pct_errors = [compute_numeric_pct_error(p, g) for p, g in zip(preds, ground_truth)]
+                avg_pct_error = sum(pct_errors) / len(pct_errors)
+                abs_errors = [compute_numeric_abs_error(p, g) for p, g in zip(preds, ground_truth)]
+                abs_errors_valid = [e for e in abs_errors if e is not None]
+                avg_abs_error = sum(abs_errors_valid) / len(abs_errors_valid) if abs_errors_valid else None
+            return {
+                'accuracy': accuracy, 'correct': correct, 'total': total,
+                'avg_pct_error': avg_pct_error, 'avg_abs_error': avg_abs_error,
+            }
+
+        # --- TRAIN: full error breakdown (with examples) ---
+        train_chunk_df, train_pred_col = run_inference(train_df)
+        if not train_pred_col:
+            return jsonify({'error': 'No predictions generated'}), 500
+        train_metrics = score(train_chunk_df, train_pred_col)
+
         correct_results = []
         incorrect_results = []
-
-        for idx, row in chunk_df.iterrows():
+        for idx, row in train_chunk_df.iterrows():
             result = {
                 'chunk': row['chunk'],
                 'gt_answer': row['val_unified'],
-                'predicted_answer': row[pred_col],
+                'predicted_answer': row[train_pred_col],
                 'keyword': row['found_keywords']
             }
-
-            if row[pred_col] == row['val_unified']:
+            if row[train_pred_col] == row['val_unified']:
                 correct_results.append(result)
             else:
                 incorrect_results.append(result)
-        
+
+        # --- VAL: hidden accuracy number only (no examples returned) ---
+        val_metrics = None
+        if len(val_df) > 0:
+            val_chunk_df, val_pred_col = run_inference(val_df)
+            if val_pred_col:
+                val_metrics = score(val_chunk_df, val_pred_col)
+
         # Convert options to JSON-serializable format
         if custom_options:
             serialized_options = custom_options
@@ -378,25 +366,34 @@ def run_query():
                 serialized_options = options
         else:
             serialized_options = []
-        
+
         summary = {
-            'accuracy': f"{accuracy * 100:.2f}%",
-            'correct': int(correct),
-            'total': int(total),
+            'accuracy': f"{train_metrics['accuracy'] * 100:.2f}%",
+            'correct': train_metrics['correct'],
+            'total': train_metrics['total'],
             'query': custom_query if custom_query else (target_cls.query(keyword="sample") if hasattr(target_cls, 'query') else ''),
-            'options': serialized_options
+            'options': serialized_options,
         }
-        if avg_pct_error is not None:
-            summary['avg_pct_error'] = f"{avg_pct_error:.1f}%"
-        if avg_abs_error is not None:
-            summary['avg_abs_error'] = f"{avg_abs_error:.1f} days"
+        if train_metrics['avg_pct_error'] is not None:
+            summary['avg_pct_error'] = f"{train_metrics['avg_pct_error']:.1f}%"
+        if train_metrics['avg_abs_error'] is not None:
+            summary['avg_abs_error'] = f"{train_metrics['avg_abs_error']:.1f} days"
+
+        # Hidden validation metrics: number(s) only, never the underlying examples.
+        if val_metrics is not None:
+            summary['val_accuracy'] = f"{val_metrics['accuracy'] * 100:.2f}%"
+            summary['val_total'] = val_metrics['total']
+            if val_metrics['avg_pct_error'] is not None:
+                summary['val_avg_pct_error'] = f"{val_metrics['avg_pct_error']:.1f}%"
+            if val_metrics['avg_abs_error'] is not None:
+                summary['val_avg_abs_error'] = f"{val_metrics['avg_abs_error']:.1f} days"
 
         return jsonify({
             'summary': summary,
             'correct': correct_results,
             'incorrect': incorrect_results
         })
-        
+
     except Exception as e:
         import traceback
         return jsonify({

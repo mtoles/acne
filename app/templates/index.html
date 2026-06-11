@@ -416,17 +416,26 @@
                     <h2>📊 Summary</h2>
                     <div class="summary-grid">
                         <div class="summary-item">
-                            <div class="label">Accuracy</div>
+                            <div class="label">Train Accuracy</div>
                             <div class="value" id="accuracy">-</div>
                         </div>
                         <div class="summary-item">
-                            <div class="label">Correct</div>
+                            <div class="label">Hidden (Val) Accuracy</div>
+                            <div class="value" id="val-accuracy">-</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="label">Train Correct</div>
                             <div class="value" id="correct">-</div>
                         </div>
                         <div class="summary-item">
-                            <div class="label">Total</div>
+                            <div class="label">Train Total</div>
                             <div class="value" id="total">-</div>
                         </div>
+                    </div>
+                    <div class="numeric-errors" id="numeric-errors" style="display: none; margin-top: 12px;">
+                        <strong>Numeric error</strong> —
+                        train: <span id="train-num-error">-</span>;
+                        hidden (val): <span id="val-num-error">-</span>
                     </div>
                     <div class="query-display">
                         <strong>Query:</strong> <span id="summary-query">-</span>
@@ -593,10 +602,33 @@
         
         function displayResults(data) {
             // Update summary
-            document.getElementById('accuracy').textContent = data.summary.accuracy;
-            document.getElementById('correct').textContent = data.summary.correct;
-            document.getElementById('total').textContent = data.summary.total;
-            document.getElementById('summary-query').textContent = data.summary.query;
+            const s = data.summary;
+            document.getElementById('accuracy').textContent = s.accuracy;
+            document.getElementById('val-accuracy').textContent =
+                (s.val_accuracy !== undefined)
+                    ? `${s.val_accuracy}` + (s.val_total !== undefined ? ` (n=${s.val_total})` : '')
+                    : 'N/A';
+            document.getElementById('correct').textContent = s.correct;
+            document.getElementById('total').textContent = s.total;
+
+            // Numeric error metrics (only present for numeric features)
+            const fmtNumErr = (pct, abs) => {
+                const parts = [];
+                if (pct !== undefined) parts.push(`${pct} avg % error`);
+                if (abs !== undefined) parts.push(`${abs} avg abs error`);
+                return parts.length ? parts.join(', ') : null;
+            };
+            const trainNum = fmtNumErr(s.avg_pct_error, s.avg_abs_error);
+            const valNum = fmtNumErr(s.val_avg_pct_error, s.val_avg_abs_error);
+            if (trainNum || valNum) {
+                document.getElementById('train-num-error').textContent = trainNum || 'N/A';
+                document.getElementById('val-num-error').textContent = valNum || 'N/A';
+                document.getElementById('numeric-errors').style.display = 'block';
+            } else {
+                document.getElementById('numeric-errors').style.display = 'none';
+            }
+
+            document.getElementById('summary-query').textContent = s.query;
             document.getElementById('summary-options').textContent = Array.isArray(data.summary.options) ? data.summary.options.join(', ') : data.summary.options;
             
             // Update counts
