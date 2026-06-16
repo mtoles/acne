@@ -52,9 +52,9 @@ BOOLEAN_PER_KEYWORD_FEATURES = {"transplant", "cancer_family_any", "antibiotics"
 
 # Stage features: one column per keyword, pick highest stage
 STAGE_RANK = ["Stage 0", "Stage I", "Stage II or III", "Stage IV"]
-STAGE_FEATURES = {"cancer_stage_at_diagnosis", "cancer_maximum_stage"}
+STAGE_FEATURES = {"cancer_stage_at_diagnosis"}
 
-# Date feature: one column per keyword, pick earliest date
+# Date feature: one column per keyword, pick earliest date (structured, from the dia table)
 DATE_FEATURES = {"cancer_date_of_diagnosis"}
 
 # --- Cancer ICD code -> Diagnosis description (col D of the grouped codes file) ---
@@ -313,10 +313,10 @@ def pool_patient_records(records, index_date):
                     col_name = f"{feature_name}__{period}__{kw}".replace(" ", "_")
                     result[col_name] = pool_any_yes(preds)
                     # Add medication descriptions for antibiotics
-                    if feature_name == "antibiotics":
-                        meds = sorted({r["Medication_Description"] for r in kw_recs if r.get("Medication_Description")})
-                        if meds:
-                            result[f"antibiotics_meds__{period}__{kw}".replace(" ", "_")] = "; ".join(meds)
+                    # if feature_name == "antibiotics":
+                    #     meds = sorted({r["Medication_Description"] for r in kw_recs if r.get("Medication_Description")})
+                    #     if meds:
+                    #         result[f"antibiotics_meds__{period}__{kw}".replace(" ", "_")] = "; ".join(meds)
 
         # --- Cancer occurrence: report by Diagnosis description (col D), splitting each ---
         # --- diagnosis into preexisting vs outcome by its EARLIEST diagnosis date, so ---
@@ -347,13 +347,19 @@ def pool_patient_records(records, index_date):
                     col_name = f"{feature_name}__{period}__{kw}".replace(" ", "_")
                     result[col_name] = pool_highest_stage(preds)
 
-        # --- Date features: earliest date per keyword ---
+        # --- Cancer date of diagnosis: group by Diagnosis description and split into ---
+        # --- preexisting/outcome by earliest dx date, exactly like cancer_cancer, so each ---
+        # --- date column aligns 1:1 with its cancer_preexisting / cancer_outcome column. ---
         elif feature_name in DATE_FEATURES:
-            for period, by_kw in _group_by_period_and_keyword(feature_records).items():
-                for kw, kw_recs in by_kw.items():
-                    preds = [r["prediction"] for r in kw_recs]
-                    col_name = f"{feature_name}__{period}__{kw}".replace(" ", "_")
-                    result[col_name] = pool_earliest_date(preds)
+            by_dx = defaultdict(list)
+            for rec in feature_records:
+                by_dx[icd_to_diagnosis(rec["icd_code"])].append(rec)
+            for dx, dx_recs in by_dx.items():
+                preds = [r["prediction"] for r in dx_recs]
+                earliest_dx = min(r["_parsed_date"] for r in dx_recs)
+                cat = classify_cancer_period(earliest_dx, outcome_window_start)  # CancerPeriod
+                dx_col = dx.replace(",", ";").replace(" ", "_")
+                result[f"{feature_name}__{cat}__{dx_col}"] = pool_earliest_date(preds)
 
         # --- Antibiotic duration numeric: sum of distinct durations per class (value-dedup) ---
         elif feature_name == "antibiotic_duration_numeric":
@@ -374,9 +380,9 @@ def pool_patient_records(records, index_date):
             for period, period_recs in _group_by_period(feature_records).items():
                 col_name = f"contraceptives__{period}__pooled"
                 result[col_name] = "Yes"
-                meds = sorted({r["Medication_Description"] for r in period_recs if r.get("Medication_Description")})
-                if meds:
-                    result[f"contraceptives_meds__{period}__pooled"] = "; ".join(meds)
+                # meds = sorted({r["Medication_Description"] for r in period_recs if r.get("Medication_Description")})
+                # if meds:
+                #     result[f"contraceptives_meds__{period}__pooled"] = "; ".join(meds)
 
         elif feature_name == "index_date":
             result["index_date"] = str(index_date.date())

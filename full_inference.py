@@ -556,12 +556,14 @@ def _cancer_rows(pt_id, index_date, dia_records=None, vis_records=None):
             "prediction": "A",
         })
 
-    # cancer_date_of_diagnosis: structured earliest date per type as YYYYMMDD (what pool_earliest_date wants).
-    for lab, info in by_label.items():
+    # cancer_date_of_diagnosis: structured earliest date per distinct ICD code as YYYYMMDD
+    # (one row per code like cancer_cancer above, so postprocess can regroup both by the same
+    # Diagnosis description and emit date columns that align 1:1 with the cancer columns).
+    for code, info in by_code.items():
         rows.append({
             "feature_name": "cancer_date_of_diagnosis",
-            "keyword": lab,
-            "icd_code": info["code"],
+            "keyword": info["label"],
+            "icd_code": code,
             "date": info["date_raw"],
             "prediction": info["date_ts"].strftime("%Y%m%d"),
         })
