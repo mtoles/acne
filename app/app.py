@@ -4,7 +4,7 @@ import enum
 # Add parent directory to path to import pt_features and models
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 import pandas as pd
 from pathlib import Path
 import yaml
@@ -94,6 +94,32 @@ def load_train_val_split(feature_name):
 
 
 app = Flask(__name__)
+app.secret_key = "acne-app-session-key-2026"
+
+# Password required to access the app.
+APP_PASSWORD = "acne2026"
+
+
+@app.before_request
+def require_login():
+    """Gate every route (except the login page and static files) behind the password."""
+    if request.endpoint in ("login", "static"):
+        return None
+    if session.get("authenticated"):
+        return None
+    return redirect(url_for("login"))
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        if request.form.get('password') == APP_PASSWORD:
+            session['authenticated'] = True
+            return redirect(url_for('index'))
+        error = 'Incorrect password'
+    return render_template('login.html', error=error)
+
 
 # Load MODEL_ID from config.yml
 def load_model_id():
@@ -108,10 +134,38 @@ def load_model_id():
 
 MODEL_ID = load_model_id()
 
+# Single source of truth for the vLLM endpoints so the health check and the inference client
+# can never drift to different ports (the bug: health-checked :8000 while MrModel defaulted to
+# :8010 -> "Connection error" at run time). Honors the same env vars MrModel reads. By default the
+# app round-robins across the local vLLM (:8000, the port start_vllm.sh / run_both.sh launch on)
+# AND the remote "communication" vLLM, exactly like run_both.sh -- MrModel load-balances across the
+# comma-separated list (see models.py _route/_pick). The remote endpoint is on the tailnet, so it
+# must go through the Tailscale userspace proxy (VLLM_PROXY); MrModel applies that proxy ONLY to
+# non-local URLs, so defaulting it here leaves the local endpoint connecting directly.
+COMMUNICATION_VLLM_URL = os.environ.get(
+    "COMMUNICATION_VLLM_URL", "http://100.119.93.116:9090/v1"
+)
+os.environ.setdefault("VLLM_PROXY", "http://localhost:1055")
+
+def _resolve_vllm_base_urls():
+    base_url = os.environ.get("VLLM_BASE_URL")
+    if base_url is None:
+        vllm_port = os.environ.get("VLLM_PORT", "8000")
+        local_url = f"http://localhost:{vllm_port}/v1"
+        base_url = f"{local_url},{COMMUNICATION_VLLM_URL}"
+    return [u.strip() for u in base_url.split(",") if u.strip()]
+
+VLLM_BASE_URLS = _resolve_vllm_base_urls()
+# Full comma-separated list handed to MrModel (round-robined across every endpoint).
+VLLM_BASE_URL = ",".join(VLLM_BASE_URLS)
+# Health-check only the first (local) endpoint -- it's the one that must be up to serve the UI.
+VLLM_HEALTH_URL = VLLM_BASE_URLS[0]
+
 def check_vllm_server():
-    """Check if vLLM server is running"""
+    """Check if the (local) vLLM server is running"""
+    health_url = VLLM_HEALTH_URL.rstrip("/").removesuffix("/v1") + "/health"
     try:
-        response = requests.get("http://localhost:8000/health", timeout=2)
+        response = requests.get(health_url, timeout=2)
         return response.status_code == 200
     except:
         return False
@@ -219,8 +273,8 @@ def run_query():
         if not target_cls:
             return jsonify({'error': f'Feature {feature_name} not found'}), 400
 
-        # Initialize model
-        model = MrModel(model_id=MODEL_ID)
+        # Initialize model on the SAME endpoint the health check verified.
+        model = MrModel(model_id=MODEL_ID, base_url=VLLM_BASE_URL)
 
         # auto_prompt-identical train/val split (see load_train_val_split). The human plays the
         # optimizer: they see ALL errors on TRAIN and edit the prompt; VAL is reported as a bare

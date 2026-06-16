@@ -14,9 +14,10 @@ Alcohol amount: majority case
 Transplant: One boolean column per organ (keyword)
 Transplant Date: One date column per organ (keyword) choosing the earliest date for that organ
 Disease: One column per disease name
-Cancer cancer: Each cancer type is categorized by its earliest diagnosis date into preexisting
-    (before the outcome window) or outcome (first diagnosed in the outcome window = incident),
-    producing one boolean column per cancer type keyword: cancer_preexisting__<kw> / cancer_outcome__<kw>.
+Cancer cancer: Each cancer Diagnosis description (col D of ICD_Cancer_Codes_Grouped.xlsx,
+    mapped from each record's ICD code) is categorized by its earliest diagnosis date into
+    preexisting (before the outcome window) or outcome (first diagnosed in the outcome window =
+    incident), producing one boolean column per diagnosis: cancer_preexisting__<dx> / cancer_outcome__<dx>.
 Cancer stage at diagnosis: One column per cancer type keyword, choosing the highest stage
 Cancer max stage: One column per cancer type keyword, choosing the highest stage
 Cancer family any: One column per cancer type keyword
@@ -36,7 +37,7 @@ from get_followup_time import (
     compute_followup_components,
     OUTPUT_PATH as FOLLOWUP_OUTPUT_PATH,
 )
-from ydata_profiling import ProfileReport
+# from data_profiling import ProfileReport
 # --- Constants ---
 
 OUTPUT_DIR = Path("full_inference_out")
@@ -55,6 +56,27 @@ STAGE_FEATURES = {"cancer_stage_at_diagnosis", "cancer_maximum_stage"}
 
 # Date feature: one column per keyword, pick earliest date
 DATE_FEATURES = {"cancer_date_of_diagnosis"}
+
+# --- Cancer ICD code -> Diagnosis description (col D of the grouped codes file) ---
+# Cancers are reported by their Diagnosis description (col D), NOT the broader Cancer
+# Group (col A). Each cancer_cancer record carries its raw ICD code; we prefix-match it
+# to the codes in this file to recover the Diagnosis.
+CANCER_CODES_PATH = Path("labeled_data/ICD_Cancer_Codes_Grouped.xlsx")
+_cancer_code_df = pd.read_excel(CANCER_CODES_PATH)
+ICD_CODE_TO_DIAGNOSIS = {
+    str(row["Code"]).strip(): row["Diagnosis"] for _, row in _cancer_code_df.iterrows()
+}
+# Longest code first so the most specific prefix wins (all codes are 3 chars today, but
+# this keeps matching robust if longer/overlapping codes are ever added).
+_CANCER_CODE_PREFIXES = sorted(ICD_CODE_TO_DIAGNOSIS, key=len, reverse=True)
+
+
+def icd_to_diagnosis(icd_code):
+    """Map a raw ICD code (e.g. '173.3') to its cancer Diagnosis description by prefix match."""
+    for prefix in _CANCER_CODE_PREFIXES:
+        if icd_code.startswith(prefix):
+            return ICD_CODE_TO_DIAGNOSIS[prefix]
+    raise ValueError(f"ICD code {icd_code!r} not found in {CANCER_CODES_PATH}")
 
 # Antibiotic keyword -> class mapping
 ABX_KW_TO_CLASS = {}
@@ -278,7 +300,7 @@ def pool_patient_records(records, index_date):
             for period, by_kw in _group_by_period_and_keyword(feature_records).items():
                 for kw, kw_recs in by_kw.items():
                     disease_name = kw_recs[0].get("disease", kw_recs[0].get("Code", "unknown"))
-                    disease_name = disease_name.replace(",", ";")
+                    disease_name = disease_name.replace(",", ";").replace(" ", "_")
                     col_name = f"disease__{period}__{disease_name}"
                     result[col_name] = "Yes"
 
@@ -288,39 +310,41 @@ def pool_patient_records(records, index_date):
             for period, by_kw in _group_by_period_and_keyword(feature_records, rec_key_fn=rec_key_fn).items():
                 for kw, kw_recs in by_kw.items():
                     preds = [r["prediction"] for r in kw_recs]
-                    col_name = f"{feature_name}__{period}__{kw}"
+                    col_name = f"{feature_name}__{period}__{kw}".replace(" ", "_")
                     result[col_name] = pool_any_yes(preds)
                     # Add medication descriptions for antibiotics
                     if feature_name == "antibiotics":
                         meds = sorted({r["Medication_Description"] for r in kw_recs if r.get("Medication_Description")})
                         if meds:
-                            result[f"antibiotics_meds__{period}__{kw}"] = "; ".join(meds)
+                            result[f"antibiotics_meds__{period}__{kw}".replace(" ", "_")] = "; ".join(meds)
 
-        # --- Cancer occurrence: split each cancer type into preexisting vs outcome by its ---
-        # --- EARLIEST diagnosis date, so prevalent cancers don't count as incident outcomes. ---
+        # --- Cancer occurrence: report by Diagnosis description (col D), splitting each ---
+        # --- diagnosis into preexisting vs outcome by its EARLIEST diagnosis date, so ---
+        # --- prevalent cancers don't count as incident outcomes. ---
         elif feature_name == "cancer_cancer":
-            by_kw = defaultdict(list)
+            by_dx = defaultdict(list)
             for rec in feature_records:
-                by_kw[rec["keyword"]].append(rec)
-            for kw, kw_recs in by_kw.items():
-                preds = [r["prediction"] for r in kw_recs]
-                # Skip cancer keywords where no record says "Yes"
+                by_dx[icd_to_diagnosis(rec["icd_code"])].append(rec)
+            for dx, dx_recs in by_dx.items():
+                preds = [r["prediction"] for r in dx_recs]
+                # Skip diagnoses where no record says "Yes"
                 # (filters out noise columns from non-cancer ICD codes in existing data)
                 if "Yes" not in preds:
                     continue
-                earliest_dx = min(r["_parsed_date"] for r in kw_recs)
+                earliest_dx = min(r["_parsed_date"] for r in dx_recs)
                 cat = classify_cancer_period(earliest_dx, outcome_window_start)  # CancerPeriod
-                result[f"cancer_{cat}__{kw}"] = pool_any_yes(preds)
-                icds = sorted({r["icd_code"] for r in kw_recs if r["icd_code"]})
+                dx_col = dx.replace(",", ";").replace(" ", "_")  # diagnoses contain commas/spaces; keep CSV columns clean
+                result[f"cancer_{cat}__{dx_col}"] = pool_any_yes(preds)
+                icds = sorted({r["icd_code"] for r in dx_recs if r["icd_code"]})
                 if icds:
-                    result[f"cancer_{cat}_icd__{kw}"] = "; ".join(icds)
+                    result[f"cancer_{cat}_icd__{dx_col}"] = "; ".join(icds)
 
         # --- Stage features: highest stage per keyword ---
         elif feature_name in STAGE_FEATURES:
             for period, by_kw in _group_by_period_and_keyword(feature_records).items():
                 for kw, kw_recs in by_kw.items():
                     preds = [r["prediction"] for r in kw_recs]
-                    col_name = f"{feature_name}__{period}__{kw}"
+                    col_name = f"{feature_name}__{period}__{kw}".replace(" ", "_")
                     result[col_name] = pool_highest_stage(preds)
 
         # --- Date features: earliest date per keyword ---
@@ -328,21 +352,21 @@ def pool_patient_records(records, index_date):
             for period, by_kw in _group_by_period_and_keyword(feature_records).items():
                 for kw, kw_recs in by_kw.items():
                     preds = [r["prediction"] for r in kw_recs]
-                    col_name = f"{feature_name}__{period}__{kw}"
+                    col_name = f"{feature_name}__{period}__{kw}".replace(" ", "_")
                     result[col_name] = pool_earliest_date(preds)
 
         # --- Antibiotic duration numeric: sum of distinct durations per class (value-dedup) ---
         elif feature_name == "antibiotic_duration_numeric":
             for period, by_kw in _group_by_period_and_keyword(feature_records, rec_key_fn=abx_record_to_class).items():
                 for kw, kw_recs in by_kw.items():
-                    col_name = f"antibiotic_duration_numeric__{period}__{kw}"
+                    col_name = f"antibiotic_duration_numeric__{period}__{kw}".replace(" ", "_")
                     result[col_name] = pool_abx_duration_numeric(kw_recs)
 
         # --- Demographics: one column per keyword, take the value directly ---
         elif feature_name == "demographics":
             for period, by_kw in _group_by_period_and_keyword(feature_records).items():
                 for kw, kw_recs in by_kw.items():
-                    col_name = f"demographics__{kw}"
+                    col_name = f"demographics__{kw}".replace(" ", "_")
                     result[col_name] = kw_recs[0]["prediction"]
 
         # --- Contraceptives: boolean presence (any record -> "Yes") ---
@@ -461,12 +485,12 @@ def main():
     print(f"  Abx patients:     {cancer_abx}/{n_abx} ({pct_abx:.1f}%) have a cancer outcome")
     print(f"  Non-abx patients: {cancer_no_abx}/{n_no_abx} ({pct_no_abx:.1f}%) have a cancer outcome")
 
-    # Generate pandas profiling report
-    profile_path = OUTPUT_DIR / "pooled_records_profile.html"
-    print(f"Generating profile report...")
-    profile = ProfileReport(df, title="Pooled Records Profile")
-    profile.to_file(profile_path)
-    print(f"Wrote profile report to {profile_path}")
+    # # Generate pandas profiling report
+    # profile_path = OUTPUT_DIR / "pooled_records_profile.html"
+    # print(f"Generating profile report...")
+    # profile = ProfileReport(df, title="Pooled Records Profile")
+    # profile.to_file(profile_path)
+    # print(f"Wrote profile report to {profile_path}")
 
 
 if __name__ == "__main__":

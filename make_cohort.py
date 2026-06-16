@@ -401,7 +401,7 @@ def plot_match_distributions(matches_list, n_required, cases_df, controls_df, ou
         ctrl_prop = mcontrols[col].astype(str).value_counts(normalize=True).reindex(cats, fill_value=0.0)
         x = np.arange(len(cats))
         w = 0.4
-        ax.bar(x - w / 2, case_prop.values, w, label="Cases", color=CASE_COLOR)
+        ax.bar(x - w / 2, case_prop.values, w, label="Treatment", color=CASE_COLOR)
         ax.bar(x + w / 2, ctrl_prop.values, w, label="Controls", color=CONTROL_COLOR)
         ax.set_xticks(x)
         ax.set_xticklabels(cats, rotation=45, ha="right")
@@ -411,7 +411,7 @@ def plot_match_distributions(matches_list, n_required, cases_df, controls_df, ou
 
         md_lines.append(f"## {label}")
         md_lines.append("")
-        md_lines.append("| Category | Cases | Controls |")
+        md_lines.append("| Category | Treatment | Controls |")
         md_lines.append("|---|---|---|")
         for c in cats:
             md_lines.append(f"| {c} | {case_prop[c]:.3f} | {ctrl_prop[c]:.3f} |")
@@ -420,7 +420,7 @@ def plot_match_distributions(matches_list, n_required, cases_df, controls_df, ou
     # Age: continuous, so use an overlaid density histogram with shared bins
     ax = axes[5]
     bins = np.linspace(min_age, max_age, 16)
-    ax.hist(mcases["study_age"], bins=bins, density=True, alpha=0.5, label="Cases", color=CASE_COLOR)
+    ax.hist(mcases["study_age"], bins=bins, density=True, alpha=0.5, label="Treatment", color=CASE_COLOR)
     ax.hist(mcontrols["study_age"], bins=bins, density=True, alpha=0.5, label="Controls", color=CONTROL_COLOR)
     ax.set_xlabel("Age at index date")
     ax.set_ylabel("Density")
@@ -429,7 +429,7 @@ def plot_match_distributions(matches_list, n_required, cases_df, controls_df, ou
 
     md_lines.append("## Age (at index date)")
     md_lines.append("")
-    md_lines.append("| Statistic | Cases | Controls |")
+    md_lines.append("| Statistic | Treatment | Controls |")
     md_lines.append("|---|---|---|")
     for stat, fn in [("n", len), ("mean", lambda s: s.mean()), ("std", lambda s: s.std()),
                      ("median", lambda s: s.median()), ("min", lambda s: s.min()), ("max", lambda s: s.max())]:
@@ -438,7 +438,7 @@ def plot_match_distributions(matches_list, n_required, cases_df, controls_df, ou
         md_lines.append(f"| {stat} | {cv:.2f} | {tv:.2f} |")
     md_lines.append("")
 
-    fig.suptitle(f"Matched cohort feature distributions — round {n_required}/6 (cases vs controls, n_pairs={n_pairs})")
+    fig.suptitle(f"Matched cohort feature distributions — round {n_required}/6 (treatment vs controls, n_pairs={n_pairs})")
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     png_path = out_dir / f"round_{n_required}_distributions.png"
     fig.savefig(png_path, dpi=150, bbox_inches="tight")
