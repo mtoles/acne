@@ -26,6 +26,8 @@ cohort/
 full_inference_out/
 verl/
 *.ipynb
+stats/eda_output
+stats/R_libs
 
 
 *.png

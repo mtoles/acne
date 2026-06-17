@@ -335,9 +335,6 @@ def pool_patient_records(records, index_date):
                 cat = classify_cancer_period(earliest_dx, outcome_window_start)  # CancerPeriod
                 dx_col = dx.replace(",", ";").replace(" ", "_")  # diagnoses contain commas/spaces; keep CSV columns clean
                 result[f"cancer_{cat}__{dx_col}"] = pool_any_yes(preds)
-                icds = sorted({r["icd_code"] for r in dx_recs if r["icd_code"]})
-                if icds:
-                    result[f"cancer_{cat}_icd__{dx_col}"] = "; ".join(icds)
 
         # --- Stage features: highest stage per keyword ---
         elif feature_name in STAGE_FEATURES:
@@ -477,7 +474,7 @@ def main():
 
     # --- Cancer OUTCOME rate by abx status (cancers in the outcome window) ---
     abx_cols = [c for c in df.columns if c.startswith("antibiotics__")]
-    cancer_cols = [c for c in df.columns if c.startswith("cancer_outcome__") and not c.startswith("cancer_outcome_icd__")]
+    cancer_cols = [c for c in df.columns if c.startswith("cancer_outcome__")]
     has_abx = (df[abx_cols] == "Yes").any(axis=1) if abx_cols else pd.Series(False, index=df.index)
     has_cancer = (df[cancer_cols] == "Yes").any(axis=1) if cancer_cols else pd.Series(False, index=df.index)
 

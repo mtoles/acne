@@ -171,7 +171,7 @@ class MrModel:
             # otherwise fall back to a local port-based default.
             base_url = os.environ.get("VLLM_BASE_URL")
         if base_url is None:
-            vllm_port = os.environ.get("VLLM_PORT", "8010")
+            vllm_port = os.environ.get("VLLM_PORT", "8000")
             base_url = f"http://localhost:{vllm_port}/v1"
         self.model_id = model_id
         self.api_key = api_key
@@ -181,21 +181,41 @@ class MrModel:
         self.base_urls = [u.strip() for u in base_url.split(",") if u.strip()]
         self.clients = [_make_openai_client(u, api_key) for u in self.base_urls]
         self.client = self.clients[0]  # back-compat: default/first endpoint
-        # Routing signal #1: each server's OWN outstanding-request count (running + waiting),
-        # polled from its /metrics in a background thread. This is the aggregate across every
-        # process hitting that server -- so it sees load the other run_both processes add,
-        # which this process's local in-flight count cannot. Starts at 0 (looks empty) until
-        # the first poll lands, so early picks fall back to local in-flight below.
-        self._server_load = [0.0] * len(self.base_urls)
         # Routing signal #2: requests THIS process has dispatched but not yet gotten back.
         # Corrects for poll staleness -- without it, a burst between polls all sees the same
         # stale load and dogpiles one server. (see _route)
         self._inflight = [0] * len(self.base_urls)
         self._lb_lock = threading.Lock()
         self._poll_interval = float(os.environ.get("VLLM_POLL_INTERVAL", "1.0"))
-        # Only worth polling when there's a choice to make.
+        self._poll_clients = [_make_metrics_client(u) for u in self.base_urls]
+
+        # Routing signal #1: each server's OWN outstanding-request count (running + waiting),
+        # polled from its /metrics. This is the aggregate across every process hitting that
+        # server -- so it sees load the other run_both processes add, which this process's local
+        # in-flight count cannot.
+        #
+        # Initialize it with a SYNCHRONOUS health check rather than 0.0: probe every server's
+        # /metrics up front so we never route to a server that isn't up. A server that doesn't
+        # respond starts parked at +inf (so it's never picked) instead of looking empty at load
+        # 0.0 and getting the first request -- which, with no try/except around the call, would
+        # crash. If NONE respond we crash here with a clear message instead of per-request.
+        self._server_load = [self._fetch_outstanding(j, u) for j, u in enumerate(self.base_urls)]
+        up_urls = [u for u, load in zip(self.base_urls, self._server_load) if load != float("inf")]
+        down_urls = [u for u, load in zip(self.base_urls, self._server_load) if load == float("inf")]
+        for u in up_urls:
+            print(f"vLLM endpoint UP (responding to /metrics): {u}")
+        for u in down_urls:
+            print(f"vLLM endpoint DOWN (no /metrics response) -- will be skipped: {u}")
+        if not up_urls:
+            raise RuntimeError(
+                "No vLLM endpoints responded to /metrics; refusing to start inference. "
+                f"Checked: {self.base_urls}"
+            )
+
+        # Only worth polling in the background when there's a choice to make. (A down server in a
+        # multi-endpoint setup is kept at +inf by the poll loop, and rejoins automatically if it
+        # comes back up.)
         if len(self.base_urls) > 1:
-            self._poll_clients = [_make_metrics_client(u) for u in self.base_urls]
             t = threading.Thread(target=self._poll_loop, daemon=True)
             t.start()
 
