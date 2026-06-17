@@ -19,42 +19,14 @@ source('/home/mtoles/acne/stats/1_cleanup.R')
 
 df <- final %>%
   filter(Cancer.Dx == "Cancer") %>%
-  select(Any.Abx,
-         Ca.Skin.NM,
-         Ca.Breast,
-         Ca.Melanoma,
-         Ca.Thyroid,
-         Ca.Lung,
-         Ca.Colorectal,
-         Ca.Prostate,
-         Ca.Lymphoma,
-         Ca.Uterine,
-         Ca.Kidney,
-         Ca.Bladder,
-         Ca.Ovary,
-         Ca.Leukemia,
-         Ca.Brain,
-         Ca.Pancreas,
-         Ca.Cervix)
+  select(Any.Abx, all_of(ca.type.cols))
+
+## Display labels for each raw cancer type column (auto-generated in 1_cleanup.R)
+type.labels <- setNames(as.list(ca.type.labels), ca.type.cols)
 
 table3 <- tbl_summary(df,
                       by       = Any.Abx,
-                      label    = list(Ca.Skin.NM    ~ "Non-melanoma skin cancer",
-                                      Ca.Breast     ~ "Breast cancer",
-                                      Ca.Melanoma   ~ "Melanoma",
-                                      Ca.Thyroid    ~ "Thyroid cancer",
-                                      Ca.Lung       ~ "Lung cancer",
-                                      Ca.Colorectal ~ "Colorectal cancer",
-                                      Ca.Prostate   ~ "Prostate cancer",
-                                      Ca.Lymphoma   ~ "Lymphoma",
-                                      Ca.Uterine    ~ "Uterine / endometrial cancer",
-                                      Ca.Kidney     ~ "Kidney cancer",
-                                      Ca.Bladder    ~ "Bladder cancer",
-                                      Ca.Ovary      ~ "Ovarian cancer",
-                                      Ca.Leukemia   ~ "Leukemia",
-                                      Ca.Brain      ~ "Brain cancer",
-                                      Ca.Pancreas   ~ "Pancreatic cancer",
-                                      Ca.Cervix     ~ "Cervical cancer"),
+                      label    = type.labels,
                       statistic = list(all_categorical() ~ "{n} ({p}%)"),
                       missing      = "ifany",
                       missing_text = "Unknown") %>%

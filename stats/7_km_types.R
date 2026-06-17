@@ -20,7 +20,7 @@ source('/home/mtoles/acne/stats/1_cleanup.R')
 ## Restrict to patients with at most one cancer type so that follow.time
 ## (time to first cancer) is unambiguous for type-specific event coding.
 final.km <- final %>%
-  mutate(n.ca.types = rowSums(across(starts_with("Ca."),
+  mutate(n.ca.types = rowSums(across(all_of(ca.type.cols),
                                      ~ as.integer(.x == "Yes")),
                               na.rm = TRUE)) %>%
   filter(n.ca.types <= 1)
@@ -64,22 +64,26 @@ plot.type.km <- function(data, ca.col, cancer.label, filename) {
 }
 
 ################################################################################
-## 5. cancer type-specific KM figures
+## 5. cancer type-specific KM figures (one per raw cancer type, automatic)
+##
+## Types with fewer than MIN.TYPE.EVENTS events in the single-cancer subset are
+## skipped — a KM curve built on a handful of events is not interpretable and
+## can produce a degenerate fit.
 ################################################################################
 
-plot.type.km(final.km, "Ca.Skin.NM",    "Non-Melanoma Skin Cancer", "KM4_nmsc.pdf")
-plot.type.km(final.km, "Ca.Breast",     "Breast Cancer",            "KM4_breast.pdf")
-plot.type.km(final.km, "Ca.Melanoma",   "Melanoma",                 "KM4_melanoma.pdf")
-plot.type.km(final.km, "Ca.Thyroid",    "Thyroid Cancer",           "KM4_thyroid.pdf")
-plot.type.km(final.km, "Ca.Lung",       "Lung Cancer",              "KM4_lung.pdf")
-plot.type.km(final.km, "Ca.Colorectal", "Colorectal Cancer",        "KM4_colorectal.pdf")
-plot.type.km(final.km, "Ca.Prostate",   "Prostate Cancer",          "KM4_prostate.pdf")
-plot.type.km(final.km, "Ca.Lymphoma",   "Lymphoma",                 "KM4_lymphoma.pdf")
-plot.type.km(final.km, "Ca.Uterine",    "Uterine Cancer",           "KM4_uterine.pdf")
-plot.type.km(final.km, "Ca.Kidney",     "Kidney Cancer",            "KM4_kidney.pdf")
-plot.type.km(final.km, "Ca.Bladder",    "Bladder Cancer",           "KM4_bladder.pdf")
-plot.type.km(final.km, "Ca.Ovary",      "Ovarian Cancer",           "KM4_ovary.pdf")
-plot.type.km(final.km, "Ca.Leukemia",   "Leukemia",                 "KM4_leukemia.pdf")
-plot.type.km(final.km, "Ca.Brain",      "Brain Cancer",             "KM4_brain.pdf")
-plot.type.km(final.km, "Ca.Pancreas",   "Pancreatic Cancer",        "KM4_pancreas.pdf")
-plot.type.km(final.km, "Ca.Cervix",     "Cervical Cancer",          "KM4_cervix.pdf")
+MIN.TYPE.EVENTS <- 10
+
+slugify <- function(x) tolower(gsub("_+", "_", gsub("[^A-Za-z0-9]+", "_", x)))
+
+for (i in seq_along(ca.type.cols)) {
+  ca.col   <- ca.type.cols[i]
+  lbl      <- ca.type.labels[i]
+  n.events <- sum(final.km[[ca.col]] == "Yes", na.rm = TRUE)
+
+  if (n.events < MIN.TYPE.EVENTS) {
+    message(sprintf("KM skipped: %-55s %d events (< %d)", lbl, n.events, MIN.TYPE.EVENTS))
+    next
+  }
+
+  plot.type.km(final.km, ca.col, lbl, paste0("KM4_", slugify(lbl), ".pdf"))
+}

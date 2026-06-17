@@ -30,6 +30,7 @@ dir.create(output, showWarnings = FALSE)
 raw <- read_csv(file.path(input, "pooled_records.csv"),
                 col_types   = cols(.default = "c"),
                 name_repair = "minimal")
+# Column schema: full_inference_out/pooled_records_columns.txt
 
 ################################################################################
 ## 4. column inventory
@@ -38,7 +39,7 @@ raw <- read_csv(file.path(input, "pooled_records.csv"),
 all.cols <- names(raw)
 
 dur.cols            <- grep("^antibiotic_duration_numeric__treatment__", all.cols, value = TRUE)
-cancer.outcome.cols <- grep("^cancer_cancer__outcome__",                 all.cols, value = TRUE)
+cancer.outcome.cols <- grep("^cancer_outcome__",                         all.cols, value = TRUE)
 cancer.type.cols    <- grep("^cancer_date_of_diagnosis__outcome__",      all.cols, value = TRUE)
 fam.cols            <- grep("^cancer_family_any__pre_index__",           all.cols, value = TRUE)
 dis.cols            <- grep("^disease__pre_index__",                     all.cols, value = TRUE)
@@ -154,35 +155,8 @@ raw.clean <- raw %>%
       TRUE ~ "None"),
 
     ## --- cancer type indicators ---
-    Ca.Skin.NM    = case_when(`cancer_cancer__outcome__Other and unspecified malignant neoplasm of skin` == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Breast     = case_when(`cancer_cancer__outcome__Malignant neoplasms of breast`                   == "Yes" |
-                              `cancer_cancer__outcome__female breast`                                   == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Melanoma   = case_when(`cancer_cancer__outcome__melanoma of skin`                                == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Thyroid    = case_when(`cancer_cancer__outcome__thyroid gland`                                   == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Lung       = case_when(`cancer_cancer__outcome__bronchus and lung`                               == "Yes" |
-                              `cancer_cancer__outcome__trachea bronchus and lung`                       == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Colorectal = case_when(`cancer_cancer__outcome__colon`                                           == "Yes" |
-                              `cancer_cancer__outcome__rectum`                                          == "Yes" |
-                              `cancer_cancer__outcome__rectosigmoid junction`                           == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Prostate   = case_when(`cancer_cancer__outcome__prostate`                                        == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Lymphoma   = case_when(`cancer_cancer__outcome__Other specified and unspecified types of non-Hodgkin lymphoma` == "Yes" |
-                              `cancer_cancer__outcome__Non-follicular lymphoma`                         == "Yes" |
-                              `cancer_cancer__outcome__Hodgkin lymphoma`                                == "Yes" |
-                              `cancer_cancer__outcome__Follicular lymphoma`                             == "Yes" |
-                              `cancer_cancer__outcome__Malignant immunoproliferative diseases and certain other B-cell lymphomas` == "Yes" |
-                              `cancer_cancer__outcome__Mature T/NK-cell lymphomas`                      == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Uterine    = case_when(`cancer_cancer__outcome__corpus uteri`                                    == "Yes" |
-                              `cancer_cancer__outcome__body of uterus`                                  == "Yes" |
-                              `cancer_cancer__outcome__uterus, part unspecified`                        == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Kidney     = case_when(`cancer_cancer__outcome__kidney, except renal pelvis`                     == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Bladder    = case_when(`cancer_cancer__outcome__bladder`                                         == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Ovary      = case_when(`cancer_cancer__outcome__ovary`                                           == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Leukemia   = case_when(`cancer_cancer__outcome__Lymphoid leukemia`                               == "Yes" |
-                              `cancer_cancer__outcome__Myeloid leukemia`                                == "Yes" |
-                              `cancer_cancer__outcome__Leukemia of unspecified cell type`               == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Brain      = case_when(`cancer_cancer__outcome__brain`                                           == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Pancreas   = case_when(`cancer_cancer__outcome__pancreas`                                        == "Yes" ~ "Yes", TRUE ~ "No"),
-    Ca.Cervix     = case_when(`cancer_cancer__outcome__cervix uteri`                                    == "Yes" ~ "Yes", TRUE ~ "No"),
+    ## Generated automatically (one Yes/No column per raw cancer_outcome__<label>
+    ## column) further below — no manual grouping. See section 7.
 
     ## --- survival dates ---
     index.dt        = as.Date(substr(`index_date`,                      1, 10)),
@@ -285,22 +259,7 @@ raw.clean <- raw %>%
          Fam.Cancer,
          n.comorbidities,
          Comorbidities,
-         Ca.Skin.NM,
-         Ca.Breast,
-         Ca.Melanoma,
-         Ca.Thyroid,
-         Ca.Lung,
-         Ca.Colorectal,
-         Ca.Prostate,
-         Ca.Lymphoma,
-         Ca.Uterine,
-         Ca.Kidney,
-         Ca.Bladder,
-         Ca.Ovary,
-         Ca.Leukemia,
-         Ca.Brain,
-         Ca.Pancreas,
-         Ca.Cervix,
+         all_of(cancer.outcome.cols),   # raw per-type indicators, recoded in section 7
          follow.time,
          surv.event)
 
@@ -366,25 +325,26 @@ final <- raw.clean %>%
                         levels = c("No", "Yes")),
 
     Comorbidities = factor(Comorbidities,
-                           levels = c("None", "1", "2", "3+")),
-
-    Ca.Skin.NM    = factor(Ca.Skin.NM,    levels = c("No", "Yes")),
-    Ca.Breast     = factor(Ca.Breast,     levels = c("No", "Yes")),
-    Ca.Melanoma   = factor(Ca.Melanoma,   levels = c("No", "Yes")),
-    Ca.Thyroid    = factor(Ca.Thyroid,    levels = c("No", "Yes")),
-    Ca.Lung       = factor(Ca.Lung,       levels = c("No", "Yes")),
-    Ca.Colorectal = factor(Ca.Colorectal, levels = c("No", "Yes")),
-    Ca.Prostate   = factor(Ca.Prostate,   levels = c("No", "Yes")),
-    Ca.Lymphoma   = factor(Ca.Lymphoma,   levels = c("No", "Yes")),
-    Ca.Uterine    = factor(Ca.Uterine,    levels = c("No", "Yes")),
-    Ca.Kidney     = factor(Ca.Kidney,     levels = c("No", "Yes")),
-    Ca.Bladder    = factor(Ca.Bladder,    levels = c("No", "Yes")),
-    Ca.Ovary      = factor(Ca.Ovary,      levels = c("No", "Yes")),
-    Ca.Leukemia   = factor(Ca.Leukemia,   levels = c("No", "Yes")),
-    Ca.Brain      = factor(Ca.Brain,      levels = c("No", "Yes")),
-    Ca.Pancreas   = factor(Ca.Pancreas,   levels = c("No", "Yes")),
-    Ca.Cervix     = factor(Ca.Cervix,     levels = c("No", "Yes"))
+                           levels = c("None", "1", "2", "3+"))
   ) %>%
   filter(!is.na(Cancer.Dx),
          !is.na(follow.time),
          follow.time > 0)
+
+################################################################################
+## 7. cancer type indicators (automatic, one per raw cancer_outcome__ column)
+##
+## Every `cancer_outcome__<label>` column becomes its own Yes/No factor — no
+## manual grouping. Downstream scripts iterate over `ca.type.cols` (the column
+## names, e.g. "Non-melanoma_skin_cancer") and `ca.type.labels` (display labels
+## with underscores turned into spaces). The two vectors are positionally
+## aligned. Edit nothing here when the label set changes — it adapts.
+################################################################################
+
+ca.type.cols   <- sub("^cancer_outcome__", "", cancer.outcome.cols)
+ca.type.labels <- str_trim(gsub("_", " ", ca.type.cols))
+
+final <- final %>%
+  mutate(across(all_of(cancer.outcome.cols),
+                ~ factor(if_else(.x == "Yes", "Yes", "No"), levels = c("No", "Yes")))) %>%
+  rename_with(~ sub("^cancer_outcome__", "", .x), all_of(cancer.outcome.cols))
