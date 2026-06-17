@@ -365,3 +365,14 @@ final <- final %>%
   mutate(across(all_of(cancer.outcome.cols),
                 ~ factor(if_else(.x == "Yes", "Yes", "No"), levels = c("No", "Yes")))) %>%
   rename_with(~ sub("^cancer_outcome__", "", .x), all_of(cancer.outcome.cols))
+
+################################################################################
+## 8. shared Cox covariate set
+##
+## Fully-adjusted covariate set used by every Cox model (6_cox.R, 8_cox_types.R).
+## Defined once here so the adjustment set cannot silently diverge between scripts.
+################################################################################
+
+adj.vars <- c("Age", "Sex", "Race", "BMI.Category", "Smoking",
+              "Alcohol", "Contraceptives", "Fam.Cancer", "Transplant",
+              "Comorbidities", "Prior.Cancer")

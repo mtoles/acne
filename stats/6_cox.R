@@ -20,10 +20,7 @@ source('/home/mtoles/acne/stats/1_cleanup.R')
 ## Drop empty factor levels so all-zero dummy columns don't enter the models
 final.cox <- final %>% mutate(across(where(is.factor), droplevels))
 
-## Fully adjusted covariate set
-adj.vars <- c("Age", "Sex", "Race", "BMI.Category", "Smoking",
-              "Alcohol", "Contraceptives", "Fam.Cancer", "Transplant",
-              "Comorbidities", "Prior.Cancer")
+## Fully adjusted covariate set (adj.vars) is defined in 1_cleanup.R
 
 ## Helper: run unadj / age-adj / fully-adj Cox and return tidy tibble
 run.cox <- function(exposure, label) {

@@ -27,9 +27,7 @@ final.cox <- final %>%
   ## Drop empty factor levels so all-zero dummy columns don't enter the models
   mutate(across(where(is.factor), droplevels))
 
-adj.vars <- c("Age", "Sex", "Race", "BMI.Category", "Smoking",
-              "Alcohol", "Contraceptives", "Fam.Cancer", "Transplant",
-              "Comorbidities", "Prior.Cancer")
+## Fully adjusted covariate set (adj.vars) is defined in 1_cleanup.R
 
 ## Cancer type columns and labels are taken automatically from 1_cleanup.R
 ## (ca.type.cols / ca.type.labels) — one entry per raw cancer_outcome__ column.
