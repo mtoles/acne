@@ -23,10 +23,13 @@ final.cox <- final %>%
   mutate(n.ca.types = rowSums(across(all_of(ca.type.cols),
                                      ~ as.integer(.x == "Yes")),
                               na.rm = TRUE)) %>%
-  filter(n.ca.types <= 1)
+  filter(n.ca.types <= 1) %>%
+  ## Drop empty factor levels so all-zero dummy columns don't enter the models
+  mutate(across(where(is.factor), droplevels))
 
 adj.vars <- c("Age", "Sex", "Race", "BMI.Category", "Smoking",
-              "Alcohol", "Contraceptives", "Fam.Cancer", "Transplant")
+              "Alcohol", "Contraceptives", "Fam.Cancer", "Transplant",
+              "Comorbidities", "Prior.Cancer")
 
 ## Cancer type columns and labels are taken automatically from 1_cleanup.R
 ## (ca.type.cols / ca.type.labels) — one entry per raw cancer_outcome__ column.

@@ -43,6 +43,7 @@ cancer.outcome.cols <- grep("^cancer_outcome__",                         all.col
 cancer.type.cols    <- grep("^cancer_date_of_diagnosis__outcome__",      all.cols, value = TRUE)
 fam.cols            <- grep("^cancer_family_any__pre_index__",           all.cols, value = TRUE)
 dis.cols            <- grep("^disease__pre_index__",                     all.cols, value = TRUE)
+precancer.cols      <- grep("^cancer_preexisting__",                     all.cols, value = TRUE)
 
 REAL.ABX      <- c("AMOXICILLIN", "AZITHROMYCIN", "CEPHALEXIN", "TETRACYCLINE", "TMP-SMX")
 real.abx.cols <- paste0("antibiotics__treatment__", REAL.ABX)
@@ -154,6 +155,17 @@ raw.clean <- raw %>%
       n.comorbidities >= 3 ~ "3+",
       TRUE ~ "None"),
 
+    ## --- preexisting cancers: treated as a confounder, parallel to comorbidities ---
+    n.prior.cancer = rowSums(across(all_of(precancer.cols), ~ as.integer(.x == "Yes")),
+                             na.rm = TRUE),
+
+    Prior.Cancer = case_when(
+      n.prior.cancer == 0 ~ "None",
+      n.prior.cancer == 1 ~ "1",
+      n.prior.cancer == 2 ~ "2",
+      n.prior.cancer >= 3 ~ "3+",
+      TRUE ~ "None"),
+
     ## --- cancer type indicators ---
     ## Generated automatically (one Yes/No column per raw cancer_outcome__<label>
     ## column) further below — no manual grouping. See section 7.
@@ -259,6 +271,8 @@ raw.clean <- raw %>%
          Fam.Cancer,
          n.comorbidities,
          Comorbidities,
+         n.prior.cancer,
+         Prior.Cancer,
          all_of(cancer.outcome.cols),   # raw per-type indicators, recoded in section 7
          follow.time,
          surv.event)
@@ -325,7 +339,10 @@ final <- raw.clean %>%
                         levels = c("No", "Yes")),
 
     Comorbidities = factor(Comorbidities,
-                           levels = c("None", "1", "2", "3+"))
+                           levels = c("None", "1", "2", "3+")),
+
+    Prior.Cancer = factor(Prior.Cancer,
+                          levels = c("None", "1", "2", "3+"))
   ) %>%
   filter(!is.na(Cancer.Dx),
          !is.na(follow.time),
