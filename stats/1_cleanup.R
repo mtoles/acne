@@ -41,7 +41,7 @@ all.cols <- names(raw)
 dur.cols            <- grep("^antibiotic_duration_numeric__treatment__", all.cols, value = TRUE)
 cancer.outcome.cols <- grep("^cancer_outcome__",                         all.cols, value = TRUE)
 cancer.type.cols    <- grep("^cancer_date_of_diagnosis__outcome__",      all.cols, value = TRUE)
-fam.cols            <- grep("^cancer_family_any__pre_index__",           all.cols, value = TRUE)
+fam.cols            <- grep("^cancer_family_any__(pre_index|treatment)__", all.cols, value = TRUE)
 dis.cols            <- grep("^disease__pre_index__",                     all.cols, value = TRUE)
 precancer.cols      <- grep("^cancer_preexisting__",                     all.cols, value = TRUE)
 
