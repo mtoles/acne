@@ -17,15 +17,16 @@ source('/home/mtoles/acne/stats/1_cleanup.R')
 ## 3. data prep
 ################################################################################
 
-## Restrict to patients with at most one cancer type so that follow.time
-## (time to first cancer) is unambiguous for type-specific event coding.
-final.km <- final %>%
-  mutate(n.ca.types = rowSums(across(all_of(ca.type.cols),
-                                     ~ as.integer(.x == "Yes")),
-                              na.rm = TRUE)) %>%
-  filter(n.ca.types <= 1)
+## Keep ALL patients, including those with multiple cancer types. Each cancer
+## type gets its own survival clock (built in plot.type.km), so multi-cancer
+## patients no longer have to be dropped.
+final.km <- final
 
-xlim.max <- ceiling(max(final.km$follow.time, na.rm = TRUE) / 5) * 5
+## x-axis spans the longest possible type clock (start.dt -> censor.dt), since
+## non-cases are now followed to their censor rather than to first cancer.
+xlim.max <- ceiling(
+  max(as.numeric(final.km$censor.dt - final.km$start.dt) / 365.25, na.rm = TRUE) / 5
+) * 5
 pal.abx  <- c("#4A90D9", "#E05252")
 
 ################################################################################
@@ -34,10 +35,19 @@ pal.abx  <- c("#4A90D9", "#E05252")
 
 plot.type.km <- function(data, ca.col, cancer.label, filename) {
 
-  d <- data %>%
-    mutate(type.event = as.integer(.data[[ca.col]] == "Yes"))
+  dt.col <- paste0("dxdt__", ca.col)
 
-  km.fit <- survfit(Surv(follow.time, type.event) ~ Any.Abx, data = d)
+  ## Type-specific clock (marginal cause-specific; competing cancers ignored):
+  ## event = this cancer type; time = start.dt -> (its dx date if case, else censor.dt).
+  d <- data %>%
+    mutate(
+      type.event = as.integer(.data[[ca.col]] == "Yes"),
+      type.time  = as.numeric(if_else(type.event == 1L,
+                                      .data[[dt.col]], censor.dt) - start.dt) / 365.25
+    ) %>%
+    filter(!is.na(type.time), type.time > 0)
+
+  km.fit <- survfit(Surv(type.time, type.event) ~ Any.Abx, data = d)
 
   p <- ggsurvplot(
     km.fit,

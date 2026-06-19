@@ -17,13 +17,10 @@ source('/home/mtoles/acne/stats/1_cleanup.R')
 ## 3. data prep
 ################################################################################
 
-## Restrict to patients with at most one cancer type so that follow.time
-## (time to first cancer) is unambiguous for type-specific event coding.
+## Keep ALL patients, including those with multiple cancer types. Each cancer
+## type gets its own survival clock (built in run.type.cox), so multi-cancer
+## patients no longer have to be dropped.
 final.cox <- final %>%
-  mutate(n.ca.types = rowSums(across(all_of(ca.type.cols),
-                                     ~ as.integer(.x == "Yes")),
-                              na.rm = TRUE)) %>%
-  filter(n.ca.types <= 1) %>%
   ## Drop empty factor levels so all-zero dummy columns don't enter the models
   mutate(across(where(is.factor), droplevels))
 
@@ -47,12 +44,24 @@ MIN.TYPE.EVENTS <- 10
 
 run.type.cox <- function(data, ca.col, cancer.label) {
 
-  d <- data %>%
-    mutate(type.event = as.integer(.data[[ca.col]] == "Yes"))
+  dt.col <- paste0("dxdt__", ca.col)
 
-  f.unadj <- as.formula("Surv(follow.time, type.event) ~ Any.Abx")
-  f.age   <- as.formula("Surv(follow.time, type.event) ~ Any.Abx + Age")
-  f.full  <- as.formula(paste0("Surv(follow.time, type.event) ~ Any.Abx + ",
+  ## Type-specific clock (marginal cause-specific; competing cancers ignored):
+  ##   event = this cancer type
+  ##   time  = start.dt -> (this type's dx date if case, else censor.dt)
+  ## Non-cases — including patients with a DIFFERENT cancer — stay at risk until
+  ## their normal censor, so no one is dropped for having multiple cancers.
+  d <- data %>%
+    mutate(
+      type.event = as.integer(.data[[ca.col]] == "Yes"),
+      type.time  = as.numeric(if_else(type.event == 1L,
+                                      .data[[dt.col]], censor.dt) - start.dt) / 365.25
+    ) %>%
+    filter(!is.na(type.time), type.time > 0)
+
+  f.unadj <- as.formula("Surv(type.time, type.event) ~ Any.Abx")
+  f.age   <- as.formula("Surv(type.time, type.event) ~ Any.Abx + Age")
+  f.full  <- as.formula(paste0("Surv(type.time, type.event) ~ Any.Abx + ",
                                 paste(adj.vars, collapse = " + ")))
 
   fmt <- function(fit, model.label) {

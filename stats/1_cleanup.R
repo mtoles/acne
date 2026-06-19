@@ -244,7 +244,10 @@ raw.clean <- raw %>%
       Cancer.Dx == "Cancer" & !is.na(cancer.diag.dt) ~ cancer.diag.dt,
       TRUE ~ censor.dt),
 
-    follow.time = as.numeric(surv.end.dt - (index.dt + years(1))) / 365.25,
+    ## Start of follow-up: 1-year washout after index. Kept as a column so the
+    ## type-specific clocks (8_cox_types.R / 7_km_types.R) share the same origin.
+    start.dt    = index.dt + years(1),
+    follow.time = as.numeric(surv.end.dt - start.dt) / 365.25,
     surv.event  = as.integer(Cancer.Dx == "Cancer"),
 
   ) %>%
@@ -274,6 +277,9 @@ raw.clean <- raw %>%
          n.prior.cancer,
          Prior.Cancer,
          all_of(cancer.outcome.cols),   # raw per-type indicators, recoded in section 7
+         all_of(cancer.type.cols),      # raw per-type dx-date strings, parsed in section 7
+         start.dt,
+         censor.dt,
          follow.time,
          surv.event)
 
@@ -362,9 +368,27 @@ ca.type.cols   <- sub("^cancer_outcome__", "", cancer.outcome.cols)
 ca.type.labels <- str_trim(gsub("_", " ", ca.type.cols))
 
 final <- final %>%
+  ## indicators: recode Yes / (blank|NA) -> Yes / No (missing = "No" so non-cases
+  ## become "No" rather than NA), then strip the cancer_outcome__ prefix.
   mutate(across(all_of(cancer.outcome.cols),
-                ~ factor(if_else(.x == "Yes", "Yes", "No"), levels = c("No", "Yes")))) %>%
-  rename_with(~ sub("^cancer_outcome__", "", .x), all_of(cancer.outcome.cols))
+                ~ factor(if_else(.x == "Yes", "Yes", "No", missing = "No"),
+                         levels = c("No", "Yes")))) %>%
+  rename_with(~ sub("^cancer_outcome__", "", .x), all_of(cancer.outcome.cols)) %>%
+  ## per-type diagnosis dates: parse the raw date strings to Date and rename to
+  ## dxdt__<type>, positionally matching the ca.type.cols indicators above. These
+  ## drive the type-specific survival clock in 8_cox_types.R / 7_km_types.R.
+  mutate(across(all_of(cancer.type.cols),
+                ~ as.Date(substr(.x, 1, 10), format = "%Y-%m-%d"))) %>%
+  rename_with(~ paste0("dxdt__", sub("^cancer_date_of_diagnosis__outcome__", "", .x)),
+              all_of(cancer.type.cols))
+
+## Guard: every type flagged "Yes" must carry a parseable diagnosis date, because
+## its survival clock is dated from it. Crash rather than silently mis-time events.
+for (.t in ca.type.cols) {
+  .bad <- sum(final[[.t]] == "Yes" & is.na(final[[paste0("dxdt__", .t)]]))
+  if (.bad > 0) stop(sprintf("%d patient(s) have %s == 'Yes' but no diagnosis date", .bad, .t))
+}
+rm(.t, .bad)
 
 ################################################################################
 ## 8. shared Cox covariate set
