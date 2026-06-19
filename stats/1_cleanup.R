@@ -123,10 +123,29 @@ raw.clean <- raw %>%
       `contraceptives__treatment__pooled` == "Yes" ~ "Yes",
       TRUE ~ "No"),
 
+    ## Smoking status & packs/week amount, merged across periods with priority
+    ## pre_index > treatment > outcome (baseline preferred; fall back to later
+    ## periods for coverage, since most amount data sits in the follow-up window).
+    smk.status = coalesce(na_if(`smoking_status__pre_index__pooled`, ""),
+                          na_if(`smoking_status__treatment__pooled`, ""),
+                          na_if(`smoking_status__outcome__pooled`,   "")),
+    smk.amount = coalesce(na_if(`smoking_amount__pre_index__pooled`, ""),
+                          na_if(`smoking_amount__treatment__pooled`, ""),
+                          na_if(`smoking_amount__outcome__pooled`,   "")),
+
+    ## Packs/week bins: <2 = {0, 1-2}, <6 = {3-5}, 6+ = {6+}; anything else
+    ## (incl. "unknown quantity" and missing) -> "amt unknown". Used only to
+    ## subdivide current smokers below.
+    Smoke.Amt = case_when(
+      str_detect(smk.amount, "^0") | smk.amount == "1-2" ~ "<2",
+      smk.amount == "3-5"                                ~ "<6",
+      smk.amount == "6+"                                 ~ "6+",
+      TRUE                                               ~ "amt unknown"),
+
     Smoking = case_when(
-      str_detect(`smoking_status__pre_index__pooled`, "Never")   ~ "Never",
-      str_detect(`smoking_status__pre_index__pooled`, "Former")  ~ "Former",
-      str_detect(`smoking_status__pre_index__pooled`, "Current") ~ "Current",
+      str_detect(smk.status, "Never")   ~ "Never",
+      str_detect(smk.status, "Former")  ~ "Former",
+      str_detect(smk.status, "Current") ~ paste0("Current ", Smoke.Amt),
       TRUE ~ "Unknown"),
 
     Alcohol = case_when(
@@ -333,7 +352,9 @@ final <- raw.clean %>%
                             levels = c("No", "Yes")),
 
     Smoking = factor(Smoking,
-                     levels = c("Never", "Former", "Current", "Unknown")),
+                     levels = c("Never", "Former",
+                                "Current <2", "Current <6", "Current 6+",
+                                "Current amt unknown", "Unknown")),
 
     Alcohol = factor(Alcohol,
                      levels = c("Non-drinker", "Drinks", "Unknown")),
