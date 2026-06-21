@@ -23,6 +23,19 @@ output <- '/home/mtoles/acne/stats/eda_output'
 
 dir.create(output, showWarnings = FALSE)
 
+## --- analysis config -------------------------------------------------------- #
+## use_smoking_amount: when TRUE, current smokers are subdivided by packs/week
+## (Current <2 / <6 / 6+ / amt unknown). When FALSE, all current smokers share a
+## single "Current" category. Toggling this here propagates to every stats script
+## (2-9), since they all source this file.
+use_smoking_amount <- FALSE
+
+## include_preexisting_cancer: when TRUE, patients who already had a cancer before
+## index (any cancer_preexisting__ == "Yes") are kept in the cohort. When FALSE,
+## they are excluded. Propagates to every stats script (2-9).
+## TESTING: THIS SHOULD BE TRUE
+include_preexisting_cancer <- TRUE
+
 ################################################################################
 ## 3. data read-in
 ################################################################################
@@ -142,10 +155,12 @@ raw.clean <- raw %>%
       smk.amount == "6+"                                 ~ "6+",
       TRUE                                               ~ "amt unknown"),
 
+    ## Subdivide current smokers by amount only when use_smoking_amount is TRUE;
+    ## otherwise all current smokers collapse to a single "Current" category.
     Smoking = case_when(
       str_detect(smk.status, "Never")   ~ "Never",
       str_detect(smk.status, "Former")  ~ "Former",
-      str_detect(smk.status, "Current") ~ paste0("Current ", Smoke.Amt),
+      str_detect(smk.status, "Current") ~ if (use_smoking_amount) paste0("Current ", Smoke.Amt) else "Current",
       TRUE ~ "Unknown"),
 
     Alcohol = case_when(
@@ -352,9 +367,12 @@ final <- raw.clean %>%
                             levels = c("No", "Yes")),
 
     Smoking = factor(Smoking,
-                     levels = c("Never", "Former",
-                                "Current <2", "Current <6", "Current 6+",
-                                "Current amt unknown", "Unknown")),
+                     levels = if (use_smoking_amount)
+                       c("Never", "Former",
+                         "Current <2", "Current <6", "Current 6+",
+                         "Current amt unknown", "Unknown")
+                     else
+                       c("Never", "Former", "Current", "Unknown")),
 
     Alcohol = factor(Alcohol,
                      levels = c("Non-drinker", "Drinks", "Unknown")),
@@ -373,7 +391,9 @@ final <- raw.clean %>%
   ) %>%
   filter(!is.na(Cancer.Dx),
          !is.na(follow.time),
-         follow.time > 0)
+         follow.time > 0,
+         ## drop preexisting-cancer patients unless include_preexisting_cancer is TRUE
+         include_preexisting_cancer | n.prior.cancer == 0)
 
 ################################################################################
 ## 7. cancer type indicators (automatic, one per raw cancer_outcome__ column)
@@ -421,3 +441,15 @@ rm(.t, .bad)
 adj.vars <- c("Age", "Sex", "Race", "BMI.Category", "Smoking",
               "Alcohol", "Contraceptives", "Fam.Cancer", "Transplant",
               "Comorbidities", "Prior.Cancer")
+
+## Keep only covariates that actually vary in a given data frame: factors need >=2
+## observed levels, numerics need >=2 distinct values. A constant covariate (e.g.
+## Prior.Cancer when include_preexisting_cancer is FALSE — every patient is "None")
+## would otherwise crash coxph with a "contrasts ... 2 or more levels" error.
+usable.covars <- function(df, vars) {
+  vars[vapply(vars, function(v) {
+    x <- df[[v]]
+    if (is.factor(x)) nlevels(droplevels(x[!is.na(x)])) >= 2
+    else length(unique(x[!is.na(x)])) >= 2
+  }, logical(1))]
+}

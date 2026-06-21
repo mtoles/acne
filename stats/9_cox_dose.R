@@ -52,7 +52,7 @@ run.cox <- function(exposure, label) {
   f.unadj <- as.formula(paste0("Surv(follow.time, surv.event) ~ ", exposure))
   f.age   <- as.formula(paste0("Surv(follow.time, surv.event) ~ ", exposure, " + Age"))
   f.full  <- as.formula(paste0("Surv(follow.time, surv.event) ~ ", exposure, " + ",
-                                paste(adj.vars, collapse = " + ")))
+                                paste(usable.covars(final.cox, adj.vars), collapse = " + ")))
 
   fmt <- function(fit, model.label) {
     tbl_regression(fit, exponentiate = TRUE) %>%

@@ -62,7 +62,7 @@ run.type.cox <- function(data, ca.col, cancer.label) {
   f.unadj <- as.formula("Surv(type.time, type.event) ~ Any.Abx")
   f.age   <- as.formula("Surv(type.time, type.event) ~ Any.Abx + Age")
   f.full  <- as.formula(paste0("Surv(type.time, type.event) ~ Any.Abx + ",
-                                paste(adj.vars, collapse = " + ")))
+                                paste(usable.covars(d, adj.vars), collapse = " + ")))
 
   fmt <- function(fit, model.label) {
     tbl_regression(fit, exponentiate = TRUE) %>%
