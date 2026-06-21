@@ -30,9 +30,10 @@ dir.create(output, showWarnings = FALSE)
 ## (2-9), since they all source this file.
 use_smoking_amount <- FALSE
 
-## include_preexisting_cancer: when TRUE, patients who already had a cancer before
-## index (any cancer_preexisting__ == "Yes") are kept in the cohort. When FALSE,
-## they are excluded. Propagates to every stats script (2-9).
+## include_preexisting_cancer: when TRUE, a patient's preexisting (pre-index) cancer
+## is INCLUDED AS A COVARIATE (Prior.Cancer) in the adjusted models. When FALSE, it is
+## not adjusted for. EITHER WAY all patients stay in the cohort — this never changes the
+## study population. Propagates to every stats script (2-9).
 ## TESTING: THIS SHOULD BE TRUE
 include_preexisting_cancer <- TRUE
 
@@ -391,9 +392,7 @@ final <- raw.clean %>%
   ) %>%
   filter(!is.na(Cancer.Dx),
          !is.na(follow.time),
-         follow.time > 0,
-         ## drop preexisting-cancer patients unless include_preexisting_cancer is TRUE
-         include_preexisting_cancer | n.prior.cancer == 0)
+         follow.time > 0)
 
 ################################################################################
 ## 7. cancer type indicators (automatic, one per raw cancer_outcome__ column)
@@ -438,14 +437,17 @@ rm(.t, .bad)
 ## Defined once here so the adjustment set cannot silently diverge between scripts.
 ################################################################################
 
+## Prior.Cancer is included in the adjustment set only when include_preexisting_cancer
+## is TRUE. The cohort itself is unchanged either way — this flag toggles the COVARIATE
+## only, never which patients are in the study.
 adj.vars <- c("Age", "Sex", "Race", "BMI.Category", "Smoking",
               "Alcohol", "Contraceptives", "Fam.Cancer", "Transplant",
-              "Comorbidities", "Prior.Cancer")
+              "Comorbidities",
+              if (include_preexisting_cancer) "Prior.Cancer")
 
 ## Keep only covariates that actually vary in a given data frame: factors need >=2
-## observed levels, numerics need >=2 distinct values. A constant covariate (e.g.
-## Prior.Cancer when include_preexisting_cancer is FALSE — every patient is "None")
-## would otherwise crash coxph with a "contrasts ... 2 or more levels" error.
+## observed levels, numerics need >=2 distinct values. A constant covariate would
+## otherwise crash coxph with a "contrasts ... 2 or more levels" error.
 usable.covars <- function(df, vars) {
   vars[vapply(vars, function(v) {
     x <- df[[v]]
