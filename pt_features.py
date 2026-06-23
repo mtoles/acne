@@ -2338,12 +2338,16 @@ def compute_bmi_from_phy(phy_records, index_date):
     return float(bmi), categorize_bmi(bmi)
 
 
-def _closest_non_null_structured(phy_records, index_date, feature_cls):
+def _closest_non_null_structured(phy_records, index_date, feature_cls, on_or_before):
     """Find the closest date to index_date with a non-null structured result.
 
     Groups phy records by date, evaluates each date's records with
     feature_cls.option_from_structured, and returns the result from the
     closest date (by absolute distance) that produces a non-null value.
+
+    When on_or_before is True, only records dated on or before index_date are
+    considered (so the most recent pre-index date wins); if no such record
+    exists, returns None.
 
     Returns the option string or None if no date produces a result.
     """
@@ -2355,6 +2359,8 @@ def _closest_non_null_structured(phy_records, index_date, feature_cls):
     else:
         df["_parsed_date"] = pd.to_datetime(df["Date"], format="mixed", errors="coerce")
     df = df.dropna(subset=["_parsed_date"])
+    if on_or_before:
+        df = df[df["_parsed_date"] <= index_date]
     if df.empty:
         return None
     df["_abs_days"] = (df["_parsed_date"] - index_date).dt.days.abs()
@@ -2373,12 +2379,13 @@ def _closest_non_null_structured(phy_records, index_date, feature_cls):
 
 def compute_smoking_status_demographic(phy_records, index_date=None):
     """Compute smoking status from phy records DataFrame. Returns descriptive label.
-    If index_date is provided, uses the closest date with a non-null result."""
+    If index_date is provided, uses the closest date on or before index_date with a
+    non-null result; if no such pre-index record exists, returns "Unknown"."""
     mapping = {"C": "Current Smoker", "B": "Former Smoker", "A": "Never Smoker"}
     if phy_records.empty:
         return "Unknown"
     if index_date is not None:
-        option = _closest_non_null_structured(phy_records, index_date, smoking_status)
+        option = _closest_non_null_structured(phy_records, index_date, smoking_status, on_or_before=True)
     else:
         records = phy_records[["Concept_Name", "Result"]].to_dict("records")
         option = smoking_status.option_from_structured(records)
@@ -2392,7 +2399,7 @@ def compute_alcohol_status_demographic(phy_records, index_date=None):
     if phy_records.empty:
         return "Unknown"
     if index_date is not None:
-        option = _closest_non_null_structured(phy_records, index_date, alcohol_status)
+        option = _closest_non_null_structured(phy_records, index_date, alcohol_status, on_or_before=False)
     else:
         records = phy_records[["Concept_Name", "Result"]].to_dict("records")
         option = alcohol_status.option_from_structured(records)

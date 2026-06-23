@@ -28,6 +28,7 @@ from kw_builder import (
     ICD10_DIAGNOSIS_CODES,
 )
 from kw_builder import transplant_df as transplant_icd_df, cancer_df
+from get_followup_time import compute_followup_components
 
 _ICD_TO_CANCER_LABEL = {}
 for _code_group, _row in cancer_df.iterrows():
@@ -606,6 +607,42 @@ def _cancer_rows(pt_id, index_date, dia_records=None, vis_records=None):
     return rows
 
 
+def _followup_rows(pt_id, index_date, dia_records, last_activity_date, death_date):
+    """Follow-up time + window components for one patient, from data already loaded here.
+
+    Previously postprocess recomputed this with a single pass over the full source DB
+    (~254GB). Everything that pass needed is already available per patient in process_pt:
+    the index date, the structured dia ICD codes (for cancer end-of-followup dates), the
+    earliest Date_Of_Death, and the last clinical-record date. We feed those to
+    get_followup_time.compute_followup_components so the windowing logic stays in one place.
+
+    last_activity_date is the max record date across the loaded tables (None if the patient
+    has no dated records); death_date is the earliest Date_Of_Death (None if alive)."""
+    cancer_hits = [h for h in _extract_structured(cancer_cancer, dia_records) if h["pred"] == "A"]
+    cancer_dates = sorted(normalize_date(h["Date"]) for h in cancer_hits)
+
+    last_activity = {pt_id: last_activity_date} if last_activity_date is not None else {}
+    death_dates = {pt_id: death_date} if death_date is not None else {}
+    cancer_dates_map = {pt_id: cancer_dates} if cancer_dates else {}
+
+    comp = compute_followup_components(
+        pt_id, index_date, last_activity, death_dates, cancer_dates_map
+    )
+
+    rows = []
+    for key in (
+        "followup_start", "followup_end", "end_reason", "last_activity_date",
+        "death_date", "cancer_date", "follow_up_time_years",
+    ):
+        rows.append({
+            "feature_name": "follow_up",
+            "keyword": key,
+            "date": str(index_date),
+            "prediction": str(comp[key]) if comp[key] is not None else "",
+        })
+    return rows
+
+
 LLM_SMOKING_ALC_FEATURES = {
     "smoking_status",
     "smoking_amount",
@@ -1065,7 +1102,8 @@ def process_pt(pt_id):
 
     rows.extend(_abx_duration_rows(note_records, index_date))
 
-    #  Demographics 
+    #  Demographics
+    earliest_death = None  # set below if a Date_Of_Death is present; used for follow-up time
     if dem_rows:
         dem_row = dem_rows[0]
         rows.append({"feature_name": "demographics", "keyword": "sex", "date": str(index_date), "prediction": compute_sex(dem_row)})
@@ -1106,13 +1144,18 @@ def process_pt(pt_id):
         last_dates.append(pd.to_datetime(dia_records["Date"]).max())
     if not med_records.empty:
         last_dates.append(pd.to_datetime(med_records["Medication_Date"]).max())
+    last_activity_date = max(last_dates) if last_dates else None
     if last_dates:
         rows.append({
             "feature_name": "demographics",
             "keyword": "last_record_date",
             "date": str(index_date),
-            "prediction": str(max(last_dates)),
+            "prediction": str(last_activity_date),
         })
+
+    # Follow-up time + window components (replaces the full-DB scan that used to live in
+    # postprocess). Uses the same last-record date that downstream censoring relies on.
+    rows.extend(_followup_rows(pt_id, index_date, dia_records, last_activity_date, earliest_death))
 
     rows.append({"feature_name": "index_date", "keyword": "index_date", "date": str(index_date), "prediction": str(index_date)})
 

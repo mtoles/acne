@@ -26,8 +26,9 @@ cohort/
 full_inference_out/
 verl/
 *.ipynb
-stats/eda_output
+stats/eda_output*
 stats/R_libs
+stats/orig_daniel
 
 
 *.png

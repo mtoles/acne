@@ -32,11 +32,6 @@ from collections import defaultdict, Counter
 from tqdm import tqdm
 import pandas as pd
 from utils import normalize_date
-from get_followup_time import (
-    compute_followup_aggregates,
-    compute_followup_components,
-    OUTPUT_PATH as FOLLOWUP_OUTPUT_PATH,
-)
 # from data_profiling import ProfileReport
 # --- Constants ---
 
@@ -410,6 +405,13 @@ def pool_patient_records(records, index_date):
         elif feature_name == "index_date":
             result["index_date"] = str(index_date.date())
 
+        # --- Follow-up: per-patient single values computed in full_inference.py ---
+        # (followup_start, followup_end, end_reason, last_activity_date, death_date,
+        # cancer_date, follow_up_time_years). Passed through as one column each.
+        elif feature_name == "follow_up":
+            for rec in feature_records:
+                result[rec["keyword"]] = rec["prediction"]
+
         else:
             print(f"WARNING: Unknown feature_name '{feature_name}', skipping")
 
@@ -462,44 +464,13 @@ def main():
     df = pd.DataFrame(rows)
     df = df.set_index("EMPI")
 
-    # Step 4b: Follow-up time from source tables. Runs the full get_followup_time
-    # computation here so it's part of this pipeline (no separate script to remember).
-    # compute_followup_aggregates does a SINGLE pass over the large source tables; the
-    # per-patient component step below is pure Python over the cached aggregates.
-    # Reuse the cached follow-up file if present (the source-table scan is over a 254GB
-    # DB). Delete full_inference_out/followup_time.csv to force a recompute when the
-    # source tables or index dates change.
-    if FOLLOWUP_OUTPUT_PATH.exists():
-        print(f"Reusing cached follow-up file {FOLLOWUP_OUTPUT_PATH} (delete it to recompute)")
-        followup_df = pd.read_csv(FOLLOWUP_OUTPUT_PATH, dtype={"EMPI": str}).set_index("EMPI")
-    else:
-        print("Computing follow-up time aggregates from source tables...")
-        last_activity, death_dates, cancer_dates = compute_followup_aggregates()
-
-        followup_rows = []
-        for empi in tqdm(df.index, desc="follow-up time"):
-            comp = compute_followup_components(
-                empi, index_dates[empi], last_activity, death_dates, cancer_dates
-            )
-            comp["EMPI"] = empi
-            comp["index_date"] = pd.Timestamp(index_dates[empi])
-            followup_rows.append(comp)
-
-        followup_df = pd.DataFrame(followup_rows).set_index("EMPI")[
-            [
-                "index_date", "followup_start", "followup_end", "end_reason",
-                "last_activity_date", "death_date", "cancer_date", "follow_up_time_years",
-            ]
-        ]
-        followup_df.to_csv(FOLLOWUP_OUTPUT_PATH)
-        print(f"Wrote follow-up details for {len(followup_df)} patients to {FOLLOWUP_OUTPUT_PATH}")
-    print("Follow-up end reason counts:")
-    print(followup_df["end_reason"].value_counts())
-
-    # Add the follow-up columns to the pooled records (aligned by EMPI). index_date is
-    # already a pooled column, so exclude it to avoid a collision/overwrite.
-    fu_cols = [c for c in followup_df.columns if c != "index_date"]
-    df = df.join(followup_df[fu_cols])
+    # Follow-up time + window components (followup_start/end, end_reason, last_activity_date,
+    # death_date, cancer_date, follow_up_time_years) are now computed per patient in
+    # full_inference.py and pooled in above as the follow_up__* records -> plain columns here.
+    # This replaces the old single pass over the full ~254GB source DB.
+    if "end_reason" in df.columns:
+        print("Follow-up end reason counts:")
+        print(df["end_reason"].value_counts())
 
     df = df.reindex(sorted(df.columns), axis=1)
     df.to_csv(OUTPUT_PATH)
