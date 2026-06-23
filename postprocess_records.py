@@ -44,7 +44,14 @@ OUTPUT_DIR = Path("full_inference_out")
 OUTPUT_PATH = OUTPUT_DIR / "pooled_records.csv"
 
 # Features pooled across keywords via majority vote
-MAJORITY_FEATURES = {"smoking_status", "smoking_amount", "alcohol_status", "alcohol_amount"}
+MAJORITY_FEATURES = {"alcohol_status", "alcohol_amount"}
+
+# Smoking is taken from the CLOSEST structured record to the index date (any date,
+# before or after) rather than a period-windowed majority vote. This matches
+# make_cohort's compute_smoking_status_demographic and gives ~97% coverage (vs ~50%
+# for the pre_index window), since most structured smoking documentation post-dates
+# the index. Emitted as a single column per feature: <feature>__index__structured.
+CLOSEST_STRUCTURED_FEATURES = {"smoking_status", "smoking_amount"}
 
 # Features with one boolean column per keyword (any "Yes" -> "Yes")
 # (cancer_cancer is handled separately: split into cancer_preexisting / cancer_outcome by dx date)
@@ -133,6 +140,19 @@ def pool_majority(preds):
     """Return the most common prediction."""
     counts = Counter(preds)
     return counts.most_common(1)[0][0]
+
+
+def pool_closest_structured(records, index_date):
+    """Return the prediction from the STRUCTURED_DATA record whose date is closest to
+    index_date (any date, before or after). Mirrors make_cohort's
+    _closest_non_null_structured. Returns None if there is no usable structured record."""
+    structured = [
+        r for r in records
+        if r["keyword"] == "STRUCTURED_DATA" and r["prediction"] not in (None, "")
+    ]
+    if not structured:
+        return None
+    return min(structured, key=lambda r: abs((r["_parsed_date"] - index_date).days))["prediction"]
 
 
 def pool_any_yes(preds):
@@ -288,8 +308,14 @@ def pool_patient_records(records, index_date):
 
     for feature_name, feature_records in by_feature.items():
 
-        # --- Majority vote features (smoking, alcohol): pool across all keywords ---
-        if feature_name in MAJORITY_FEATURES:
+        # --- Smoking: single closest STRUCTURED record to the index date (any date) ---
+        if feature_name in CLOSEST_STRUCTURED_FEATURES:
+            val = pool_closest_structured(feature_records, index_date)
+            if val is not None:
+                result[f"{feature_name}__index__structured"] = val
+
+        # --- Majority vote features (alcohol): pool across all keywords ---
+        elif feature_name in MAJORITY_FEATURES:
             for period, period_recs in _group_by_period(feature_records).items():
                 preds = [r["prediction"] for r in period_recs]
                 col_name = f"{feature_name}__{period}__pooled"
@@ -440,26 +466,33 @@ def main():
     # computation here so it's part of this pipeline (no separate script to remember).
     # compute_followup_aggregates does a SINGLE pass over the large source tables; the
     # per-patient component step below is pure Python over the cached aggregates.
-    print("Computing follow-up time aggregates from source tables...")
-    last_activity, death_dates, cancer_dates = compute_followup_aggregates()
+    # Reuse the cached follow-up file if present (the source-table scan is over a 254GB
+    # DB). Delete full_inference_out/followup_time.csv to force a recompute when the
+    # source tables or index dates change.
+    if FOLLOWUP_OUTPUT_PATH.exists():
+        print(f"Reusing cached follow-up file {FOLLOWUP_OUTPUT_PATH} (delete it to recompute)")
+        followup_df = pd.read_csv(FOLLOWUP_OUTPUT_PATH, dtype={"EMPI": str}).set_index("EMPI")
+    else:
+        print("Computing follow-up time aggregates from source tables...")
+        last_activity, death_dates, cancer_dates = compute_followup_aggregates()
 
-    followup_rows = []
-    for empi in tqdm(df.index, desc="follow-up time"):
-        comp = compute_followup_components(
-            empi, index_dates[empi], last_activity, death_dates, cancer_dates
-        )
-        comp["EMPI"] = empi
-        comp["index_date"] = pd.Timestamp(index_dates[empi])
-        followup_rows.append(comp)
+        followup_rows = []
+        for empi in tqdm(df.index, desc="follow-up time"):
+            comp = compute_followup_components(
+                empi, index_dates[empi], last_activity, death_dates, cancer_dates
+            )
+            comp["EMPI"] = empi
+            comp["index_date"] = pd.Timestamp(index_dates[empi])
+            followup_rows.append(comp)
 
-    followup_df = pd.DataFrame(followup_rows).set_index("EMPI")[
-        [
-            "index_date", "followup_start", "followup_end", "end_reason",
-            "last_activity_date", "death_date", "cancer_date", "follow_up_time_years",
+        followup_df = pd.DataFrame(followup_rows).set_index("EMPI")[
+            [
+                "index_date", "followup_start", "followup_end", "end_reason",
+                "last_activity_date", "death_date", "cancer_date", "follow_up_time_years",
+            ]
         ]
-    ]
-    followup_df.to_csv(FOLLOWUP_OUTPUT_PATH)
-    print(f"Wrote follow-up details for {len(followup_df)} patients to {FOLLOWUP_OUTPUT_PATH}")
+        followup_df.to_csv(FOLLOWUP_OUTPUT_PATH)
+        print(f"Wrote follow-up details for {len(followup_df)} patients to {FOLLOWUP_OUTPUT_PATH}")
     print("Follow-up end reason counts:")
     print(followup_df["end_reason"].value_counts())
 

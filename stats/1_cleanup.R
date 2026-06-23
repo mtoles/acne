@@ -37,6 +37,21 @@ use_smoking_amount <- FALSE
 ## TESTING: THIS SHOULD BE TRUE
 include_preexisting_cancer <- TRUE
 
+## smoking_source: which smoking covariate to use.
+##   "preindex" = Daniel's pre-index pooled smoking (smoking_status__pre_index__pooled),
+##                strictly before index, ~50% coverage. These columns live only in the
+##                pre-change snapshot pooled_records.csv.bak, so they are joined in below.
+##   "closest"  = current closest-structured-to-index (smoking_status__index__structured),
+##                ~97% coverage, no follow-up leakage.
+## Propagates to every stats script (2-9).
+smoking_source <- "preindex"
+stopifnot(smoking_source %in% c("preindex", "closest"))
+
+## merge_family_history: when FALSE, family cancer history uses pre-index records only
+## (cancer_family_any__pre_index__*). When TRUE, it also merges treatment-window records
+## (cancer_family_any__(pre_index|treatment)__*). Propagates to every stats script (2-9).
+merge_family_history <- FALSE
+
 ################################################################################
 ## 3. data read-in
 ################################################################################
@@ -45,6 +60,16 @@ raw <- read_csv(file.path(input, "pooled_records.csv"),
                 col_types   = cols(.default = "c"),
                 name_repair = "minimal")
 # Column schema: full_inference_out/pooled_records_columns.txt
+
+## Daniel's pre-index pooled smoking columns (smoking_source == "preindex") live only in
+## the pre-change snapshot. Join them in by EMPI so the smoking covariate below can use
+## Daniel's pre-index pooled values instead of the current closest-structured ones.
+if (smoking_source == "preindex") {
+  smk.bak <- read_csv(file.path(input, "pooled_records.csv.bak"),
+                      col_types = cols(.default = "c"), name_repair = "minimal") %>%
+    select(EMPI, `smoking_status__pre_index__pooled`, `smoking_amount__pre_index__pooled`)
+  raw <- raw %>% left_join(smk.bak, by = "EMPI")
+}
 
 ################################################################################
 ## 4. column inventory
@@ -55,7 +80,9 @@ all.cols <- names(raw)
 dur.cols            <- grep("^antibiotic_duration_numeric__treatment__", all.cols, value = TRUE)
 cancer.outcome.cols <- grep("^cancer_outcome__",                         all.cols, value = TRUE)
 cancer.type.cols    <- grep("^cancer_date_of_diagnosis__outcome__",      all.cols, value = TRUE)
-fam.cols            <- grep("^cancer_family_any__(pre_index|treatment)__", all.cols, value = TRUE)
+fam.cols            <- if (merge_family_history)
+  grep("^cancer_family_any__(pre_index|treatment)__", all.cols, value = TRUE) else
+  grep("^cancer_family_any__pre_index__",             all.cols, value = TRUE)
 dis.cols            <- grep("^disease__pre_index__",                     all.cols, value = TRUE)
 precancer.cols      <- grep("^cancer_preexisting__",                     all.cols, value = TRUE)
 
@@ -137,15 +164,15 @@ raw.clean <- raw %>%
       `contraceptives__treatment__pooled` == "Yes" ~ "Yes",
       TRUE ~ "No"),
 
-    ## Smoking status & packs/week amount, merged across periods with priority
-    ## pre_index > treatment > outcome (baseline preferred; fall back to later
-    ## periods for coverage, since most amount data sits in the follow-up window).
-    smk.status = coalesce(na_if(`smoking_status__pre_index__pooled`, ""),
-                          na_if(`smoking_status__treatment__pooled`, ""),
-                          na_if(`smoking_status__outcome__pooled`,   "")),
-    smk.amount = coalesce(na_if(`smoking_amount__pre_index__pooled`, ""),
-                          na_if(`smoking_amount__treatment__pooled`, ""),
-                          na_if(`smoking_amount__outcome__pooled`,   "")),
+    ## Smoking status & packs/week amount, from smoking_source (see config at top):
+    ##   "preindex" = Daniel's strictly-before-index pooled values (joined from .bak)
+    ##   "closest"  = current closest-structured-to-index values (__index__structured)
+    smk.status = na_if(if (smoking_source == "preindex")
+                         `smoking_status__pre_index__pooled` else
+                         `smoking_status__index__structured`, ""),
+    smk.amount = na_if(if (smoking_source == "preindex")
+                         `smoking_amount__pre_index__pooled` else
+                         `smoking_amount__index__structured`, ""),
 
     ## Packs/week bins: <2 = {0, 1-2}, <6 = {3-5}, 6+ = {6+}; anything else
     ## (incl. "unknown quantity" and missing) -> "amt unknown". Used only to
