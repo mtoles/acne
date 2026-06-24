@@ -2318,9 +2318,19 @@ def categorize_bmi(bmi):
         return "obese"
 
 
-def compute_bmi_from_phy(phy_records, index_date):
+# Smoking/alcohol/BMI baseline covariates: take the structured record closest to index_date
+# among those dated on or before index_date + COVARIATE_MAX_DAYS_AFTER_INDEX days. Letting a
+# measurement taken shortly after the index visit still count as baseline (without leaking
+# real follow-up data). Used by cohort matching (make_cohort) and full inference.
+COVARIATE_MAX_DAYS_AFTER_INDEX = 90
+
+
+def compute_bmi_from_phy(phy_records, index_date, max_days_after=None):
     """Get closest BMI value to index_date from phy records DataFrame.
-    Returns (bmi_value, bmi_category) or (None, None)."""
+    Returns (bmi_value, bmi_category) or (None, None).
+    When max_days_after is not None, only records dated on or before
+    index_date + max_days_after days are considered (closest to index_date wins), so the
+    baseline never uses real follow-up BMI."""
     if phy_records.empty:
         return None, None
     df = phy_records.copy()
@@ -2331,6 +2341,9 @@ def compute_bmi_from_phy(phy_records, index_date):
         return None, None
     df["Result"] = pd.to_numeric(df["Result"], errors="coerce")
     df = df.dropna(subset=["Result"])
+    if max_days_after is not None:
+        # NaT dates compare False here and are dropped along with too-late records.
+        df = df[df["Date"] <= index_date + pd.Timedelta(days=max_days_after)]
     if df.empty:
         return None, None
     df["_abs_days"] = (df["Date"] - index_date).dt.days.abs()
@@ -2338,16 +2351,16 @@ def compute_bmi_from_phy(phy_records, index_date):
     return float(bmi), categorize_bmi(bmi)
 
 
-def _closest_non_null_structured(phy_records, index_date, feature_cls, on_or_before):
+def _closest_non_null_structured(phy_records, index_date, feature_cls, max_days_after=None):
     """Find the closest date to index_date with a non-null structured result.
 
     Groups phy records by date, evaluates each date's records with
     feature_cls.option_from_structured, and returns the result from the
     closest date (by absolute distance) that produces a non-null value.
 
-    When on_or_before is True, only records dated on or before index_date are
-    considered (so the most recent pre-index date wins); if no such record
-    exists, returns None.
+    When max_days_after is not None, only records dated on or before
+    index_date + max_days_after days are considered (the closest such date wins);
+    if none qualify, returns None.
 
     Returns the option string or None if no date produces a result.
     """
@@ -2359,8 +2372,8 @@ def _closest_non_null_structured(phy_records, index_date, feature_cls, on_or_bef
     else:
         df["_parsed_date"] = pd.to_datetime(df["Date"], format="mixed", errors="coerce")
     df = df.dropna(subset=["_parsed_date"])
-    if on_or_before:
-        df = df[df["_parsed_date"] <= index_date]
+    if max_days_after is not None:
+        df = df[df["_parsed_date"] <= index_date + pd.Timedelta(days=max_days_after)]
     if df.empty:
         return None
     df["_abs_days"] = (df["_parsed_date"] - index_date).dt.days.abs()
@@ -2377,15 +2390,29 @@ def _closest_non_null_structured(phy_records, index_date, feature_cls, on_or_bef
     return None
 
 
+def closest_baseline_structured(phy_records, index_date, feature_cls):
+    """Closest structured option for feature_cls in the baseline covariate window: records
+    dated on or before index_date + COVARIATE_MAX_DAYS_AFTER_INDEX days, closest to index
+    wins. Returns the option letter or None.
+
+    This is the SINGLE shared definition of the smoking/alcohol covariate selection used by
+    both cohort matching (via compute_*_demographic) and full inference (_recyclable_var_rows),
+    so the window + closest-record logic lives in exactly one place. BMI uses the sibling
+    compute_bmi_from_phy with the same window."""
+    return _closest_non_null_structured(
+        phy_records, index_date, feature_cls, max_days_after=COVARIATE_MAX_DAYS_AFTER_INDEX
+    )
+
+
 def compute_smoking_status_demographic(phy_records, index_date=None):
     """Compute smoking status from phy records DataFrame. Returns descriptive label.
-    If index_date is provided, uses the closest date on or before index_date with a
-    non-null result; if no such pre-index record exists, returns "Unknown"."""
+    If index_date is provided, uses the closest structured record dated on or before
+    index_date + COVARIATE_MAX_DAYS_AFTER_INDEX days; if none qualify, returns "Unknown"."""
     mapping = {"C": "Current Smoker", "B": "Former Smoker", "A": "Never Smoker"}
     if phy_records.empty:
         return "Unknown"
     if index_date is not None:
-        option = _closest_non_null_structured(phy_records, index_date, smoking_status, on_or_before=True)
+        option = closest_baseline_structured(phy_records, index_date, smoking_status)
     else:
         records = phy_records[["Concept_Name", "Result"]].to_dict("records")
         option = smoking_status.option_from_structured(records)
@@ -2394,12 +2421,14 @@ def compute_smoking_status_demographic(phy_records, index_date=None):
 
 def compute_alcohol_status_demographic(phy_records, index_date=None):
     """Compute alcohol status from phy records DataFrame. Returns descriptive label.
-    If index_date is provided, uses the closest date with a non-null result."""
+    If index_date is provided, uses the closest structured record dated on or before
+    index_date + COVARIATE_MAX_DAYS_AFTER_INDEX days; if none qualify, returns "Unknown"
+    (matches smoking, so cohort matching never uses real follow-up data)."""
     mapping = {"A": "Currently Drinks", "B": "Does Not Currently Drink"}
     if phy_records.empty:
         return "Unknown"
     if index_date is not None:
-        option = _closest_non_null_structured(phy_records, index_date, alcohol_status, on_or_before=False)
+        option = closest_baseline_structured(phy_records, index_date, alcohol_status)
     else:
         records = phy_records[["Concept_Name", "Result"]].to_dict("records")
         option = alcohol_status.option_from_structured(records)

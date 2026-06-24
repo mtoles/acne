@@ -82,6 +82,9 @@ _recycle_dirs = []
 # When True (from --drop-llm-smoking-alc), LLM-generated smoking/alcohol rows are dropped during
 # recycling (structured-data rows for those features are kept).
 _drop_llm_smoking_alc = False
+# When True (from --dont-recycle-vars), smoking/alcohol/BMI are recomputed fresh during recycling
+# instead of being copied from the old record.
+_dont_recycle_vars = False
 
 
 def _json_default(obj):
@@ -650,12 +653,73 @@ LLM_SMOKING_ALC_FEATURES = {
     "alcohol_amount",
 }
 
+# The covariates recomputed fresh (instead of recycled) under --dont-recycle-vars:
+# smoking (status+amount), alcohol (status+amount) -- their own feature_names -- plus BMI,
+# which is emitted as demographics rows keyed by these keywords.
+RECYCLABLE_VAR_FEATURES = {"smoking_status", "smoking_amount", "alcohol_status", "alcohol_amount"}
+RECYCLABLE_VAR_DEMOGRAPHICS_KEYWORDS = {"bmi", "bmi_category"}
+
+
+def _is_recyclable_var_row(rec):
+    """True if rec is one of the smoking/alcohol/BMI rows controlled by --dont-recycle-vars."""
+    if rec["feature_name"] in RECYCLABLE_VAR_FEATURES:
+        return True
+    return (
+        rec["feature_name"] == "demographics"
+        and rec["keyword"] in RECYCLABLE_VAR_DEMOGRAPHICS_KEYWORDS
+    )
+
+
+def _recyclable_var_rows(index_date, phy_records):
+    """Compute smoking (status+amount), alcohol (status+amount), and BMI rows fresh.
+
+    Shared by process_pt and the recycle path: with --dont-recycle-vars these are
+    recomputed from current data/code instead of copied from an old record.
+
+    These are the SAME covariate definitions cohort matching uses -- both call the shared
+    pt_features.closest_baseline_structured (smoking/alcohol) and compute_bmi_from_phy (BMI),
+    so the "closest structured record within index + COVARIATE_MAX_DAYS_AFTER_INDEX days"
+    window lives in exactly one place. One row per covariate, dated at index_date so it pools
+    into the columns downstream/R already read: smoking_status__index__structured,
+    alcohol_status__pre_index__pooled, demographics__bmi. Status/amount stay as raw option
+    letters and are mapped to descriptions by the caller's write loop."""
+    rows = []
+
+    # Smoking status (+ amount if current), closest structured within the baseline window.
+    smoking = closest_baseline_structured(phy_records, index_date, smoking_status)
+    if smoking is not None:
+        rows.append({"feature_name": "smoking_status", "keyword": "STRUCTURED_DATA", "date": str(index_date), "prediction": smoking})
+        if smoking == "C":
+            smoking_amt = closest_baseline_structured(phy_records, index_date, smoking_amount)
+            if smoking_amt is not None:
+                rows.append({"feature_name": "smoking_amount", "keyword": "STRUCTURED_DATA", "date": str(index_date), "prediction": smoking_amt})
+
+    # Alcohol status (+ amount if drinks), closest structured within the baseline window.
+    alcohol = closest_baseline_structured(phy_records, index_date, alcohol_status)
+    if alcohol is not None:
+        rows.append({"feature_name": "alcohol_status", "keyword": "STRUCTURED_DATA", "date": str(index_date), "prediction": alcohol})
+        if alcohol == "A":
+            alcohol_amt = closest_baseline_structured(phy_records, index_date, alcohol_amount)
+            if alcohol_amt is not None:
+                rows.append({"feature_name": "alcohol_amount", "keyword": "STRUCTURED_DATA", "date": str(index_date), "prediction": alcohol_amt})
+
+    # BMI: closest phy BMI within the same window (emitted as demographics rows).
+    bmi_val, bmi_cat = compute_bmi_from_phy(phy_records, index_date, max_days_after=COVARIATE_MAX_DAYS_AFTER_INDEX)
+    if bmi_val is not None:
+        rows.append({"feature_name": "demographics", "keyword": "bmi", "date": str(index_date), "prediction": str(round(bmi_val, 1))})
+        rows.append({"feature_name": "demographics", "keyword": "bmi_category", "date": str(index_date), "prediction": bmi_cat})
+
+    return rows
+
 
 def _recycle_patient(pt_id, src_path, dst_path):
     """Copy an existing .jsonl record from a prior run, backfilling age_at_index_date if missing.
 
-    The record is reused wholesale, except that when _drop_llm_smoking_alc is set, LLM-generated
-    smoking/alcohol rows (keyword != "STRUCTURED_DATA") are dropped (structured rows are kept)."""
+    The record is reused wholesale, except:
+    - when _drop_llm_smoking_alc is set, LLM-generated smoking/alcohol rows
+      (keyword != "STRUCTURED_DATA") are dropped (structured rows are kept);
+    - when _dont_recycle_vars is set, the smoking/alcohol/BMI rows are NOT taken from the
+      old record at all -- they are dropped here and recomputed fresh below."""
     rows = []
     has_age_at_index = False
     index_date_str = None
@@ -672,11 +736,25 @@ def _recycle_patient(pt_id, src_path, dst_path):
                 and rec["keyword"] != "STRUCTURED_DATA"
             ):
                 continue
+            # Drop smoking/alcohol/BMI rows entirely when recomputing them fresh.
+            if _dont_recycle_vars and _is_recyclable_var_row(rec):
+                continue
             rows.append(rec)
             if rec["feature_name"] == "demographics" and rec["keyword"] == "age_at_index_date":
                 has_age_at_index = True
             if rec["feature_name"] == "index_date":
                 index_date_str = rec["prediction"]
+
+    # Recompute smoking/alcohol/BMI fresh from current data/code (--dont-recycle-vars).
+    # Structured phy data only now, so no vis query needed.
+    if _dont_recycle_vars and index_date_str is not None:
+        _thread_local.current_patient_id = pt_id
+        index_date = normalize_date(index_date_str)
+        with db.connect() as conn:
+            phy_records = pd.DataFrame(
+                conn.execute(text(f"SELECT * FROM phy WHERE EMPI = '{pt_id}'")).mappings().fetchall()
+            )
+        rows.extend(_recyclable_var_rows(index_date, phy_records))
 
     if not has_age_at_index and index_date_str is not None:
         with db.connect() as conn:
@@ -829,20 +907,6 @@ def process_pt(pt_id):
     # print(f"Total records: {len(all_records)}, Outcome window: {len(outcome_records)}, Treatment window: {len(treatment_window_dia_records)}, Phy records: {len(phy_records)}, Dia records: {len(dia_records)}")
 
     ### Step 4: Calculate time blocks for each feature ###
-    # Smoking status: 1 per 3 months
-    smoking_blocks = group_records_by_time_blocks(
-        filter_records_by_date_range(all_records, end_date=outcome_window_start_date),
-        index_date,
-        block_size_months=3,
-    )
-
-    # Alcohol status: 1 per 3 months
-    alcohol_blocks = group_records_by_time_blocks(
-        filter_records_by_date_range(all_records, end_date=outcome_window_start_date),
-        index_date,
-        block_size_months=3,
-    )
-
     # Cancer family any: earliest records to outcome window start, 1 per 6 months
     cancer_family_blocks = group_records_by_time_blocks(
         filter_records_by_date_range(all_records, end_date=outcome_window_start_date),
@@ -855,117 +919,9 @@ def process_pt(pt_id):
 
     # === Features using all records ===
 
-    # Smoking & alcohol: extract structured data from ALL phy records
-    # (covariates — use closest-to-index-date record with a non-null result)
-
-    # Smoking status: structured from phy
-    smoking_structured_hits = _extract_structured(smoking_status, phy_records)
-    for hit in smoking_structured_hits:
-        rows.append({
-            "feature_name": "smoking_status",
-            "keyword": "STRUCTURED_DATA",
-            "date": hit["Date"],
-            "prediction": hit["pred"],
-        })
-    # Smoking amount follow-up: if any structured hit is "C" (current smoker)
-    if any(h["pred"] == "C" for h in smoking_structured_hits):
-        smoking_amount_hits = _extract_structured(smoking_amount, phy_records)
-        for hit in smoking_amount_hits:
-            rows.append({
-                "feature_name": "smoking_amount",
-                "keyword": "STRUCTURED_DATA",
-                "date": hit["Date"],
-                "prediction": hit["pred"],
-            })
-
-    # Smoking status: LLM fallback on vis blocks ONLY when no structured data exists
-    # (structured phy hits are authoritative; running the LLM anyway both wastes compute
-    # and dilutes the structured value in the downstream majority vote).
-    if not smoking_structured_hits:
-        for block_index, block_records in smoking_blocks.items():
-            _thread_local.block_id = f"smoking_{block_index}"
-            _thread_local.block_dates = (
-                f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}"
-                if not block_records.empty
-                else ""
-            )
-            block_rows = process_single_block_llm(
-                block_records,
-                smoking_status,
-                make_keyword_filter(smoking_status.keywords),
-                short_circuit=True,
-                all_records=False,
-            )
-            rows.extend(block_rows)
-            if block_rows:
-                pooled_value = smoking_status.pooling_fn(
-                    [row["prediction"] for row in block_rows]
-                )
-                if pooled_value == "C":
-                    follow_up_rows = process_single_block_llm(
-                        block_records,
-                        smoking_amount,
-                        make_keyword_filter(smoking_amount.keywords),
-                        short_circuit=True,
-                        all_records=False,
-                    )
-                    for row in follow_up_rows:
-                        row["feature_name"] = "smoking_amount"
-                    rows.extend(follow_up_rows)
-
-    # Alcohol status: structured from phy
-    alcohol_structured_hits = _extract_structured(alcohol_status, phy_records)
-    for hit in alcohol_structured_hits:
-        rows.append({
-            "feature_name": "alcohol_status",
-            "keyword": "STRUCTURED_DATA",
-            "date": hit["Date"],
-            "prediction": hit["pred"],
-        })
-    # Alcohol amount follow-up: if any structured hit is "A" (drinks alcohol)
-    if any(h["pred"] == "A" for h in alcohol_structured_hits):
-        alcohol_amount_hits = _extract_structured(alcohol_amount, phy_records)
-        for hit in alcohol_amount_hits:
-            rows.append({
-                "feature_name": "alcohol_amount",
-                "keyword": "STRUCTURED_DATA",
-                "date": hit["Date"],
-                "prediction": hit["pred"],
-            })
-
-    # Alcohol status: LLM fallback on vis blocks ONLY when no structured data exists
-    # (structured phy hits are authoritative; see smoking note above).
-    if not alcohol_structured_hits:
-        for block_index, block_records in alcohol_blocks.items():
-            _thread_local.block_id = f"alcohol_{block_index}"
-            _thread_local.block_dates = (
-                f"{block_records['Report_Date_Time'].min()[:10]}~{block_records['Report_Date_Time'].max()[:10]}"
-                if not block_records.empty
-                else ""
-            )
-            block_rows = process_single_block_llm(
-                block_records,
-                alcohol_status,
-                make_keyword_filter(alcohol_status.keywords),
-                short_circuit=True,
-                all_records=False,
-            )
-            rows.extend(block_rows)
-            if block_rows:
-                pooled_value = alcohol_status.pooling_fn(
-                    [row["prediction"] for row in block_rows]
-                )
-                if pooled_value == "A":
-                    follow_up_rows = process_single_block_llm(
-                        block_records,
-                        alcohol_amount,
-                        make_keyword_filter(alcohol_amount.keywords),
-                        short_circuit=True,
-                        all_records=False,
-                    )
-                    for row in follow_up_rows:
-                        row["feature_name"] = "alcohol_amount"
-                    rows.extend(follow_up_rows)
+    # Smoking (status+amount), alcohol (status+amount), and BMI: closest structured phy
+    # record within the baseline window (shared with cohort matching + the recycle path).
+    rows.extend(_recyclable_var_rows(index_date, phy_records))
 
     # Transplant: earliest records to outcome window start
     # Use LLM if no structured: no
@@ -1113,10 +1069,7 @@ def process_pt(pt_id):
         if pd.notna(dob):
             age_at_index = (index_date - dob).days / 365.25
             rows.append({"feature_name": "demographics", "keyword": "age_at_index_date", "date": str(index_date), "prediction": f"{age_at_index:.2f}"})
-        bmi_val, bmi_cat = compute_bmi_from_phy(phy_records, index_date)
-        if bmi_val is not None:
-            rows.append({"feature_name": "demographics", "keyword": "bmi", "date": str(index_date), "prediction": str(round(bmi_val, 1))})
-            rows.append({"feature_name": "demographics", "keyword": "bmi_category", "date": str(index_date), "prediction": bmi_cat})
+        # BMI is computed in _recyclable_var_rows() above (so --dont-recycle-vars covers it).
 
         # Deceased status: check all dem rows for a non-empty Date_Of_Death
         death_dates = []
@@ -1227,7 +1180,8 @@ parser.add_argument(
         # "full_inference_out/records_old_7_only-vis",
         # "full_inference_out/records_old_8_partial-all-docs"
         # "full_inference_out/records_old_9_cancer-llm"
-        "full_inference_out/records_old_11-extra-smoking-alc"
+        # "full_inference_out/records_old_11-extra-smoking-alc"
+        "full_inference_out/records_old_12-smoking-leak"
     ],
     help="One or more paths to previous records/ dirs. For each pt, the first dir containing the pt's .jsonl is used (with age_at_index_date backfilled if missing).",
 )
@@ -1236,6 +1190,13 @@ parser.add_argument(
     action="store_true",
     help="When recycling, drop LLM-generated smoking/alcohol rows (smoking_status, smoking_amount, "
          "alcohol_status, alcohol_amount with keyword != STRUCTURED_DATA). Structured-data rows are kept.",
+)
+parser.add_argument(
+    "--dont-recycle-vars",
+    action="store_true",
+    help="When recycling, do NOT take smoking (status/amount), alcohol (status/amount), or BMI from "
+         "the old record -- recompute them fresh from current data/code instead. Useful after changing "
+         "how these covariates are computed.",
 )
 parser.add_argument(
     "--seed",
@@ -1248,6 +1209,7 @@ parser.add_argument(
 args = parser.parse_args()
 DUMMY_LLM = args.dummy_llm
 _drop_llm_smoking_alc = args.drop_llm_smoking_alc
+_dont_recycle_vars = args.dont_recycle_vars
 
 start_time = datetime.now()
 print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1293,6 +1255,8 @@ if args.recycle_from:
     print(f"Recycling records from (in priority order): {[str(p) for p in _recycle_dirs]}")
     if _drop_llm_smoking_alc:
         print("  Dropping LLM-generated smoking/alcohol rows during recycling (structured rows kept)")
+    if _dont_recycle_vars:
+        print("  Recomputing smoking/alcohol/BMI fresh during recycling (not taken from old records)")
 
 # Set up LLM call logging
 llm_logger = logging.getLogger("llm_calls")

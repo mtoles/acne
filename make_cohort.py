@@ -2,7 +2,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from tqdm import tqdm
 from make_db import db_url
-from pt_features import get_rows_by_icd, cancer_icd9s, cancer_icd10s, compute_sex, compute_race, categorize_age, categorize_bmi, compute_bmi_from_phy, compute_smoking_status_demographic, compute_alcohol_status_demographic
+from pt_features import get_rows_by_icd, cancer_icd9s, cancer_icd10s, compute_sex, compute_race, categorize_age, categorize_bmi, compute_bmi_from_phy, compute_smoking_status_demographic, compute_alcohol_status_demographic, COVARIATE_MAX_DAYS_AFTER_INDEX
 import json
 from pathlib import Path
 import numpy as np
@@ -172,7 +172,7 @@ phy_df["Date"] = pd.to_datetime(phy_df["Date"], format="mixed", errors="coerce")
 
 
 def _compute_phy_features(empi, group, idx_date):
-    bmi_val, bmi_cat = compute_bmi_from_phy(group, idx_date)
+    bmi_val, bmi_cat = compute_bmi_from_phy(group, idx_date, max_days_after=COVARIATE_MAX_DAYS_AFTER_INDEX)
     smoking = compute_smoking_status_demographic(group, idx_date)
     alcohol = compute_alcohol_status_demographic(group, idx_date)
     return empi, bmi_val, bmi_cat, smoking, alcohol
