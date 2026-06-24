@@ -24,28 +24,12 @@ output <- '/home/mtoles/acne/stats/eda_output'
 dir.create(output, showWarnings = FALSE)
 
 ## --- analysis config -------------------------------------------------------- #
-## use_smoking_amount: when TRUE, current smokers are subdivided by packs/week
-## (Current <2 / <6 / 6+ / amt unknown). When FALSE, all current smokers share a
-## single "Current" category. Toggling this here propagates to every stats script
-## (2-9), since they all source this file.
-use_smoking_amount <- FALSE
-
 ## include_preexisting_cancer: when TRUE, a patient's preexisting (pre-index) cancer
 ## is INCLUDED AS A COVARIATE (Prior.Cancer) in the adjusted models. When FALSE, it is
 ## not adjusted for. EITHER WAY all patients stay in the cohort — this never changes the
 ## study population. Propagates to every stats script (2-9).
 ## TESTING: THIS SHOULD BE TRUE
 include_preexisting_cancer <- TRUE
-
-## smoking_source: which smoking covariate to use.
-##   "preindex" = Daniel's pre-index pooled smoking (smoking_status__pre_index__pooled),
-##                strictly before index, ~50% coverage. These columns live only in the
-##                pre-change snapshot pooled_records.csv.bak, so they are joined in below.
-##   "closest"  = current closest-structured-to-index (smoking_status__index__structured),
-##                ~97% coverage, no follow-up leakage.
-## Propagates to every stats script (2-9).
-smoking_source <- "preindex"
-stopifnot(smoking_source %in% c("preindex", "closest"))
 
 ## merge_family_history: when FALSE, family cancer history uses pre-index records only
 ## (cancer_family_any__pre_index__*). When TRUE, it also merges treatment-window records
@@ -61,15 +45,13 @@ raw <- read_csv(file.path(input, "pooled_records.csv"),
                 name_repair = "minimal")
 # Column schema: full_inference_out/pooled_records_columns.txt
 
-## Daniel's pre-index pooled smoking columns (smoking_source == "preindex") live only in
-## the pre-change snapshot. Join them in by EMPI so the smoking covariate below can use
-## Daniel's pre-index pooled values instead of the current closest-structured ones.
-if (smoking_source == "preindex") {
-  smk.bak <- read_csv(file.path(input, "pooled_records.csv.bak"),
-                      col_types = cols(.default = "c"), name_repair = "minimal") %>%
-    select(EMPI, `smoking_status__pre_index__pooled`, `smoking_amount__pre_index__pooled`)
-  raw <- raw %>% left_join(smk.bak, by = "EMPI")
-}
+## Smoking status uses Daniel's pre-index pooled column, which lives only in the
+## pre-change snapshot (postprocess_records.py now emits a closest-structured column
+## instead). Join it in by EMPI.
+smk.bak <- read_csv(file.path(input, "pooled_records.csv.bak"),
+                    col_types = cols(.default = "c"), name_repair = "minimal") %>%
+  select(EMPI, `smoking_status__pre_index__pooled`)
+raw <- raw %>% left_join(smk.bak, by = "EMPI")
 
 ################################################################################
 ## 4. column inventory
@@ -164,31 +146,13 @@ raw.clean <- raw %>%
       `contraceptives__treatment__pooled` == "Yes" ~ "Yes",
       TRUE ~ "No"),
 
-    ## Smoking status & packs/week amount, from smoking_source (see config at top):
-    ##   "preindex" = Daniel's strictly-before-index pooled values (joined from .bak)
-    ##   "closest"  = current closest-structured-to-index values (__index__structured)
-    smk.status = na_if(if (smoking_source == "preindex")
-                         `smoking_status__pre_index__pooled` else
-                         `smoking_status__index__structured`, ""),
-    smk.amount = na_if(if (smoking_source == "preindex")
-                         `smoking_amount__pre_index__pooled` else
-                         `smoking_amount__index__structured`, ""),
+    ## Smoking status: Daniel's pre-index pooled value (joined from .bak above).
+    smk.status = na_if(`smoking_status__pre_index__pooled`, ""),
 
-    ## Packs/week bins: <2 = {0, 1-2}, <6 = {3-5}, 6+ = {6+}; anything else
-    ## (incl. "unknown quantity" and missing) -> "amt unknown". Used only to
-    ## subdivide current smokers below.
-    Smoke.Amt = case_when(
-      str_detect(smk.amount, "^0") | smk.amount == "1-2" ~ "<2",
-      smk.amount == "3-5"                                ~ "<6",
-      smk.amount == "6+"                                 ~ "6+",
-      TRUE                                               ~ "amt unknown"),
-
-    ## Subdivide current smokers by amount only when use_smoking_amount is TRUE;
-    ## otherwise all current smokers collapse to a single "Current" category.
     Smoking = case_when(
       str_detect(smk.status, "Never")   ~ "Never",
       str_detect(smk.status, "Former")  ~ "Former",
-      str_detect(smk.status, "Current") ~ if (use_smoking_amount) paste0("Current ", Smoke.Amt) else "Current",
+      str_detect(smk.status, "Current") ~ "Current",
       TRUE ~ "Unknown"),
 
     Alcohol = case_when(
@@ -306,9 +270,12 @@ raw.clean <- raw %>%
       Cancer.Dx == "Cancer" & !is.na(cancer.diag.dt) ~ cancer.diag.dt,
       TRUE ~ censor.dt),
 
-    ## Start of follow-up: 1-year washout after index. Kept as a column so the
-    ## type-specific clocks (8_cox_types.R / 7_km_types.R) share the same origin.
-    start.dt    = index.dt + years(1),
+    ## Start of follow-up: index + 2 years, i.e. the outcome-window start
+    ## (cancer_outcome__ counts only dx on/after index+2yr). Aligning the clock
+    ## origin with the outcome window removes the [index+1yr, index+2yr) immortal
+    ## time, so a cancer at the window start has follow.time ~= 0. Kept as a column
+    ## so the type-specific clocks (8_cox_types.R / 7_km_types.R) share this origin.
+    start.dt    = index.dt + years(2),
     follow.time = as.numeric(surv.end.dt - start.dt) / 365.25,
     surv.event  = as.integer(Cancer.Dx == "Cancer"),
 
@@ -395,12 +362,7 @@ final <- raw.clean %>%
                             levels = c("No", "Yes")),
 
     Smoking = factor(Smoking,
-                     levels = if (use_smoking_amount)
-                       c("Never", "Former",
-                         "Current <2", "Current <6", "Current 6+",
-                         "Current amt unknown", "Unknown")
-                     else
-                       c("Never", "Former", "Current", "Unknown")),
+                     levels = c("Never", "Former", "Current", "Unknown")),
 
     Alcohol = factor(Alcohol,
                      levels = c("Non-drinker", "Drinks", "Unknown")),
