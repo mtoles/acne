@@ -36,6 +36,11 @@ include_preexisting_cancer <- TRUE
 ## (cancer_family_any__(pre_index|treatment)__*). Propagates to every stats script (2-9).
 merge_family_history <- FALSE
 
+## include_transplant: when TRUE, prior organ transplant is its OWN covariate (Transplant)
+## in the adjusted models. When FALSE, transplant is instead counted as one more comorbidity
+## (folded into the Comorbidities count) and is NOT a separate covariate. Propagates to 2-9.
+include_transplant <- TRUE
+
 ################################################################################
 ## 3. data read-in
 ################################################################################
@@ -44,14 +49,8 @@ raw <- read_csv(file.path(input, "pooled_records.csv"),
                 col_types   = cols(.default = "c"),
                 name_repair = "minimal")
 # Column schema: full_inference_out/pooled_records_columns.txt
-
-## Smoking status uses Daniel's pre-index pooled column, which lives only in the
-## pre-change snapshot (postprocess_records.py now emits a closest-structured column
-## instead). Join it in by EMPI.
-smk.bak <- read_csv(file.path(input, "pooled_records.csv.bak"),
-                    col_types = cols(.default = "c"), name_repair = "minimal") %>%
-  select(EMPI, `smoking_status__pre_index__pooled`)
-raw <- raw %>% left_join(smk.bak, by = "EMPI")
+# Smoking status is smoking_status__pre_index__pooled (majority vote of records on/before
+# index, emitted by postprocess_records.py); no .bak join needed.
 
 ################################################################################
 ## 4. column inventory
@@ -66,7 +65,9 @@ fam.cols            <- if (merge_family_history)
   grep("^cancer_family_any__(pre_index|treatment)__", all.cols, value = TRUE) else
   grep("^cancer_family_any__pre_index__",             all.cols, value = TRUE)
 dis.cols            <- grep("^disease__pre_index__",                     all.cols, value = TRUE)
-precancer.cols      <- grep("^cancer_preexisting__",                     all.cols, value = TRUE)
+## HIV is reported as its own preexisting category (preexisting__hiv from postprocess), so
+## exclude it from the comorbidity count to avoid double-counting it across two covariates.
+dis.cols            <- dis.cols[!grepl("human_immunodeficiency", dis.cols, ignore.case = TRUE)]
 
 REAL.ABX      <- c("AMOXICILLIN", "AZITHROMYCIN", "CEPHALEXIN", "TETRACYCLINE", "TMP-SMX")
 real.abx.cols <- paste0("antibiotics__treatment__", REAL.ABX)
@@ -171,8 +172,11 @@ raw.clean <- raw %>%
               na.rm = TRUE) > 0 ~ "Yes",
       TRUE ~ "No"),
 
+    ## When include_transplant is FALSE, transplant counts as one more comorbidity
+    ## (folded into the count) instead of being its own covariate.
     n.comorbidities = rowSums(across(all_of(dis.cols), ~ as.integer(.x == "Yes")),
-                               na.rm = TRUE),
+                               na.rm = TRUE) +
+                      if (include_transplant) 0L else as.integer(Transplant == "Yes"),
 
     Comorbidities = case_when(
       n.comorbidities == 0 ~ "None",
@@ -181,16 +185,12 @@ raw.clean <- raw %>%
       n.comorbidities >= 3 ~ "3+",
       TRUE ~ "None"),
 
-    ## --- preexisting cancers: treated as a confounder, parallel to comorbidities ---
-    n.prior.cancer = rowSums(across(all_of(precancer.cols), ~ as.integer(.x == "Yes")),
-                             na.rm = TRUE),
-
-    Prior.Cancer = case_when(
-      n.prior.cancer == 0 ~ "None",
-      n.prior.cancer == 1 ~ "1",
-      n.prior.cancer == 2 ~ "2",
-      n.prior.cancer >= 3 ~ "3+",
-      TRUE ~ "None"),
+    ## --- preexisting condition categories (Yes/No flags from postprocess) ---
+    ## Prior.Cancer = "other" preexisting cancers, which EXCLUDES leukemia/lymphoma
+    ## (its own category) and HIV. The three are separate confounders.
+    Prior.Cancer     = if_else(`cancer_preexisting_group__other`             == "Yes", "Yes", "No", missing = "No"),
+    Prior.Leuk.Lymph = if_else(`cancer_preexisting_group__leukemia_lymphoma` == "Yes", "Yes", "No", missing = "No"),
+    Prior.HIV        = if_else(`preexisting__hiv`                            == "Yes", "Yes", "No", missing = "No"),
 
     ## --- cancer type indicators ---
     ## Generated automatically (one Yes/No column per raw cancer_outcome__<label>
@@ -303,8 +303,9 @@ raw.clean <- raw %>%
          Fam.Cancer,
          n.comorbidities,
          Comorbidities,
-         n.prior.cancer,
          Prior.Cancer,
+         Prior.Leuk.Lymph,
+         Prior.HIV,
          all_of(cancer.outcome.cols),   # raw per-type indicators, recoded in section 7
          all_of(cancer.type.cols),      # raw per-type dx-date strings, parsed in section 7
          start.dt,
@@ -376,8 +377,9 @@ final <- raw.clean %>%
     Comorbidities = factor(Comorbidities,
                            levels = c("None", "1", "2", "3+")),
 
-    Prior.Cancer = factor(Prior.Cancer,
-                          levels = c("None", "1", "2", "3+"))
+    Prior.Cancer     = factor(Prior.Cancer,     levels = c("No", "Yes")),
+    Prior.Leuk.Lymph = factor(Prior.Leuk.Lymph, levels = c("No", "Yes")),
+    Prior.HIV        = factor(Prior.HIV,        levels = c("No", "Yes"))
   ) %>%
   filter(!is.na(Cancer.Dx),
          !is.na(follow.time),
@@ -426,13 +428,15 @@ rm(.t, .bad)
 ## Defined once here so the adjustment set cannot silently diverge between scripts.
 ################################################################################
 
-## Prior.Cancer is included in the adjustment set only when include_preexisting_cancer
-## is TRUE. The cohort itself is unchanged either way — this flag toggles the COVARIATE
-## only, never which patients are in the study.
+## The preexisting-condition covariates (Prior.Cancer = other preexisting cancers,
+## Prior.Leuk.Lymph, Prior.HIV) are included in the adjustment set only when
+## include_preexisting_cancer is TRUE. The cohort itself is unchanged either way — this
+## flag toggles the COVARIATES only, never which patients are in the study.
 adj.vars <- c("Age", "Sex", "Race", "BMI.Category", "Smoking",
-              "Alcohol", "Contraceptives", "Fam.Cancer", "Transplant",
+              "Alcohol", "Contraceptives", "Fam.Cancer",
+              if (include_transplant) "Transplant",   # else folded into Comorbidities count
               "Comorbidities",
-              if (include_preexisting_cancer) "Prior.Cancer")
+              if (include_preexisting_cancer) c("Prior.Cancer", "Prior.Leuk.Lymph", "Prior.HIV"))
 
 ## Keep only covariates that actually vary in a given data frame: factors need >=2
 ## observed levels, numerics need >=2 distinct values. A constant covariate would

@@ -2318,37 +2318,59 @@ def categorize_bmi(bmi):
         return "obese"
 
 
-# Smoking/alcohol/BMI baseline covariates: take the structured record closest to index_date
-# among those dated on or before index_date + COVARIATE_MAX_DAYS_AFTER_INDEX days. Letting a
-# measurement taken shortly after the index visit still count as baseline (without leaking
-# real follow-up data). Used by cohort matching (make_cohort) and full inference.
+# Baseline covariate window: records dated on or before index_date +
+# COVARIATE_MAX_DAYS_AFTER_INDEX days count as baseline (a measurement shortly after the
+# index visit still counts, without leaking real follow-up). Smoking/alcohol use the closest
+# such record (closest_baseline_structured); BMI uses the window too (see compute_bmi_from_phy).
 COVARIATE_MAX_DAYS_AFTER_INDEX = 90
 
+# phy codes for BMI computation, ALL in lb / inch (Epic WGT/HGT + the older LFA codes; the
+# legacy codes reach back before ~2015 where the Epic vitals start, which is what makes
+# pre-index BMI usable for this cohort). kg/cm-only codes are deliberately excluded.
+BMI_WEIGHT_CODES = ("WGT", "3688")            # pounds
+BMI_HEIGHT_CODES = ("HGT", "3771", "4946")    # inches
 
-def compute_bmi_from_phy(phy_records, index_date, max_days_after=None):
-    """Get closest BMI value to index_date from phy records DataFrame.
-    Returns (bmi_value, bmi_category) or (None, None).
-    When max_days_after is not None, only records dated on or before
-    index_date + max_days_after days are considered (closest to index_date wins), so the
-    baseline never uses real follow-up BMI."""
+
+def compute_bmi_from_phy(phy_records, index_date):
+    """Baseline BMI for a patient within [.., index + COVARIATE_MAX_DAYS_AFTER_INDEX days].
+
+    Prefers a recorded BMI code (latest in the window); otherwise computes
+    BMI = 703 * weight_lb / height_in**2 from the latest weight in the window and the height
+    closest to index (any date -- height is ~stable). Weight/height use the Epic + legacy
+    lb/inch codes (BMI_WEIGHT_CODES / BMI_HEIGHT_CODES); kg/cm rows are dropped as a guard.
+    Returns (bmi_value, bmi_category) or (None, None). Shared by cohort matching (make_cohort)
+    and full inference so both use the same baseline BMI."""
     if phy_records.empty:
         return None, None
     df = phy_records.copy()
     if not pd.api.types.is_datetime64_any_dtype(df["Date"]):
         df["Date"] = pd.to_datetime(df["Date"], format="mixed", errors="coerce")
-    df = df[df["Code"] == "BMI"]
-    if df.empty:
-        return None, None
+    df = df.dropna(subset=["Date"])
     df["Result"] = pd.to_numeric(df["Result"], errors="coerce")
-    df = df.dropna(subset=["Result"])
-    if max_days_after is not None:
-        # NaT dates compare False here and are dropped along with too-late records.
-        df = df[df["Date"] <= index_date + pd.Timedelta(days=max_days_after)]
-    if df.empty:
+    cutoff = index_date + pd.Timedelta(days=COVARIATE_MAX_DAYS_AFTER_INDEX)
+    # Plausible adult ranges; also discards mislabeled cm/kg values that slip past the unit
+    # guard (e.g. a 170 cm height stored as "inches" -> dropped by the 36-90 in bound).
+    WT_LB = (50.0, 1000.0)
+    HT_IN = (36.0, 90.0)
+    BMI_RANGE = (10.0, 100.0)
+
+    # 1. Prefer a recorded BMI code within the window (latest plausible one).
+    bmi = df[(df["Code"] == "BMI") & (df["Date"] <= cutoff) & df["Result"].between(*BMI_RANGE)]
+    if not bmi.empty:
+        val = bmi.sort_values("Date").iloc[-1]["Result"]
+        return float(val), categorize_bmi(val)
+
+    # 2. Else compute from weight (latest in window) + height (closest to index, any date).
+    wt = df[df["Code"].isin(BMI_WEIGHT_CODES) & (df["Date"] <= cutoff) & df["Result"].between(*WT_LB)]
+    ht = df[df["Code"].isin(BMI_HEIGHT_CODES) & df["Result"].between(*HT_IN)]
+    if wt.empty or ht.empty:
         return None, None
-    df["_abs_days"] = (df["Date"] - index_date).dt.days.abs()
-    bmi = df.sort_values("_abs_days").iloc[0]["Result"]
-    return float(bmi), categorize_bmi(bmi)
+    weight_lb = wt.sort_values("Date").iloc[-1]["Result"]                 # latest weight in window
+    height_in = ht.iloc[(ht["Date"] - index_date).abs().argsort().iloc[0]]["Result"]  # height closest to index
+    bmi_val = 703.0 * weight_lb / (height_in ** 2)
+    if not (BMI_RANGE[0] <= bmi_val <= BMI_RANGE[1]):
+        return None, None
+    return float(bmi_val), categorize_bmi(bmi_val)
 
 
 def _closest_non_null_structured(phy_records, index_date, feature_cls, max_days_after=None):
@@ -2398,7 +2420,7 @@ def closest_baseline_structured(phy_records, index_date, feature_cls):
     This is the SINGLE shared definition of the smoking/alcohol covariate selection used by
     both cohort matching (via compute_*_demographic) and full inference (_recyclable_var_rows),
     so the window + closest-record logic lives in exactly one place. BMI uses the sibling
-    compute_bmi_from_phy with the same window."""
+    compute_bmi_from_phy, which selects the latest value on/before index (not this window)."""
     return _closest_non_null_structured(
         phy_records, index_date, feature_cls, max_days_after=COVARIATE_MAX_DAYS_AFTER_INDEX
     )

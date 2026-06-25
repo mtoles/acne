@@ -38,15 +38,10 @@ from utils import normalize_date
 OUTPUT_DIR = Path("full_inference_out")
 OUTPUT_PATH = OUTPUT_DIR / "pooled_records.csv"
 
-# Features pooled across keywords via majority vote
-MAJORITY_FEATURES = {"alcohol_status", "alcohol_amount"}
-
-# Smoking is taken from the CLOSEST structured record to the index date (any date,
-# before or after) rather than a period-windowed majority vote. This matches
-# make_cohort's compute_smoking_status_demographic and gives ~97% coverage (vs ~50%
-# for the pre_index window), since most structured smoking documentation post-dates
-# the index. Emitted as a single column per feature: <feature>__index__structured.
-CLOSEST_STRUCTURED_FEATURES = {"smoking_status", "smoking_amount"}
+# Smoking and alcohol are the majority vote across all records dated ON OR BEFORE the
+# index date (no record on/before index -> column omitted -> "unknown" downstream).
+# Emitted as <feature>__pre_index__pooled.
+ONBEFORE_MAJORITY_FEATURES = {"smoking_status", "smoking_amount", "alcohol_status", "alcohol_amount"}
 
 # Features with one boolean column per keyword (any "Yes" -> "Yes")
 # (cancer_cancer is handled separately: split into cancer_preexisting / cancer_outcome by dx date)
@@ -71,6 +66,16 @@ ICD_CODE_TO_DIAGNOSIS = {
 # Longest code first so the most specific prefix wins (all codes are 3 chars today, but
 # this keeps matching robust if longer/overlapping codes are ever added).
 _CANCER_CODE_PREFIXES = sorted(ICD_CODE_TO_DIAGNOSIS, key=len, reverse=True)
+
+# Leukemia/lymphoma preexisting category: diagnoses (col D) whose text contains "leukemia"
+# or "lymphoma". These are reported as their OWN preexisting category and excluded from
+# the "other" preexisting-cancer category below. Stored in the same column-name form used
+# for cancer_preexisting__<dx> columns (commas -> ';', spaces -> '_').
+_LEUK_LYMPH_MASK = _cancer_code_df["Diagnosis"].str.contains("leukemia|lymphoma", case=False, na=False)
+LEUK_LYMPH_DX_COLS = {
+    str(d).replace(",", ";").replace(" ", "_")
+    for d in _cancer_code_df.loc[_LEUK_LYMPH_MASK, "Diagnosis"].dropna().unique()
+}
 
 
 def icd_to_diagnosis(icd_code):
@@ -135,19 +140,6 @@ def pool_majority(preds):
     """Return the most common prediction."""
     counts = Counter(preds)
     return counts.most_common(1)[0][0]
-
-
-def pool_closest_structured(records, index_date):
-    """Return the prediction from the STRUCTURED_DATA record whose date is closest to
-    index_date (any date, before or after). Mirrors make_cohort's
-    _closest_non_null_structured. Returns None if there is no usable structured record."""
-    structured = [
-        r for r in records
-        if r["keyword"] == "STRUCTURED_DATA" and r["prediction"] not in (None, "")
-    ]
-    if not structured:
-        return None
-    return min(structured, key=lambda r: abs((r["_parsed_date"] - index_date).days))["prediction"]
 
 
 def pool_any_yes(preds):
@@ -303,27 +295,28 @@ def pool_patient_records(records, index_date):
 
     for feature_name, feature_records in by_feature.items():
 
-        # --- Smoking: single closest STRUCTURED record to the index date (any date) ---
-        if feature_name in CLOSEST_STRUCTURED_FEATURES:
-            val = pool_closest_structured(feature_records, index_date)
-            if val is not None:
-                result[f"{feature_name}__index__structured"] = val
+        # --- Smoking & alcohol: majority vote across all records dated ON OR BEFORE index ---
+        if feature_name in ONBEFORE_MAJORITY_FEATURES:
+            on_before = [r["prediction"] for r in feature_records
+                         if pd.notna(r["_parsed_date"]) and r["_parsed_date"] <= index_date
+                         and r["prediction"] not in (None, "")]
+            if on_before:
+                result[f"{feature_name}__pre_index__pooled"] = pool_majority(on_before)
 
-        # --- Majority vote features (alcohol): pool across all keywords ---
-        elif feature_name in MAJORITY_FEATURES:
-            for period, period_recs in _group_by_period(feature_records).items():
-                preds = [r["prediction"] for r in period_recs]
-                col_name = f"{feature_name}__{period}__pooled"
-                result[col_name] = pool_majority(preds)
-
-        # --- Disease: one column per disease name, presence only ---
+        # --- Disease: one column per DISTINCT disease, presence only ---
+        # Group by the disease name, NOT the keyword: structured disease rows all share
+        # keyword "STRUCTURED_DATA", so grouping by keyword collapsed every disease a patient
+        # has into a single column (the first one). Keying on the disease name gives one
+        # column per distinct disease, so multi-comorbidity patients are preserved.
         elif feature_name == "disease":
-            for period, by_kw in _group_by_period_and_keyword(feature_records).items():
-                for kw, kw_recs in by_kw.items():
-                    disease_name = kw_recs[0].get("disease", kw_recs[0].get("Code", "unknown"))
-                    disease_name = disease_name.replace(",", ";").replace(" ", "_")
-                    col_name = f"disease__{period}__{disease_name}"
-                    result[col_name] = "Yes"
+            by_period_dx = _group_by_period_and_keyword(
+                feature_records,
+                rec_key_fn=lambda r: r.get("disease", r.get("Code", "unknown")),
+            )
+            for period, by_dx in by_period_dx.items():
+                for dx_name, dx_recs in by_dx.items():
+                    dn = str(dx_name).replace(",", ";").replace(" ", "_")
+                    result[f"disease__{period}__{dn}"] = "Yes"
 
         # --- Boolean per-keyword features: any "Yes" -> "Yes" ---
         elif feature_name in BOOLEAN_PER_KEYWORD_FEATURES:
@@ -420,6 +413,29 @@ def pool_patient_records(records, index_date):
         abx_dates = [r["_parsed_date"] for r in by_feature["antibiotics"]]
         if abx_dates:
             result["earliest_abx_date"] = str(min(abx_dates).date())
+
+    # --- Preexisting condition categories (derived from the per-type columns above) ---
+    # Split preexisting cancers into leukemia/lymphoma (its own category) vs other, and
+    # flag preexisting HIV. Leukemia/lymphoma is identified from col D of the grouped ICD
+    # table (LEUK_LYMPH_DX_COLS) and is NOT counted among "other" preexisting cancers. HIV
+    # comes from the pre-index HIV disease columns.
+    pre_leuk_lymph = "No"
+    pre_other_cancer = "No"
+    pre_hiv = "No"
+    for col, val in result.items():
+        if val != "Yes":
+            continue
+        if col.startswith("cancer_preexisting__"):
+            dx_col = col[len("cancer_preexisting__"):]
+            if dx_col in LEUK_LYMPH_DX_COLS:
+                pre_leuk_lymph = "Yes"
+            else:
+                pre_other_cancer = "Yes"
+        elif col.startswith("disease__pre_index__") and "human_immunodeficiency" in col.lower():
+            pre_hiv = "Yes"
+    result["cancer_preexisting_group__leukemia_lymphoma"] = pre_leuk_lymph
+    result["cancer_preexisting_group__other"] = pre_other_cancer
+    result["preexisting__hiv"] = pre_hiv
 
     return result
 
