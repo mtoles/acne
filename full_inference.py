@@ -1163,9 +1163,9 @@ parser.add_argument(
     type=str,
     nargs="*",
     default=[
-        # "full_inference_out/records_old_11-extra-smoking-alc"
-        # "full_inference_out/records_old_12-smoking-leak"
-        "full_inference_out/records_old_14-bmi-miscalc"
+        "full_inference_out/records_old_15-only-post-2015-smoking",
+        "full_inference_out/records_old_14-bmi-miscalc",
+        "full_inference_out/records_old_13_backup"
     ],
     help="One or more paths to previous records/ dirs. For each pt, the first dir containing the pt's .jsonl is used (with age_at_index_date backfilled if missing).",
 )

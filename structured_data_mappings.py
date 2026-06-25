@@ -7,6 +7,8 @@ into standardized option values for patient features.
 Based on analysis of the rpdr.db phy table (see db.ipynb for data exploration).
 """
 
+import re
+
 
 # Alcohol Status Mapping Data
 # Based on query: SELECT Concept_Name, Result, COUNT(*) FROM phy WHERE Concept_Name LIKE '%alcohol%'
@@ -36,11 +38,123 @@ ALCOHOL_QUANTITY_FIELDS = {
     "Alcohol Oz Per Week",      # 551,636 total: 147,412 with "0", rest non-zero
 }
 
-# Screening/assessment concepts that don't indicate drinking status
+# Screening/assessment concepts that don't indicate drinking status by their presence.
+# NOTE: "Alcohol Use Screening" (phy Code 38004) is deliberately NOT here -- its free-text
+# Result is parsed for status via classify_alcohol_freetext() (see below), because it is the
+# main pre-2015 baseline alcohol signal (the structured SH-ALC* concepts only start in 2015).
 ALCOHOL_SCREENING_ONLY = {
-    "Alcohol Use Screening",    # 12,165 records with various values
     "Alcohol User-Not Asked",   # 23,809 records
 }
+
+# Concept name of the legacy free-text alcohol screening field (phy Code 38004).
+ALCOHOL_SCREENING_FREETEXT_CONCEPT = "Alcohol Use Screening"
+
+
+# ============================================================================
+# Free-text "Alcohol Use Screening" (phy Code 38004) -> alcohol STATUS mapping
+# ----------------------------------------------------------------------------
+# 38004 is a legacy free-text field (~16k rows, peaking 2008-2014). It has ~2.9k distinct
+# Result strings but they are highly regular, so we classify deterministically with ordered
+# rules (normalize -> quantity -> positive/negative cues) plus a small explicit OVERRIDE table
+# for idiosyncratic strings the rules misread. Status only: "A" currently drinks,
+# "B" does not currently drink, None = no usable signal (process notes like "Done", CAGE
+# scores, empty, declined). Used by alcohol_status_structured_mapping below, which is the
+# single path both cohort matching and full inference go through.
+# ============================================================================
+
+# Strings that only record that screening happened / was declined -- no drinking status.
+_ALC_FREETEXT_NO_CONTENT = {
+    "", "done", "done today", "done elsewhere", "done here", "completed",
+    "discussed", "discussed today", "see note", "see note today", "see hpi",
+    "deferred", "declined", "patient declined", "pt declined", "refused",
+    "n/a", "na", "unknown", "unk", "?", "-", "+", "reviewed",
+}
+
+# Explicit overrides (normalized key -> status) for values the generic rules get wrong.
+_ALC_FREETEXT_OVERRIDES = {
+    "low risk": "B",
+    "(-)": "B",
+    "no concerns": "B",
+    "moderate": "A",
+    "soc": "A",
+}
+
+# Word-level cues, matched on word boundaries over the normalized string.
+_ALC_NEG_PAT = re.compile(
+    r"\b(no|none|never|denies|deny|denied|denying|negative|neg|nondrinker|"
+    r"abstinent|abstains?|abstain|teetotal|sober|zero|nil)\b"
+)
+_ALC_NEG_PHRASES = (
+    "no etoh", "no alcohol", "no abuse", "no issues", "no drink", "no use",
+    "does not drink", "doesn't drink", "doesnt drink", "do not drink",
+    "non-drinker", "non drinker", "not currently", "no concern", "no problem",
+)
+_ALC_POS_PAT = re.compile(
+    r"\b(positive|pos|social|socially|occ\w*|ocas\w*|occas\w*|occasion\w*|"
+    r"rare\w*|seldom|minimal|min|moderate|wine|beer|liquor|vodka|whiskey|"
+    r"cocktails?|weekend\w*|weekly|monthly|holidays?|binge|yes|drinker|daily|"
+    r"nightly|couple|few|some|little|infrequent\w*|limited)\b"
+)
+# Spelled-out counts -> digits, so "one drink a week" / "twice a month" read as amounts.
+_ALC_NUMWORDS = {
+    "once": "1", "twice": "2", "one": "1", "two": "2", "three": "3",
+    "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8",
+    "nine": "9", "ten": "10",
+}
+_ALC_NUMWORD_PAT = re.compile(r"\b(" + "|".join(_ALC_NUMWORDS) + r")\b")
+# A number tied to a drinking cadence/noun => an actual amount (not a CAGE x/y score, which
+# is stripped first). e.g. "5/week", "2 drinks a week", "1 glass/wk", "1/night".
+_ALC_CADENCE_PAT = re.compile(
+    r"(week|wk|/mo|month|\bmo\b|\bday\b|night|year|\byr\b|drink|glass|unit|"
+    r"beer|shot|pack|wine|cocktail|time)"
+)
+_ALC_SCORE_PAT = re.compile(r"\b\d+\s*/\s*\d+\b")  # CAGE/AUDIT "0/4" style scores
+
+
+def classify_alcohol_freetext(result):
+    """Map a free-text "Alcohol Use Screening" (phy Code 38004) Result to alcohol status.
+
+    Returns "A" (currently drinks), "B" (does not currently drink), or None (no usable
+    signal -- process note, screen score, empty, declined). Deterministic: a normalized
+    string always maps to the same value.
+    """
+    if result is None:
+        return None
+    s = re.sub(r"\s+", " ", str(result).strip().lower())
+    s = s.strip(" .")  # drop surrounding whitespace / trailing periods
+
+    if not s or s in _ALC_FREETEXT_NO_CONTENT:
+        return None
+    if s in _ALC_FREETEXT_OVERRIDES:
+        return _ALC_FREETEXT_OVERRIDES[s]
+
+    # Strip CAGE/AUDIT "x/y" scores so "5/week 0/4 cage" still reads as 5/week, and a bare
+    # "cage 0/4" reads as no amount (a problem-drinking score can't distinguish A vs B).
+    s2 = _ALC_SCORE_PAT.sub(" ", s)
+    s2 = _ALC_NUMWORD_PAT.sub(lambda m: _ALC_NUMWORDS[m.group(1)], s2)
+    nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", s2)]
+    has_cadence = bool(_ALC_CADENCE_PAT.search(s2))
+
+    # 1. An explicit amount wins: any positive quantity => drinks; an only-zero amount => not.
+    if nums and has_cadence:
+        return "A" if max(nums) > 0 else "B"
+
+    neg = bool(_ALC_NEG_PAT.search(s)) or any(p in s for p in _ALC_NEG_PHRASES)
+    pos = ("positive" in s) or bool(_ALC_POS_PAT.search(s))
+
+    # 2. Drinker descriptor (social/occasional/rare/wine/...) with no negation => drinks.
+    if pos and not neg:
+        return "A"
+    # 3. Any denial/abstinence cue => does not currently drink.
+    if neg:
+        return "B"
+    # 4. Descriptor alongside a negation but no amount: lean to drinks (descriptor is specific).
+    if pos:
+        return "A"
+    # 5. Bare number with no cadence: positive => drinks, "0" => does not.
+    if nums:
+        return "A" if max(nums) > 0 else "B"
+    return None
 
 
 def alcohol_status_structured_mapping(records: list) -> str:
@@ -90,6 +204,15 @@ def alcohol_status_structured_mapping(records: list) -> str:
 
         # Skip screening-only concepts (they don't indicate status)
         if concept_name in ALCOHOL_SCREENING_ONLY:
+            continue
+
+        # Legacy free-text "Alcohol Use Screening" (Code 38004): parse the Result text.
+        if concept_name == ALCOHOL_SCREENING_FREETEXT_CONCEPT:
+            screen_status = classify_alcohol_freetext(result)
+            if screen_status == "A":
+                has_current_evidence = True
+            elif screen_status == "B":
+                has_not_current_evidence = True
             continue
 
         # Check presence-based indicators for CURRENT drinking
