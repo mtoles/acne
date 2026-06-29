@@ -37,9 +37,18 @@ include_preexisting_cancer <- TRUE
 merge_family_history <- FALSE
 
 ## include_transplant: when TRUE, prior organ transplant is its OWN covariate (Transplant)
-## in the adjusted models. When FALSE, transplant is instead counted as one more comorbidity
-## (folded into the Comorbidities count) and is NOT a separate covariate. Propagates to 2-9.
-include_transplant <- TRUE
+## in the adjusted models. When FALSE (default), transplant is instead counted as one more
+## comorbidity (folded into the Comorbidities count) and is NOT a separate covariate.
+include_transplant <- FALSE
+
+## split_leuk_lymph: when TRUE, leukemia/lymphoma is its OWN covariate (Prior.Leuk.Lymph) and
+## EXCLUDED from Prior.Cancer (which becomes "other" preexisting cancers). When FALSE (default),
+## leukemia/lymphoma is merged INTO Prior.Cancer (all preexisting cancers) and has no own term.
+split_leuk_lymph <- FALSE
+
+## split_hiv: when TRUE, HIV is its OWN covariate (Prior.HIV) and REMOVED from the comorbidity
+## count. When FALSE (default), HIV is merged into the Comorbidities count and has no own term.
+split_hiv <- FALSE
 
 ################################################################################
 ## 3. data read-in
@@ -65,9 +74,10 @@ fam.cols            <- if (merge_family_history)
   grep("^cancer_family_any__(pre_index|treatment)__", all.cols, value = TRUE) else
   grep("^cancer_family_any__pre_index__",             all.cols, value = TRUE)
 dis.cols            <- grep("^disease__pre_index__",                     all.cols, value = TRUE)
-## HIV is reported as its own preexisting category (preexisting__hiv from postprocess), so
-## exclude it from the comorbidity count to avoid double-counting it across two covariates.
-dis.cols            <- dis.cols[!grepl("human_immunodeficiency", dis.cols, ignore.case = TRUE)]
+## When split_hiv is TRUE, HIV becomes its own covariate (Prior.HIV) so it is removed from the
+## comorbidity count to avoid double-counting. When FALSE (default) HIV stays a comorbidity.
+if (split_hiv)
+  dis.cols          <- dis.cols[!grepl("human_immunodeficiency", dis.cols, ignore.case = TRUE)]
 
 REAL.ABX      <- c("AMOXICILLIN", "AZITHROMYCIN", "CEPHALEXIN", "TETRACYCLINE", "TMP-SMX")
 real.abx.cols <- paste0("antibiotics__treatment__", REAL.ABX)
@@ -186,9 +196,13 @@ raw.clean <- raw %>%
       TRUE ~ "None"),
 
     ## --- preexisting condition categories (Yes/No flags from postprocess) ---
-    ## Prior.Cancer = "other" preexisting cancers, which EXCLUDES leukemia/lymphoma
-    ## (its own category) and HIV. The three are separate confounders.
-    Prior.Cancer     = if_else(`cancer_preexisting_group__other`             == "Yes", "Yes", "No", missing = "No"),
+    ## Prior.Cancer includes leukemia/lymphoma when split_leuk_lymph is FALSE (default, merged),
+    ## and EXCLUDES it (-> "other") when split_leuk_lymph is TRUE (leuk/lymph becomes its own term).
+    Prior.Cancer     = if (split_leuk_lymph)
+                         if_else(`cancer_preexisting_group__other` == "Yes", "Yes", "No", missing = "No")
+                       else
+                         if_else(`cancer_preexisting_group__other` == "Yes" |
+                                 `cancer_preexisting_group__leukemia_lymphoma` == "Yes", "Yes", "No", missing = "No"),
     Prior.Leuk.Lymph = if_else(`cancer_preexisting_group__leukemia_lymphoma` == "Yes", "Yes", "No", missing = "No"),
     Prior.HIV        = if_else(`preexisting__hiv`                            == "Yes", "Yes", "No", missing = "No"),
 
@@ -428,15 +442,18 @@ rm(.t, .bad)
 ## Defined once here so the adjustment set cannot silently diverge between scripts.
 ################################################################################
 
-## The preexisting-condition covariates (Prior.Cancer = other preexisting cancers,
-## Prior.Leuk.Lymph, Prior.HIV) are included in the adjustment set only when
-## include_preexisting_cancer is TRUE. The cohort itself is unchanged either way — this
-## flag toggles the COVARIATES only, never which patients are in the study.
+## Covariate gating (cohort is unchanged by any of these — they toggle COVARIATES only):
+##   include_preexisting_cancer -> Prior.Cancer (leuk/lymph merged in unless split_leuk_lymph)
+##   split_leuk_lymph           -> Prior.Leuk.Lymph as its own term (else merged into Prior.Cancer)
+##   split_hiv                  -> Prior.HIV as its own term (else merged into Comorbidities)
+##   include_transplant         -> Transplant as its own term (else merged into Comorbidities)
 adj.vars <- c("Age", "Sex", "Race", "BMI.Category", "Smoking",
               "Alcohol", "Contraceptives", "Fam.Cancer",
-              if (include_transplant) "Transplant",   # else folded into Comorbidities count
+              if (include_transplant) "Transplant",
               "Comorbidities",
-              if (include_preexisting_cancer) c("Prior.Cancer", "Prior.Leuk.Lymph", "Prior.HIV"))
+              if (include_preexisting_cancer) "Prior.Cancer",
+              if (include_preexisting_cancer && split_leuk_lymph) "Prior.Leuk.Lymph",
+              if (split_hiv) "Prior.HIV")
 
 ## Keep only covariates that actually vary in a given data frame: factors need >=2
 ## observed levels, numerics need >=2 distinct values. A constant covariate would

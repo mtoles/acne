@@ -456,5 +456,9 @@ def run_query():
         }), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    # use_reloader=False: the debug reloader watches every .py in the project and restarts the
+    # server on any change, which KILLS in-flight /api/run requests (looks like "no throughput"
+    # whenever pipeline .py files are being edited). Keep the debugger, drop the file-watch.
+    # threaded=True so concurrent requests (and the /api/check_server poll) don't block a run.
+    app.run(debug=True, use_reloader=False, threaded=True, host='0.0.0.0', port=5001)
 
