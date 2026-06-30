@@ -55,5 +55,10 @@ for f in 2_table1.R 3_table2.R 4_table3.R 5_km.R 6_cox.R 7_km_types.R 8_cox_type
   Rscript "$f"
 done
 
+echo "===== sanity checks (sanity_check.py) ====="
+# Validates records / pooled_records.csv / COX outputs. Exits non-zero (fails this script
+# under set -e) if any hard CHECK fails. Uses the project venv for pandas/tqdm.
+/home/mtoles/acne/.venv/bin/python sanity_check.py
+
 echo "===== done. outputs in: $(pwd)/eda_output ====="
 ls -1 eda_output
