@@ -26,16 +26,25 @@ Contraceptives: One boolean column (pooled) – "Yes" if any contraceptive recor
 """
 
 import json
+import re
 from enum import StrEnum
 from pathlib import Path
 from collections import defaultdict, Counter
 from tqdm import tqdm
 import pandas as pd
 from utils import normalize_date
+from comorbidity_sheet import (
+    universal_conditions_by_category,
+    cancer_specific_applicability,
+    slugify,
+)
 # from data_profiling import ProfileReport
 # --- Constants ---
 
 OUTPUT_DIR = Path("full_inference_out")
+
+# Page-3 (universal) comorbidity conditions per category, for the COX1 distinct-condition counts.
+UNIVERSAL_CONDITIONS = universal_conditions_by_category()
 OUTPUT_PATH = OUTPUT_DIR / "pooled_records.csv"
 
 # Smoking and alcohol are the majority vote across all records dated ON OR BEFORE the
@@ -437,6 +446,27 @@ def pool_patient_records(records, index_date):
     result["cancer_preexisting_group__other"] = pre_other_cancer
     result["preexisting__hiv"] = pre_hiv
 
+    # --- COX1 comorbidity covariates: # of distinct universal (page-3) conditions present
+    # pre-index, per category. Transplant (its own feature) folds into immunosuppressed per the
+    # sheet's manual-add instruction. Emitted for every patient (0 when none) as raw counts; the
+    # 0/1/2/3+ bucketing happens in the Cox stats. ---
+    pre_index_conditions = {
+        r["condition"] for r in by_feature["disease"] if r["_period"] == "pre_index"
+    }
+    transplant_pre_index = "transplant" in by_feature and any(
+        r["_period"] == "pre_index" for r in by_feature["transplant"]
+    )
+    for category, cond_set in UNIVERSAL_CONDITIONS.items():
+        n = len(pre_index_conditions & cond_set)
+        if category == "Immunosuppressed" and transplant_pre_index:
+            n += 1
+        result[f"comorbidity_n__pre_index__{slugify(category)}"] = n
+
+    # Per-condition pre-index presence (canonical condition), keyed by slug. These are the
+    # intermediates the cancer-specific (page-2) binary covariates are built from in main().
+    for cond in pre_index_conditions:
+        result[f"disease_cond__pre_index__{slugify(cond)}"] = "Yes"
+
     return result
 
 
@@ -487,6 +517,26 @@ def main():
     if "end_reason" in df.columns:
         print("Follow-up end reason counts:")
         print(df["end_reason"].value_counts())
+
+    # --- Cancer-specific (page-2) binary covariates for 8_cox_types ---
+    # For each (cancer, category) with applicable conditions, emit
+    # cancerspecific__pre_index__<cancer>__<category> = "Yes" iff the patient has >=1 of the
+    # category's applicable conditions pre-index (built from the disease_cond__ intermediates).
+    cancer_columns = [c[len("cancer_outcome__"):] for c in df.columns
+                      if c.startswith("cancer_outcome__")]
+    applicability = cancer_specific_applicability(cancer_columns)
+    n_cs_cols = 0
+    for cancer, by_cat in applicability.items():
+        for category, conditions in by_cat.items():
+            cond_cols = [f"disease_cond__pre_index__{slugify(c)}" for c in conditions]
+            present_cols = [c for c in cond_cols if c in df.columns]
+            out_col = f"cancerspecific__pre_index__{cancer}__{slugify(category)}"
+            if present_cols:
+                df[out_col] = (df[present_cols] == "Yes").any(axis=1).map({True: "Yes", False: "No"})
+            else:
+                df[out_col] = "No"
+            n_cs_cols += 1
+    print(f"Emitted {n_cs_cols} cancer-specific (page-2) binary covariate columns")
 
     df = df.reindex(sorted(df.columns), axis=1)
     df.to_csv(OUTPUT_PATH)

@@ -82,6 +82,10 @@ if (split_hiv)
 REAL.ABX      <- c("AMOXICILLIN", "AZITHROMYCIN", "CEPHALEXIN", "TETRACYCLINE", "TMP-SMX")
 real.abx.cols <- paste0("antibiotics__treatment__", REAL.ABX)
 
+## Cancer-specific (FINAL COMORBIDITIES.xlsx page-2) binary covariates, one per applicable
+## (cancer x category) pair, emitted by postprocess_records.py. Used only by 8_cox_types.R.
+cs.cols <- grep("^cancerspecific__pre_index__", all.cols, value = TRUE)
+
 ################################################################################
 ## 5. clean up
 ################################################################################
@@ -193,6 +197,29 @@ raw.clean <- raw %>%
       n.comorbidities == 1 ~ "1",
       n.comorbidities == 2 ~ "2",
       n.comorbidities >= 3 ~ "3+",
+      TRUE ~ "None"),
+
+    ## --- NEW comorbidity category covariates (FINAL COMORBIDITIES.xlsx, page-3 universal) ---
+    ## chronic_inflammation and immunosuppressed: # of DISTINCT universal conditions present
+    ## pre-index, computed in postprocess_records.py (immunosuppressed already folds in prior
+    ## organ transplant per the sheet's manual-add). Entered as ordinal 0/1/2/3+ factors. These
+    ## REPLACE the old Comorbidities / Prior.Leuk.Lymph / Prior.HIV / Transplant comorbidity
+    ## covariates in the Cox models (the old vars are still computed above for the Table 1 display).
+    n.chronic.inflammation = as.integer(`comorbidity_n__pre_index__chronic_inflammation`),
+    n.immunosuppressed     = as.integer(`comorbidity_n__pre_index__immunosuppressed`),
+
+    Chronic.Inflammation = case_when(
+      n.chronic.inflammation == 0 ~ "None",
+      n.chronic.inflammation == 1 ~ "1",
+      n.chronic.inflammation == 2 ~ "2",
+      n.chronic.inflammation >= 3 ~ "3+",
+      TRUE ~ "None"),
+
+    ## Top level capped at 2+ (only 4 patients ever reach 3 -> complete separation in Cox).
+    Immunosuppressed = case_when(
+      n.immunosuppressed == 0 ~ "None",
+      n.immunosuppressed == 1 ~ "1",
+      n.immunosuppressed >= 2 ~ "2+",
       TRUE ~ "None"),
 
     ## --- preexisting condition categories (Yes/No flags from postprocess) ---
@@ -317,9 +344,14 @@ raw.clean <- raw %>%
          Fam.Cancer,
          n.comorbidities,
          Comorbidities,
+         n.chronic.inflammation,
+         Chronic.Inflammation,
+         n.immunosuppressed,
+         Immunosuppressed,
          Prior.Cancer,
          Prior.Leuk.Lymph,
          Prior.HIV,
+         all_of(cs.cols),               # cancer-specific page-2 binaries (factored in section 6)
          all_of(cancer.outcome.cols),   # raw per-type indicators, recoded in section 7
          all_of(cancer.type.cols),      # raw per-type dx-date strings, parsed in section 7
          start.dt,
@@ -391,9 +423,20 @@ final <- raw.clean %>%
     Comorbidities = factor(Comorbidities,
                            levels = c("None", "1", "2", "3+")),
 
+    Chronic.Inflammation = factor(Chronic.Inflammation,
+                                  levels = c("None", "1", "2", "3+")),
+
+    Immunosuppressed = factor(Immunosuppressed,
+                              levels = c("None", "1", "2+")),
+
     Prior.Cancer     = factor(Prior.Cancer,     levels = c("No", "Yes")),
     Prior.Leuk.Lymph = factor(Prior.Leuk.Lymph, levels = c("No", "Yes")),
-    Prior.HIV        = factor(Prior.HIV,        levels = c("No", "Yes"))
+    Prior.HIV        = factor(Prior.HIV,        levels = c("No", "Yes")),
+
+    ## Cancer-specific page-2 binaries: Yes/No factors (missing -> "No").
+    across(all_of(cs.cols),
+           ~ factor(if_else(.x == "Yes", "Yes", "No", missing = "No"),
+                    levels = c("No", "Yes")))
   ) %>%
   filter(!is.na(Cancer.Dx),
          !is.na(follow.time),
@@ -442,18 +485,29 @@ rm(.t, .bad)
 ## Defined once here so the adjustment set cannot silently diverge between scripts.
 ################################################################################
 
-## Covariate gating (cohort is unchanged by any of these — they toggle COVARIATES only):
+## Cohort-matching variables (Age, Sex, Race, BMI.Category, Smoking, Alcohol) are NOT adjusted
+## for: the case-control cohort is matched on them, so they are balanced by design. They remain
+## in Table 1 for the balance display but are excluded from every Cox model here.
+##
+## Comorbidity adjustment uses the two FINAL COMORBIDITIES.xlsx (page-3 universal) covariates
+## Chronic.Inflammation + Immunosuppressed (each ordinal 0/1/2/3+; Immunosuppressed already
+## includes prior organ transplant). These REPLACE the old Comorbidities / Prior.Leuk.Lymph /
+## Prior.HIV / Transplant terms. Preexisting cancer stays its own track:
 ##   include_preexisting_cancer -> Prior.Cancer (leuk/lymph merged in unless split_leuk_lymph)
 ##   split_leuk_lymph           -> Prior.Leuk.Lymph as its own term (else merged into Prior.Cancer)
-##   split_hiv                  -> Prior.HIV as its own term (else merged into Comorbidities)
-##   include_transplant         -> Transplant as its own term (else merged into Comorbidities)
-adj.vars <- c("Age", "Sex", "Race", "BMI.Category", "Smoking",
-              "Alcohol", "Contraceptives", "Fam.Cancer",
-              if (include_transplant) "Transplant",
-              "Comorbidities",
+adj.vars <- c("Contraceptives", "Fam.Cancer",
+              "Chronic.Inflammation", "Immunosuppressed",
               if (include_preexisting_cancer) "Prior.Cancer",
-              if (include_preexisting_cancer && split_leuk_lymph) "Prior.Leuk.Lymph",
-              if (split_hiv) "Prior.HIV")
+              if (include_preexisting_cancer && split_leuk_lymph) "Prior.Leuk.Lymph")
+
+## 8_cox_types uses a SEPARATE base set: the shared non-comorbidity covariates ONLY. The universal
+## comorbidity categories (Chronic.Inflammation / Immunosuppressed) are intentionally EXCLUDED from
+## per-cancer models -- those lump in conditions irrelevant to the cancer at hand. Instead each
+## per-cancer model adds the cancer-specific page-2 binaries applicable to that cancer (chosen in
+## 8_cox_types.R from cs.cols via the cancerspecific__pre_index__<cancer>__ prefix).
+type.adj.vars <- c("Contraceptives", "Fam.Cancer",
+                   if (include_preexisting_cancer) "Prior.Cancer",
+                   if (include_preexisting_cancer && split_leuk_lymph) "Prior.Leuk.Lymph")
 
 ## Keep only covariates that actually vary in a given data frame: factors need >=2
 ## observed levels, numerics need >=2 distinct values. A constant covariate would

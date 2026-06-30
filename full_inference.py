@@ -24,11 +24,12 @@ from kw_builder import (
     ICD_TO_TRANSPLANT_DESC,
     ICD9_TRANSPLANT_PROCEDURE_CODES,
     ICD10_TRANSPLANT_PROCEDURE_CODES,
-    ICD9_DIAGNOSIS_CODES,
-    ICD10_DIAGNOSIS_CODES,
+    ICD9_TRANSPLANT_DIAGNOSIS_CODES,
+    ICD10_TRANSPLANT_DIAGNOSIS_CODES,
 )
 from kw_builder import transplant_df as transplant_icd_df, cancer_df
 from get_followup_time import compute_followup_components
+from comorbidity_sheet import load_comorbidity_sheet
 
 _ICD_TO_CANCER_LABEL = {}
 for _code_group, _row in cancer_df.iterrows():
@@ -670,6 +671,74 @@ def _bmi_rows(index_date, phy_records):
     ]
 
 
+# Comorbidity / exposure ICD codes from labeled_data/FINAL COMORBIDITIES.xlsx (the validated
+# single source of truth; supersedes confounding_disease_codes.jsonl). Split by code type and,
+# within each, into bare-category prefixes (no ".") vs sub-category prefixes (already contain a
+# ".") so the matcher below is O(1)-ish per dia code. Each info dict carries category /
+# canonical description / applicable cancers (see comorbidity_sheet.py).
+_COMORBIDITY_EXTRACTION_CODES = load_comorbidity_sheet()["extraction"]
+_CONF_BY_TYPE = {}
+for _ct, _icd_dict in _COMORBIDITY_EXTRACTION_CODES.items():
+    _nodot = {k for k in _icd_dict if "." not in k}
+    _dotted = sorted((k for k in _icd_dict if "." in k), key=len, reverse=True)
+    _CONF_BY_TYPE[_ct] = (_icd_dict, _nodot, _dotted)
+
+
+def _match_confounding_disease(code, code_type):
+    """Return the comorbidity-sheet info dict for a dia ICD code by prefix match, else None.
+
+    Matching respects the ICD category boundary so a shorter numeric prefix never bleeds into a
+    longer category (e.g. '20' must NOT match '200.5'):
+      * exact match always wins;
+      * a sub-category prefix (already contains '.', e.g. 'M35.0' or '714.0') matches deeper codes
+        by plain startswith -- ICD-10-CM appends further characters without another '.'
+        ('M35.0' -> 'M35.01'). Longest (most specific) such prefix wins;
+      * a bare-category prefix (no '.', e.g. 'M05', '250', '042') matches only the bare category or
+        the category followed by '.' (code == P or code startswith P + '.'). Checking the part
+        BEFORE the first '.' against the category set enforces the boundary: '200.5' -> '200' (not '20').
+    """
+    if code_type not in _CONF_BY_TYPE:
+        return None
+    icd_dict, nodot, dotted = _CONF_BY_TYPE[code_type]
+    code = str(code)
+    if code in icd_dict:
+        return icd_dict[code]
+    for prefix in dotted:  # longest-first -> most specific sub-category wins
+        if code.startswith(prefix):
+            return icd_dict[prefix]
+    base = code.split(".", 1)[0]
+    if base != code and base in nodot:
+        return icd_dict[base]
+    return None
+
+
+def _disease_rows(dia_records, outcome_window_start_date):
+    """Pre-outcome-window structured comorbidity rows from dia, matched to the curated ICD list
+    by prefix (see _match_confounding_disease). Shared by process_pt and the recycle path so the
+    fixed ICD-10 prefix matching can never silently persist as stale recycled values."""
+    rows = []
+    pre = filter_records_by_date_range(dia_records, end_date=outcome_window_start_date)
+    for _, record in pre.iterrows():
+        info = _match_confounding_disease(record["Code"], record["Code_Type"])
+        if info is None:
+            continue
+        rows.append(
+            {
+                "feature_name": "disease",
+                "keyword": "STRUCTURED_DATA",
+                "Code": record["Code"],
+                "disease": record["Diagnosis_Name"],
+                # Canonical condition + category from the comorbidity sheet -- downstream counts
+                # distinct conditions per category to build the Cox covariates.
+                "condition": info["description"],
+                "category": info["category"],
+                "date": record["Date"],
+                "prediction": "A",
+            }
+        )
+    return rows
+
+
 def _recyclable_var_rows(index_date, phy_records):
     """Compute smoking (status+amount), alcohol (status+amount), and BMI rows fresh.
 
@@ -729,6 +798,10 @@ def _recycle_patient(pt_id, src_path, dst_path):
             # for them (structured AND LLM) to avoid stale values.
             if _is_recyclable_var_row(rec):
                 continue
+            # Disease comorbidity rows are also recomputed fresh (fixed ICD-10 prefix matching),
+            # so drop the recycled ones rather than carry forward the stale exact-match version.
+            if rec["feature_name"] == "disease":
+                continue
             rows.append(rec)
             if rec["feature_name"] == "demographics" and rec["keyword"] == "age_at_index_date":
                 has_age_at_index = True
@@ -743,7 +816,13 @@ def _recycle_patient(pt_id, src_path, dst_path):
             phy_records = pd.DataFrame(
                 conn.execute(text(f"SELECT * FROM phy WHERE EMPI = '{pt_id}'")).mappings().fetchall()
             )
+            dia_records = pd.DataFrame(
+                conn.execute(text(f"SELECT * FROM dia WHERE EMPI = '{pt_id}'")).mappings().fetchall()
+            )
         rows.extend(_recyclable_var_rows(index_date, phy_records))
+        # Recompute comorbidity rows fresh with the fixed ICD-10 prefix matching.
+        outcome_window_start_date = index_date + pd.Timedelta(days=365 * 2)
+        rows.extend(_disease_rows(dia_records, outcome_window_start_date))
 
     if not has_age_at_index and index_date_str is not None:
         with db.connect() as conn:
@@ -921,13 +1000,13 @@ def process_pt(pt_id):
     transplant_df_slices.append(
         pre_outcome_dia_records[
             (pre_outcome_dia_records["Code_Type"] == "ICD9")
-            & (pre_outcome_dia_records["Code"].isin(ICD9_DIAGNOSIS_CODES))
+            & (pre_outcome_dia_records["Code"].isin(ICD9_TRANSPLANT_DIAGNOSIS_CODES))
         ]
     )
     transplant_df_slices.append(
         pre_outcome_dia_records[
             (pre_outcome_dia_records["Code_Type"] == "ICD10")
-            & (pre_outcome_dia_records["Code"].isin(ICD10_DIAGNOSIS_CODES))
+            & (pre_outcome_dia_records["Code"].isin(ICD10_TRANSPLANT_DIAGNOSIS_CODES))
         ]
     )
     # todo:
@@ -950,37 +1029,9 @@ def process_pt(pt_id):
     # print(f"Completed transplant for {pt_id}")
 
     ### Diseases ###
-    # filter in only records in CONFOUNDING_DISEASE_CODES
-    pre_outcome_dia_for_diseases = filter_records_by_date_range(
-        dia_records, end_date=outcome_window_start_date
-    )
-    confounding_disease_records = pre_outcome_dia_for_diseases[
-        pre_outcome_dia_for_diseases["Code"].isin(CONFOUNDING_DISEASE_CODES.keys())
-    ]
-    for _, record in confounding_disease_records.iterrows():
-        if record["Code_Type"] == "ICD9":
-            icd_dict = CONFOUNDING_DISEASE_ICD9_CODES
-        elif record["Code_Type"] == "ICD10":
-            icd_dict = CONFOUNDING_DISEASE_ICD10_CODES
-        else:
-            continue
-        code = record["Code"]
-        if code not in icd_dict:
-            continue
-        disease_name = record["Diagnosis_Name"]
-        disease_type = icd_dict[code]["disease_type"]
-        disease_description = icd_dict[code]["description"]
-        rows.append(
-            {
-                "feature_name": "disease",
-                "keyword": "STRUCTURED_DATA",
-                "Code": record["Code"],
-                "disease": disease_name,
-                "disease_type": disease_type,
-                "date": record["Date"],
-                "prediction": "A",
-            }
-        )
+    # Structured comorbidity rows from dia, matched to the curated ICD list by prefix
+    # (handles ICD-10-CM codes like M05.79 that the old exact .isin match silently dropped).
+    rows.extend(_disease_rows(dia_records, outcome_window_start_date))
 
     # # === Features using outcome window (after outcome_window_start_date) ===
 

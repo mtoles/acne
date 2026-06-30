@@ -59,10 +59,19 @@ run.type.cox <- function(data, ca.col, cancer.label) {
     ) %>%
     filter(!is.na(type.time), type.time > 0)
 
+  ## Cancer-specific comorbidity/exposure covariates for THIS cancer: the page-2 binaries
+  ## (cancerspecific__pre_index__<ca.col>__<category>). No age-adjusted model and no universal
+  ## comorbidity categories — see type.adj.vars in 1_cleanup.R. usable.covars drops any covariate
+  ## that is constant in this cancer's risk set (e.g. an exposure no case/control happens to have).
+  cs.prefix    <- paste0("cancerspecific__pre_index__", ca.col, "__")
+  cs.for.type  <- names(d)[startsWith(names(d), cs.prefix)]
+  full.covars  <- c(usable.covars(d, type.adj.vars), usable.covars(d, cs.for.type))
+
+  ## Backtick-quote covariates: cancerspecific__ names contain ';', '-', and "'" (from the cancer
+  ## label) which would otherwise break R's formula parser.
   f.unadj <- as.formula("Surv(type.time, type.event) ~ Any.Abx")
-  f.age   <- as.formula("Surv(type.time, type.event) ~ Any.Abx + Age")
   f.full  <- as.formula(paste0("Surv(type.time, type.event) ~ Any.Abx + ",
-                                paste(usable.covars(d, adj.vars), collapse = " + ")))
+                                paste(sprintf("`%s`", full.covars), collapse = " + ")))
 
   fmt <- function(fit, model.label) {
     tbl_regression(fit, exponentiate = TRUE) %>%
@@ -72,7 +81,6 @@ run.type.cox <- function(data, ca.col, cancer.label) {
 
   bind_rows(
     fmt(coxph(f.unadj, data = d), "Unadjusted"),
-    fmt(coxph(f.age,   data = d), "Age-adjusted"),
     fmt(coxph(f.full,  data = d), "Fully adjusted")
   )
 }

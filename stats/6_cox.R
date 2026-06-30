@@ -22,11 +22,12 @@ final.cox <- final %>% mutate(across(where(is.factor), droplevels))
 
 ## Fully adjusted covariate set (adj.vars) is defined in 1_cleanup.R
 
-## Helper: run unadj / age-adj / fully-adj Cox and return tidy tibble
+## Helper: run unadj / fully-adj Cox and return tidy tibble. (No age-adjusted model: the cohort
+## is matched on age, so age is balanced by design and is not a covariate -- see adj.vars in
+## 1_cleanup.R, which also excludes the other matching variables sex/race/bmi/smoking/alcohol.)
 run.cox <- function(exposure, label) {
 
   f.unadj <- as.formula(paste0("Surv(follow.time, surv.event) ~ ", exposure))
-  f.age   <- as.formula(paste0("Surv(follow.time, surv.event) ~ ", exposure, " + Age"))
   f.full  <- as.formula(paste0("Surv(follow.time, surv.event) ~ ", exposure, " + ",
                                 paste(usable.covars(final.cox, adj.vars), collapse = " + ")))
 
@@ -38,7 +39,6 @@ run.cox <- function(exposure, label) {
 
   bind_rows(
     fmt(coxph(f.unadj, data = final.cox), "Unadjusted"),
-    fmt(coxph(f.age,   data = final.cox), "Age-adjusted"),
     fmt(coxph(f.full,  data = final.cox), "Fully adjusted")
   )
 }
