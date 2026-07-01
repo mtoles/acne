@@ -36,6 +36,7 @@ from utils import normalize_date
 from comorbidity_sheet import (
     universal_conditions_by_category,
     cancer_specific_applicability,
+    ocp_applicable_cancers,
     slugify,
 )
 # from data_profiling import ProfileReport
@@ -536,6 +537,19 @@ def main():
             else:
                 df[out_col] = "No"
             n_cs_cols += 1
+
+    # OCP (= our Contraceptives covariate) folds into the cancer-specific Metabolic/Hormonal
+    # binary for its applicable cancers (breast / cervix / liver). Creates the column if no
+    # metabolic/hormonal disease condition already applies to that cancer.
+    mh_slug = slugify("Metabolic/Hormonal")
+    contraceptives = (df["contraceptives__treatment__pooled"] == "Yes") \
+        if "contraceptives__treatment__pooled" in df.columns else pd.Series(False, index=df.index)
+    for cancer in ocp_applicable_cancers(cancer_columns):
+        out_col = f"cancerspecific__pre_index__{cancer}__{mh_slug}"
+        existing = df[out_col].eq("Yes") if out_col in df.columns else pd.Series(False, index=df.index)
+        if out_col not in df.columns:
+            n_cs_cols += 1
+        df[out_col] = (existing | contraceptives).map({True: "Yes", False: "No"})
     print(f"Emitted {n_cs_cols} cancer-specific (page-2) binary covariate columns")
 
     df = df.reindex(sorted(df.columns), axis=1)

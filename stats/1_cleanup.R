@@ -206,6 +206,7 @@ raw.clean <- raw %>%
     ## REPLACE the old Comorbidities / Prior.Leuk.Lymph / Prior.HIV / Transplant comorbidity
     ## covariates in the Cox models (the old vars are still computed above for the Table 1 display).
     n.chronic.inflammation = as.integer(`comorbidity_n__pre_index__chronic_inflammation`),
+    n.metabolic.hormonal   = as.integer(`comorbidity_n__pre_index__metabolic_hormonal`),
     n.immunosuppressed     = as.integer(`comorbidity_n__pre_index__immunosuppressed`),
 
     Chronic.Inflammation = case_when(
@@ -214,6 +215,10 @@ raw.clean <- raw %>%
       n.chronic.inflammation == 2 ~ "2",
       n.chronic.inflammation >= 3 ~ "3+",
       TRUE ~ "None"),
+
+    ## Universal Metabolic/Hormonal = type 2 diabetes only -> binary. (OCP, the other Metabolic/
+    ## Hormonal item, is cancer-specific and is folded into the per-cancer covariates instead.)
+    Metabolic.Hormonal = if_else(n.metabolic.hormonal >= 1, "Yes", "No"),
 
     ## Top level capped at 2+ (only 4 patients ever reach 3 -> complete separation in Cox).
     Immunosuppressed = case_when(
@@ -346,6 +351,8 @@ raw.clean <- raw %>%
          Comorbidities,
          n.chronic.inflammation,
          Chronic.Inflammation,
+         n.metabolic.hormonal,
+         Metabolic.Hormonal,
          n.immunosuppressed,
          Immunosuppressed,
          Prior.Cancer,
@@ -426,6 +433,9 @@ final <- raw.clean %>%
     Chronic.Inflammation = factor(Chronic.Inflammation,
                                   levels = c("None", "1", "2", "3+")),
 
+    Metabolic.Hormonal = factor(Metabolic.Hormonal,
+                                levels = c("No", "Yes")),
+
     Immunosuppressed = factor(Immunosuppressed,
                               levels = c("None", "1", "2+")),
 
@@ -489,25 +499,24 @@ rm(.t, .bad)
 ## for: the case-control cohort is matched on them, so they are balanced by design. They remain
 ## in Table 1 for the balance display but are excluded from every Cox model here.
 ##
-## Comorbidity adjustment uses the two FINAL COMORBIDITIES.xlsx (page-3 universal) covariates
-## Chronic.Inflammation + Immunosuppressed (each ordinal 0/1/2/3+; Immunosuppressed already
-## includes prior organ transplant). These REPLACE the old Comorbidities / Prior.Leuk.Lymph /
-## Prior.HIV / Transplant terms. Preexisting cancer stays its own track:
+## Comorbidity adjustment uses the UNIVERSAL covariates from FINAL COMORBIDITIES 6.30.xlsx
+## (page-3): Chronic.Inflammation (ordinal 0/1/2/3+), Metabolic.Hormonal (T2DM, binary), and
+## Immunosuppressed (ordinal None/1/2+, already includes prior organ transplant). These apply to
+## EVERY analysis (COX1 and every cancer type). Contraceptives is NOT a standalone covariate --
+## OCP is folded into the cancer-specific Metabolic/Hormonal covariate (8_cox_types only).
+## Preexisting cancer stays its own track:
 ##   include_preexisting_cancer -> Prior.Cancer (leuk/lymph merged in unless split_leuk_lymph)
 ##   split_leuk_lymph           -> Prior.Leuk.Lymph as its own term (else merged into Prior.Cancer)
-adj.vars <- c("Contraceptives", "Fam.Cancer",
-              "Chronic.Inflammation", "Immunosuppressed",
+adj.vars <- c("Fam.Cancer",
+              "Chronic.Inflammation", "Metabolic.Hormonal", "Immunosuppressed",
               if (include_preexisting_cancer) "Prior.Cancer",
               if (include_preexisting_cancer && split_leuk_lymph) "Prior.Leuk.Lymph")
 
-## 8_cox_types uses a SEPARATE base set: the shared non-comorbidity covariates ONLY. The universal
-## comorbidity categories (Chronic.Inflammation / Immunosuppressed) are intentionally EXCLUDED from
-## per-cancer models -- those lump in conditions irrelevant to the cancer at hand. Instead each
-## per-cancer model adds the cancer-specific page-2 binaries applicable to that cancer (chosen in
-## 8_cox_types.R from cs.cols via the cancerspecific__pre_index__<cancer>__ prefix).
-type.adj.vars <- c("Contraceptives", "Fam.Cancer",
-                   if (include_preexisting_cancer) "Prior.Cancer",
-                   if (include_preexisting_cancer && split_leuk_lymph) "Prior.Leuk.Lymph")
+## 8_cox_types uses the FULL universal set (adj.vars) and ADDS, per cancer, the cancer-specific
+## page-2 binaries applicable to that cancer (chosen in 8_cox_types.R from cs.cols via the
+## cancerspecific__pre_index__<cancer>__ prefix). Cancer-specific covariates are additive on top
+## of the universal set, never in place of it.
+type.adj.vars <- adj.vars
 
 ## Keep only covariates that actually vary in a given data frame: factors need >=2
 ## observed levels, numerics need >=2 distinct values. A constant covariate would

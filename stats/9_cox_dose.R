@@ -18,7 +18,7 @@ source('/home/mtoles/acne/stats/1_cleanup.R')
 ##
 ## Reference = "None" (no antibiotic exposure). Exposed patients are binned by
 ## Abx.Duration (total days across ALL antibiotic classes, defined in
-## 1_cleanup.R) using the thresholds <=7, <=30, <=90, <=365, 366+.
+## 1_cleanup.R) using the thresholds 1-29, 30-89, 90-364, 365+ days.
 ##
 ## Exposed patients whose duration was never captured (Any.Abx == "Yes" but
 ## Abx.Duration is NA) are kept as their own "Unknown" category rather than dropped.
@@ -27,15 +27,14 @@ source('/home/mtoles/acne/stats/1_cleanup.R')
 final.cox <- final %>%
   mutate(
     Abx.Dose = case_when(
-      Any.Abx == "No"     ~ "None",
-      is.na(Abx.Duration) ~ "Unknown",
-      Abx.Duration <= 7   ~ "1-7",
-      Abx.Duration <= 30  ~ "8-30",
-      Abx.Duration <= 90  ~ "31-90",
-      Abx.Duration <= 365 ~ "91-365",
-      TRUE                ~ "366+"),
+      Any.Abx == "No"      ~ "None",
+      is.na(Abx.Duration)  ~ "Unknown",
+      Abx.Duration <= 29   ~ "1-29",
+      Abx.Duration <= 89   ~ "30-89",
+      Abx.Duration <= 364  ~ "90-364",
+      TRUE                 ~ "365+"),
     Abx.Dose = factor(Abx.Dose,
-                      levels = c("None", "1-7", "8-30", "31-90", "91-365", "366+", "Unknown"))
+                      levels = c("None", "1-29", "30-89", "90-364", "365+", "Unknown"))
   ) %>%
   ## Drop empty factor levels so all-zero dummy columns don't enter the models
   mutate(across(where(is.factor), droplevels))
@@ -46,11 +45,11 @@ print(table(final.cox$Abx.Dose, useNA = "ifany"))
 
 ## Fully adjusted covariate set (adj.vars) is defined in 1_cleanup.R
 
-## Helper: run unadj / age-adj / fully-adj Cox and return tidy tibble
+## Helper: run unadj / fully-adj Cox and return tidy tibble. (No age-adjusted model: age is a
+## matching variable, balanced by design and excluded from every Cox model -- see adj.vars.)
 run.cox <- function(exposure, label) {
 
   f.unadj <- as.formula(paste0("Surv(follow.time, surv.event) ~ ", exposure))
-  f.age   <- as.formula(paste0("Surv(follow.time, surv.event) ~ ", exposure, " + Age"))
   f.full  <- as.formula(paste0("Surv(follow.time, surv.event) ~ ", exposure, " + ",
                                 paste(usable.covars(final.cox, adj.vars), collapse = " + ")))
 
@@ -62,7 +61,6 @@ run.cox <- function(exposure, label) {
 
   bind_rows(
     fmt(coxph(f.unadj, data = final.cox), "Unadjusted"),
-    fmt(coxph(f.age,   data = final.cox), "Age-adjusted"),
     fmt(coxph(f.full,  data = final.cox), "Fully adjusted")
   )
 }
