@@ -30,6 +30,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from comorbidity_sheet import (
     load_comorbidity_sheet,
     cancer_specific_applicability,
+    ocp_applicable_cancers,
     universal_conditions_by_category,
     slugify,
 )
@@ -53,7 +54,9 @@ DISEASE_REQUIRED_FIELDS = ("Code", "disease", "condition", "category", "date", "
 # Matching covariates that must NOT appear in any Cox model (balanced by cohort matching).
 MATCHING_COVARS = {"Age", "Sex", "Race", "BMI.Category", "Smoking", "Alcohol"}
 # Old comorbidity covariates that the new scheme replaced -- must NOT appear in any Cox model.
-RETIRED_COVARS = {"Comorbidities", "Prior.Leuk.Lymph", "Prior.HIV", "Transplant"}
+# Contraceptives is retired from the Cox models as of 7.1: OCP is now its own cancer-specific
+# category (cancerspecific__*__oral_contraceptive), never the standalone "Contraceptives" term.
+RETIRED_COVARS = {"Comorbidities", "Prior.Leuk.Lymph", "Prior.HIV", "Transplant", "Contraceptives"}
 
 _FLOAT_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 
@@ -185,16 +188,19 @@ def check_pooled(ck, df):
     # required column families exist
     ck.check(len(cancer_cols) > 0, "no cancer_outcome__ columns")
     ck.check("comorbidity_n__pre_index__chronic_inflammation" in df.columns, "missing chronic_inflammation count column")
+    ck.check("comorbidity_n__pre_index__metabolic_hormonal" in df.columns, "missing metabolic_hormonal count column")
     ck.check("comorbidity_n__pre_index__immunosuppressed" in df.columns, "missing immunosuppressed count column")
     ck.check(len(cs_cols) > 0, "no cancerspecific__ columns")
     for col in ("demographics__age_at_index_date", "smoking_status__pre_index__pooled", "index_date"):
         ck.check(col in df.columns, f"missing expected column {col}")
 
-    # cancerspecific column count matches the sheet-derived applicability map exactly
-    applic = cancer_specific_applicability([c[len("cancer_outcome__"):] for c in cancer_cols])
-    expected_cs = sum(len(v) for v in applic.values())
+    # cancerspecific column count = sheet-derived disease pairs + OCP (its own no-ICD category,
+    # one oral_contraceptive column per applicable cancer).
+    cancer_suffixes = [c[len("cancer_outcome__"):] for c in cancer_cols]
+    applic = cancer_specific_applicability(cancer_suffixes)
+    expected_cs = sum(len(v) for v in applic.values()) + len(ocp_applicable_cancers(cancer_suffixes))
     ck.check(len(cs_cols) == expected_cs,
-             f"cancerspecific columns ({len(cs_cols)}) != applicability pairs ({expected_cs})")
+             f"cancerspecific columns ({len(cs_cols)}) != disease pairs + OCP ({expected_cs})")
 
     # comorbidity counts: parseable non-negative ints, and not all-zero
     for col in comorb_cols:
@@ -248,7 +254,7 @@ def check_cox(ck):
         ck.check("Age-adjusted" not in models, "COX1 still has an 'Age-adjusted' model (should be removed)")
 
         chars = _cox_characteristics(df)
-        for v in ("Chronic.Inflammation", "Immunosuppressed", "Prior.Cancer", "Contraceptives", "Fam.Cancer"):
+        for v in ("Chronic.Inflammation", "Metabolic.Hormonal", "Immunosuppressed", "Prior.Cancer", "Fam.Cancer"):
             ck.check(v in chars, f"COX1 fully-adjusted is missing expected covariate {v}")
         leaked = (MATCHING_COVARS | RETIRED_COVARS) & chars
         ck.check(not leaked, f"COX1 contains covariates that should be gone: {sorted(leaked)}")

@@ -284,6 +284,23 @@ raw.clean <- raw %>%
       Any.Abx == "No" ~ NA_real_,
       TRUE            ~ Abx.Duration),
 
+    ## --- longest single-class antibiotic duration ---
+    ## Same per-column parsing as Abx.Duration, but take the MAX across columns
+    ## (longest single antibiotic-class course) instead of the sum. Patients with
+    ## no valid duration column are NA; non-ABX patients are NA.
+    Abx.Duration.Max = {
+      dur.num  <- select(., all_of(dur.cols)) %>%
+        mutate(across(everything(),
+                      ~ suppressWarnings(as.numeric(ifelse(.x == "F" | .x == "" | .x == "0",
+                                                            NA, .x)))))
+      n.valid  <- rowSums(!is.na(dur.num))
+      row.maxs <- apply(dur.num, 1, function(r) if (all(is.na(r))) NA_real_ else max(r, na.rm = TRUE))
+      ifelse(n.valid == 0, NA_real_, row.maxs)
+    },
+    Abx.Duration.Max = case_when(
+      Any.Abx == "No" ~ NA_real_,
+      TRUE            ~ Abx.Duration.Max),
+
     ## Categorical duration: Low / Medium / High (NA for non-ABX or unknown duration)
     Abx.Duration.Cat = case_when(
       is.na(Abx.Duration)  ~ NA_character_,
@@ -330,6 +347,7 @@ raw.clean <- raw %>%
          Any.Abx,
          Abx.Classes,
          Abx.Duration,
+         Abx.Duration.Max,
          Abx.Duration.Cat,
          Abx.Penicillin,
          Abx.Macrolide,
