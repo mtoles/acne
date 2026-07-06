@@ -31,6 +31,11 @@ final.cox <- final %>%
 ## Types with too few events are skipped (see MIN.TYPE.EVENTS in section 5).
 MIN.TYPE.EVENTS <- 10
 
+## Benjamini-Hochberg FDR level for the across-cancer-type multiple-testing correction
+## (section 6). The BH family is the fully-adjusted Any.Abx="Yes" exposure p-value, one per
+## cancer type modelled below.
+BH.Q <- 0.05
+
 ################################################################################
 ## 4. helper function
 ##
@@ -73,16 +78,32 @@ run.type.cox <- function(data, ca.col, cancer.label) {
   f.full  <- as.formula(paste0("Surv(type.time, type.event) ~ Any.Abx + ",
                                 paste(sprintf("`%s`", full.covars), collapse = " + ")))
 
+  fit.unadj <- coxph(f.unadj, data = d)
+  fit.full  <- coxph(f.full,  data = d)
+
   fmt <- function(fit, model.label) {
     tbl_regression(fit, exponentiate = TRUE) %>%
       as_tibble() %>%
       mutate(cancer.type = cancer.label, model = model.label)
   }
 
-  bind_rows(
-    fmt(coxph(f.unadj, data = d), "Unadjusted"),
-    fmt(coxph(f.full,  data = d), "Fully adjusted")
+  tidy <- bind_rows(
+    fmt(fit.unadj, "Unadjusted"),
+    fmt(fit.full,  "Fully adjusted")
   )
+
+  ## Exact fully-adjusted Any.Abx="Yes" exposure result for the BH correction (section 6).
+  ## gtsummary's p-value strings are rounded/thresholded (">0.9", "<0.001") and cannot be
+  ## ranked, so pull the unrounded coefficient p-value straight from the coxph fit.
+  sc      <- summary(fit.full)$coefficients
+  abx.row <- which(rownames(sc) == "Any.AbxYes")
+  stopifnot(length(abx.row) == 1)
+  bh <- tibble(cancer.type = cancer.label,
+               n.events    = fit.full$nevent,
+               HR          = sc[abx.row, "exp(coef)"],
+               p.value     = sc[abx.row, "Pr(>|z|)"])
+
+  list(tidy = tidy, bh = bh)
 }
 
 ################################################################################
@@ -101,8 +122,35 @@ keep <- vapply(seq_along(ca.type.cols), function(i) {
   } else TRUE
 }, logical(1))
 
-cox.types <- bind_rows(lapply(which(keep), function(i) {
+results <- lapply(which(keep), function(i) {
   run.type.cox(final.cox, ca.type.cols[i], ca.type.labels[i])
-}))
+})
 
+cox.types <- bind_rows(lapply(results, `[[`, "tidy"))
 write_csv(cox.types, file.path(output, "COX4_cancer_types.csv"))
+
+################################################################################
+## 6. Benjamini-Hochberg correction across cancer types
+##
+## Multiple-testing family: the fully-adjusted Any.Abx="Yes" exposure p-value, one per
+## cancer type modelled above (m = number of types). Rank the p-values ascending, compare
+## each to its BH critical value (rank/m)*Q, then apply the step-up rule: reject every
+## hypothesis up to the LARGEST rank whose p-value is <= its critical value. `bh.significant`
+## reflects that step-up, not a naive per-row p <= threshold comparison.
+################################################################################
+
+cox.types.bh <- bind_rows(lapply(results, `[[`, "bh")) %>%
+  arrange(p.value) %>%
+  mutate(
+    rank         = row_number(),
+    m            = n(),
+    bh.crit      = rank / m * BH.Q,          # (i/m)*Q -- the BH critical value
+    bh.significant = rank <= { passes <- p.value <= bh.crit
+                               if (any(passes)) max(rank[passes]) else 0L }
+  )
+
+cat(sprintf("\nBenjamini-Hochberg (fully-adjusted Any.Abx, Q = %.2f, m = %d types):\n",
+            BH.Q, nrow(cox.types.bh)))
+print(as.data.frame(cox.types.bh), digits = 3)
+
+write_csv(cox.types.bh, file.path(output, "COX4_cancer_types_bh.csv"))
