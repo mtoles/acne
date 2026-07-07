@@ -1316,8 +1316,50 @@ class _MedicalClassifier(dspy.Module):
 
 
 def _dspy_classification_metric(example, pred, trace=None):
-    """Exact-match metric for DSPy evaluation."""
+    """Exact-match metric for DSPy evaluation (ACNE: gold and prediction share a
+    format, so a strict string match is correct)."""
     return pred.classification.strip() == example.classification.strip()
+
+
+# Leading option letter in a free-form answer: "A", "A.", "A) Yes", "(A)", "A - x".
+# Requires the letter to be a standalone token (followed by a separator or end) so
+# a word like "Appointment" is NOT read as the letter "A".
+_CHOICE_LETTER_RE = re.compile(r"^\(?([A-Za-z])(?:[.\):\-\s]|$)")
+
+
+def _choice_key(s, word_to_letter=None):
+    """Canonical comparison key for a possibly free-form multiple-choice answer.
+
+    The DSPy classifier generates free-form text against a lettered legend
+    ("Options are: A. Yes, B. No"), so it emits things like "A", "A. Yes", or the
+    bare word "Yes", while the gold label is stored as a word ("Yes") or a letter
+    ("A"). Without normalization exact-match scores ~0 on these datasets, starving
+    both MIPROv2 and GEPA of any optimization signal. This maps all surface forms
+    to a single key: a leading option letter wins; otherwise a full word is mapped
+    via word_to_letter (e.g. {"yes": "A", "no": "B"}); otherwise lowercased text.
+    """
+    s = str(s).strip()
+    m = _CHOICE_LETTER_RE.match(s)
+    if m:
+        return m.group(1).upper()
+    if word_to_letter:
+        return word_to_letter.get(s.lower(), s.lower())
+    return s.lower()
+
+
+def _make_choice_match(word_to_letter=None):
+    """Return an is_correct(pred, gold) that compares via _choice_key."""
+    def _match(pred_answer, gold_answer):
+        return _choice_key(pred_answer, word_to_letter) == _choice_key(gold_answer, word_to_letter)
+    return _match
+
+
+def _make_dspy_classification_metric(word_to_letter=None):
+    """DSPy metric using letter-aware matching (for binary/multiple-choice tasks)."""
+    match = _make_choice_match(word_to_letter)
+    def metric(example, pred, trace=None):
+        return match(getattr(pred, "classification", ""), example.classification)
+    return metric
 
 
 def _df_to_dspy_examples(chunk_df):
@@ -1357,7 +1399,7 @@ class DSPyOptimizer:
         )
         dspy.configure(lm=lm)
 
-    def optimize(self, train_df, eval_df, baseline_prompt, num_trials=10):
+    def optimize(self, train_df, eval_df, baseline_prompt, num_trials=10, metric=None):
         """Run MIPROv2 optimization and evaluate.
 
         Args:
@@ -1365,6 +1407,10 @@ class DSPyOptimizer:
             eval_df: DataFrame with same columns
             baseline_prompt: str, initial instruction to seed optimization
             num_trials: int, number of Bayesian search trials
+            metric: DSPy metric(example, pred, trace) -> bool. Defaults to strict
+                exact-match (ACNE); callers pass a letter-aware metric for
+                lettered-legend tasks so the Bayesian search gets real signal
+                instead of a uniformly-zero score (see _make_dspy_classification_metric).
 
         Returns:
             dict with keys:
@@ -1373,6 +1419,8 @@ class DSPyOptimizer:
                 - dspy_eval_score: float (percentage, 0-100)
                 - optimized_program: the compiled dspy.Module
         """
+        if metric is None:
+            metric = _dspy_classification_metric
         trainset = _df_to_dspy_examples(train_df)
         evalset = _df_to_dspy_examples(eval_df)
 
@@ -1386,7 +1434,7 @@ class DSPyOptimizer:
 
         # Run MIPROv2 optimization
         optimizer = dspy.MIPROv2(
-            metric=_dspy_classification_metric,
+            metric=metric,
             num_threads=self.n_workers,
             num_candidates=7,
             max_bootstrapped_demos=4,
@@ -1403,7 +1451,7 @@ class DSPyOptimizer:
         # Evaluate with DSPy on eval set
         dspy_evaluator = dspy.Evaluate(
             devset=evalset,
-            metric=_dspy_classification_metric,
+            metric=metric,
             num_threads=self.n_workers,
             display_progress=True,
         )
@@ -1442,6 +1490,167 @@ class DSPyOptimizer:
         return {
             "optimized_instruction": optimized_instruction,
             "optimized_demos": optimized_demos,
+            "dspy_eval_score": dspy_eval_score,
+            "optimized_program": optimized,
+            "trial_history": trial_history,
+        }
+
+
+# ---------------------------------------------------------------------------
+# DSPy GEPA optimizer
+# ---------------------------------------------------------------------------
+
+def _make_gepa_feedback_metric(is_correct=None):
+    """Build a GEPA feedback metric: score plus a natural-language critique.
+
+    GEPA's reflective proposer needs per-example feedback, not just a scalar. To
+    keep the comparison against OPRO/ours fair, the feedback reuses the exact same
+    "Predicted 'X' but the correct answer is 'Y'" framing and
+    PromptOptimizer.format_example rendering those optimizers show their meta-LLM
+    (with the human-readable word gold, e.g. "Yes"/"No").
+
+    is_correct(pred_answer, gold_answer) -> bool decides scoring. Defaults to
+    strict exact-match (ACNE); lettered-legend tasks pass a letter-aware check
+    (see _make_choice_match) so the score isn't uniformly zero when the model
+    emits "A. Yes" against a "Yes" gold. Signature is the 5-arg GEPAFeedbackMetric
+    protocol; pred_name/pred_trace are unused (single-predictor program).
+    """
+    if is_correct is None:
+        is_correct = lambda pred_answer, gold_answer: pred_answer == gold_answer
+
+    def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
+        truth = str(gold.classification).strip()
+        predicted = str(getattr(pred, "classification", "")).strip()
+        correct = bool(is_correct(predicted, truth))
+        if correct:
+            feedback = f"Correct. The answer is '{truth}'."
+        else:
+            rec = {
+                "chunk": gold.medical_record,
+                "keyword": gold.keyword,
+                "ground_truth": truth,
+                "prediction": predicted,
+                "correct": False,
+            }
+            feedback = (
+                f"Predicted '{predicted}' but the correct answer is '{truth}'.\n\n"
+                + PromptOptimizer.format_example(rec, include_prediction=True)
+            )
+        return dspy.Prediction(score=1.0 if correct else 0.0, feedback=feedback)
+
+    return metric
+
+
+class GEPAOptimizer:
+    """DSPy GEPA (reflective genetic-Pareto) prompt optimizer.
+
+    Like DSPyOptimizer, GEPA runs its own internal optimization loop; call
+    optimize() with train/val DataFrames. It differs from MIPROv2 in three ways
+    that matter here: (1) the metric returns feedback text, not just a score
+    (see _gepa_feedback_metric); (2) it needs a separate reflection LM to propose
+    new prompts; (3) its budget is a total example-forward-pass count
+    (max_metric_calls), which we set for parity with OPRO/ours (see optimize()).
+    """
+
+    def __init__(self, model_id, n_workers=50):
+        self.model_id = model_id
+        self.n_workers = n_workers
+        self._configure_lm()
+
+    def _configure_lm(self):
+        """Configure the task LM and a higher-temperature reflection LM, both on
+        the same vLLM endpoint as MrModel (fair: GEPA reflects with the same model)."""
+        vllm_port = os.environ.get("VLLM_PORT", "8010")
+        api_base = f"http://localhost:{vllm_port}/v1"
+        self.lm = dspy.LM(
+            model=f"openai/{self.model_id}",
+            api_base=api_base,
+            api_key="token-abc123",
+            max_tokens=1024,
+            temperature=0.0,
+        )
+        dspy.configure(lm=self.lm)
+        # Reflection proposes full replacement prompts, so it needs room to write
+        # and temperature > 0 for diverse candidates.
+        self.reflection_lm = dspy.LM(
+            model=f"openai/{self.model_id}",
+            api_base=api_base,
+            api_key="token-abc123",
+            max_tokens=8192,
+            temperature=1.0,
+        )
+
+    def optimize(self, train_df, val_df, baseline_prompt, iterations, is_correct=None):
+        """Run GEPA optimization and evaluate.
+
+        Budget parity with OPRO/ours: those optimizers make ~(iterations + 1)
+        full-train-set and full-val-set forward passes over the run (the +1 is
+        the initial baseline scoring; per-iteration re-scoring is cached). GEPA
+        meters total example forward passes via max_metric_calls, so we set it to
+        (iterations + 1) * (len(train) + len(val)).
+
+        Args:
+            train_df / val_df: DataFrames with chunk, found_keywords, val_unified.
+            baseline_prompt: str, initial instruction to seed optimization.
+            iterations: int, the shared "rounds" budget unit.
+            is_correct: optional is_correct(pred, gold) -> bool used for scoring +
+                feedback. Defaults to strict exact-match; lettered-legend tasks
+                pass a letter-aware check so reflection isn't fed all-wrong
+                feedback (without which GEPA never accepts a candidate).
+
+        Returns dict shaped like DSPyOptimizer.optimize()'s return (so the
+        downstream finalize logic is shared): optimized_instruction,
+        dspy_eval_score (0-100), optimized_program, trial_history.
+        """
+        trainset = _df_to_dspy_examples(train_df)
+        valset = _df_to_dspy_examples(val_df)
+
+        classifier = _MedicalClassifier()
+        classifier.predict.signature = classifier.predict.signature.with_instructions(
+            baseline_prompt
+        )
+
+        max_metric_calls = (iterations + 1) * (len(trainset) + len(valset))
+        print(
+            f"  GEPA budget: max_metric_calls={max_metric_calls} "
+            f"(= ({iterations}+1) * ({len(trainset)} train + {len(valset)} val))"
+        )
+
+        optimizer = dspy.GEPA(
+            metric=_make_gepa_feedback_metric(is_correct),
+            max_metric_calls=max_metric_calls,
+            num_threads=self.n_workers,
+            reflection_lm=self.reflection_lm,
+            track_stats=True,
+        )
+        optimized = optimizer.compile(classifier, trainset=trainset, valset=valset)
+
+        optimized_instruction = optimized.predict.signature.instructions
+
+        # detailed_results (present when track_stats=True) holds every proposed
+        # candidate and its aggregate val score. Best val score -> percentage to
+        # match MIPRO's dspy_eval_score convention; candidate instructions become
+        # the trial_history the finalize step re-scores for plotting.
+        results = getattr(optimized, "detailed_results", None)
+        trial_history = []
+        dspy_eval_score = 0.0
+        if results is not None:
+            for i, cand in enumerate(results.candidates):
+                instr = getattr(cand, "predict", None)
+                instr = instr.signature.instructions if instr is not None else None
+                score = results.val_aggregate_scores[i] if i < len(results.val_aggregate_scores) else None
+                trial_history.append({
+                    "trial": i,
+                    "score": score,
+                    "is_full_eval": True,
+                    "instruction": instr,
+                })
+            if results.val_aggregate_scores:
+                dspy_eval_score = max(results.val_aggregate_scores) * 100.0
+
+        return {
+            "optimized_instruction": optimized_instruction,
+            "optimized_demos": [],
             "dspy_eval_score": dspy_eval_score,
             "optimized_program": optimized,
             "trial_history": trial_history,

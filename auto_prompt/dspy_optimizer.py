@@ -4,7 +4,10 @@ Keeps DSPy-specific logic separate from the main optimization loop.
 All shared helpers (eval_fn factories, data loading, inference) are imported from auto_prompt.
 """
 
-from prompt_optimizers import DSPyOptimizer
+from prompt_optimizers import (
+    DSPyOptimizer, GEPAOptimizer,
+    _make_choice_match, _make_dspy_classification_metric,
+)
 
 
 def _binary_df_to_acne_columns(df):
@@ -28,29 +31,68 @@ def _multichoice_df_to_acne_columns(df):
 def run_dspy_optimization(feature_name, train_df, val_df, test_df, baseline_prompt,
                           iterations, n_workers, eval_fn, model_id,
                           test_full_df=None,
-                          dspy_train_df=None, dspy_val_df=None, dspy_test_df=None):
-    """DSPy MIPROv2 optimization with val-gated selection and a final test pass.
+                          dspy_train_df=None, dspy_val_df=None, dspy_test_df=None,
+                          optimizer_name=None,
+                          choice_task=False, choice_word_to_letter=None):
+    """DSPy-family (MIPROv2 or GEPA) optimization with a final test pass.
 
-    DSPy's compile() trains on train_df; its post-compile dev evaluation uses val_df
-    (so the score MIPROv2 reports is val-set accuracy). The chosen optimized
-    instruction is then evaluated on test_full_df via native inference for the
-    final report; test_df is used per-trial for the plotting curve.
+    Both optimizers run their own internal loop and return an optimized
+    instruction plus a per-candidate trial_history. DSPy's compile() trains on
+    train_df; the chosen instruction is evaluated on test_full_df via native
+    inference for the final report, and each candidate is re-scored on val_df
+    (native inference) for a comparable val-acc trajectory. test_df is used
+    per-trial for the plotting curve.
+
+    optimizer_name: "dspy" (MIPROv2) or "gepa". GEPA additionally uses val_df as
+    its Pareto valset and derives its budget from (train + val) sizes.
+
+    choice_task: True for lettered-legend tasks (binary Yes/No, multiple-choice)
+    where the free-form classifier emits e.g. "A. Yes" against a "Yes" gold. Uses
+    letter-aware matching for the DSPy-internal metric so MIPRO's search and GEPA's
+    reflection get real signal instead of a uniformly-zero score. False for ACNE
+    (strict exact-match, unchanged). choice_word_to_letter maps a full word answer
+    to its option letter (e.g. {"yes": "A", "no": "B"}); pass None when the gold is
+    already a letter (leading-letter extraction suffices).
 
     dspy_*_df: DataFrames in DSPy/ACNE column format (chunk, val_unified,
     found_keywords). Pass None to use the corresponding train/val/test_df directly.
     """
+    if optimizer_name not in ("dspy", "gepa"):
+        raise ValueError(f"optimizer_name must be 'dspy' or 'gepa', got {optimizer_name!r}")
     if test_full_df is None:
         test_full_df = test_df
-    print(f"\nProcessing {feature_name} with DSPy MIPROv2")
+    opt_label = "GEPA" if optimizer_name == "gepa" else "MIPROv2"
+    print(f"\nProcessing {feature_name} with DSPy {opt_label}")
     print(f"Train: {len(train_df)}, Val: {len(val_df)}, Test (per-iter): {len(test_df)}, Test (final): {len(test_full_df)}")
 
-    dspy_optimizer = DSPyOptimizer(model_id=model_id, n_workers=n_workers)
-    dspy_result = dspy_optimizer.optimize(
-        dspy_train_df if dspy_train_df is not None else train_df,
-        dspy_val_df if dspy_val_df is not None else val_df,
-        baseline_prompt=baseline_prompt,
-        num_trials=iterations,
-    )
+    opt_train_df = dspy_train_df if dspy_train_df is not None else train_df
+    opt_val_df = dspy_val_df if dspy_val_df is not None else val_df
+
+    # Scoring for the DSPy-internal loop: letter-aware for choice tasks, strict
+    # exact-match for ACNE. Both optimizers share this so the comparison is fair.
+    if choice_task:
+        dspy_metric = _make_dspy_classification_metric(choice_word_to_letter)
+        gepa_is_correct = _make_choice_match(choice_word_to_letter)
+    else:
+        dspy_metric = None          # DSPyOptimizer defaults to strict exact-match
+        gepa_is_correct = None      # GEPAOptimizer defaults to strict exact-match
+
+    if optimizer_name == "gepa":
+        gepa_optimizer = GEPAOptimizer(model_id=model_id, n_workers=n_workers)
+        dspy_result = gepa_optimizer.optimize(
+            opt_train_df, opt_val_df,
+            baseline_prompt=baseline_prompt,
+            iterations=iterations,
+            is_correct=gepa_is_correct,
+        )
+    elif optimizer_name == "dspy":
+        dspy_optimizer = DSPyOptimizer(model_id=model_id, n_workers=n_workers)
+        dspy_result = dspy_optimizer.optimize(
+            opt_train_df, opt_val_df,
+            baseline_prompt=baseline_prompt,
+            num_trials=iterations,
+            metric=dspy_metric,
+        )
 
     optimized_instruction = dspy_result["optimized_instruction"]
     dspy_val_score = dspy_result["dspy_eval_score"]

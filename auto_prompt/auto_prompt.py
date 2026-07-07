@@ -122,8 +122,12 @@ OPTIMIZERS = {
     "ours-mf": OursMultiFailureOptimizer,
     "etgpo": ETGPOOptimizer,
     "ampo": AMPOOptimizer,
-    "dspy": None,  # DSPy uses its own optimization loop, handled separately
+    "dspy": None,  # DSPy MIPROv2 uses its own optimization loop, handled separately
+    "gepa": None,  # DSPy GEPA, same DSPy-family path as dspy
 }
+
+# Optimizers whose internal loop is managed by DSPy (routed through dspy_optimizer.py).
+DSPY_FAMILY = {"dspy", "gepa"}
 
 
 def load_model_id():
@@ -961,8 +965,8 @@ def process_file(file_path, inference_type, downsample=None, data_source=None,
 
 
 def process_file_dspy(file_path, data_source, downsample, baseline_prompts,
-                      feature_name_override, iterations, n_workers, note):
-    """Run DSPy MIPROv2 optimization for a single ACNE feature."""
+                      feature_name_override, iterations, n_workers, note, optimizer_name):
+    """Run a DSPy-family optimizer (MIPROv2 or GEPA) for a single ACNE feature."""
     from dspy_optimizer import run_dspy_optimization
     feature_name = feature_name_override or file_path.stem.replace("_chunks", "")
     train_df, val_df, test_df, test_full_df, target_cls = _load_acne_feature_data(feature_name, data_source, downsample)
@@ -971,7 +975,7 @@ def process_file_dspy(file_path, data_source, downsample, baseline_prompts,
     return run_dspy_optimization(
         feature_name, train_df, val_df, test_df, baseline_prompts[feature_name],
         iterations, n_workers, eval_fn, model_id,
-        test_full_df=test_full_df,
+        test_full_df=test_full_df, optimizer_name=optimizer_name,
     )
 
 
@@ -990,7 +994,7 @@ def main():
     if target_features is not None:
         print(f"Features: {target_features}")
 
-    is_dspy = args.optimizer == "dspy"
+    is_dspy = args.optimizer in DSPY_FAMILY
     if not is_dspy:
         optimizer = OPTIMIZERS[args.optimizer](model=model)
 
@@ -1137,6 +1141,10 @@ def _run_multichoice_dataset(args, optimizer, is_dspy, target_features, all_resu
                 dspy_train_df=_multichoice_df_to_acne_columns(train_df),
                 dspy_val_df=_multichoice_df_to_acne_columns(val_df),
                 dspy_test_df=_multichoice_df_to_acne_columns(test_df),
+                optimizer_name=args.optimizer,
+                # Multiple-choice gold is already a letter (A-F); leading-letter
+                # extraction handles the free-form "A. ..." output, so no word map.
+                choice_task=True, choice_word_to_letter=None,
             )
         else:
             results = _run_optimization_loop(
@@ -1182,6 +1190,10 @@ def _run_binary_dataset(args, optimizer, is_dspy, target_features, all_results, 
                 dspy_train_df=_binary_df_to_acne_columns(train_df),
                 dspy_val_df=_binary_df_to_acne_columns(val_df),
                 dspy_test_df=_binary_df_to_acne_columns(test_df),
+                optimizer_name=args.optimizer,
+                # Binary gold is the word "Yes"/"No"; map it to the A/B legend the
+                # prompt uses so "A. Yes"-style output matches.
+                choice_task=True, choice_word_to_letter={"yes": "A", "no": "B"},
             )
         else:
             results = _run_optimization_loop(
@@ -1241,6 +1253,7 @@ def _run_acne(args, optimizer, is_dspy, inference_type, downsample, target_featu
                 file_path, data_source=args.data_source, downsample=downsample,
                 baseline_prompts=baseline_prompts, feature_name_override=feature_name,
                 iterations=args.iterations, n_workers=args.n_workers, note=args.note,
+                optimizer_name=args.optimizer,
             )
         else:
             results = process_file(
