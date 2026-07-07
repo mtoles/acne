@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Run the full R stats pipeline.
 #
-# 1_cleanup.R is sourced by each of scripts 2-8, so it is not run directly.
+# 1_cleanup.R is sourced by each of scripts 2-13, so it is not run directly.
 # Each script rebuilds the `final` data frame and writes its output into
 # stats/eda_output/ (created by 1_cleanup.R).
 #
 # Usage:
-#   ./run_all.sh           # install missing packages (if any), then run 2-8
+#   ./run_all.sh           # install missing packages (if any), then run 2-13
 #   ./run_all.sh --no-install   # skip the package-install step
 
 set -euo pipefail
@@ -49,8 +49,10 @@ Rscript -e "
   print(table(final\$Cancer.Dx, final\$Any.Abx))
 "
 
-echo "===== running pipeline (scripts 2-8) ====="
-for f in 2_table1.R 3_table2.R 4_table3.R 5_km.R 6_cox.R 7_km_types.R 8_cox_types.R 9_cox_dose.R; do
+echo "===== running pipeline (scripts 2-13) ====="
+for f in 2_table1.R 3_table2.R 4_table3.R 5_km.R 6_cox.R 7_km_types.R 8_cox_types.R \
+         9_cox_dose.R 10_cox_dose_max.R 11_cox_long_only.R 12_cox_longest_only.R \
+         13_cox_course_count.R; do
   echo "----- $f -----"
   Rscript "$f"
 done

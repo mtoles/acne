@@ -68,6 +68,9 @@ raw <- read_csv(file.path(input, "pooled_records.csv"),
 all.cols <- names(raw)
 
 dur.cols            <- grep("^antibiotic_duration_numeric__treatment__", all.cols, value = TRUE)
+## Antibiotic course count: # of unique structured Rx dates in the treatment window (one pooled
+## column, emitted by postprocess_records.py; same-day prescriptions count as one course).
+course.cols         <- grep("^antibiotic_course_count__treatment__",      all.cols, value = TRUE)
 cancer.outcome.cols <- grep("^cancer_outcome__",                         all.cols, value = TRUE)
 cancer.type.cols    <- grep("^cancer_date_of_diagnosis__outcome__",      all.cols, value = TRUE)
 fam.cols            <- if (merge_family_history)
@@ -264,6 +267,14 @@ raw.clean <- raw %>%
       n.abx.classes >= 3 ~ "3+ classes",
       TRUE ~ "None"),
 
+    ## --- antibiotic course count (# unique structured Rx dates in treatment window) ---
+    ## From postprocess (antibiotic_course_count__treatment__pooled): each distinct prescription
+    ## date is one course, same-day prescriptions collapse to one. NA (no structured abx record)
+    ## -> 0. Every Any.Abx=="Yes" patient has >=1 structured Rx, so there is no "unknown" bin.
+    ## Binned into None/1/2/3+ in 13_cox.
+    n.abx.courses = rowSums(across(all_of(course.cols),
+                                   ~ suppressWarnings(as.integer(.x))), na.rm = TRUE),
+
     ## --- antibiotic duration ---
     ## Convert each duration column to numeric, treating "F", "", and literal
     ## "0" as NA. Literal "0" appears only among Received==Yes patients and
@@ -349,6 +360,7 @@ raw.clean <- raw %>%
          Abx.Duration,
          Abx.Duration.Max,
          Abx.Duration.Cat,
+         n.abx.courses,
          Abx.Penicillin,
          Abx.Macrolide,
          Abx.Cephalosporin,

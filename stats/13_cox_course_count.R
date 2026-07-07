@@ -1,11 +1,11 @@
-# title: "Antibiotic Exposure and Cancer Risk - Cox Models (longest-single-course-only sensitivity)"
+# title: "Antibiotic Exposure and Cancer Risk - Cox Dose-Response (number of antibiotic courses)"
 # author: Daniel Kim
 #
-# Sensitivity analysis mirroring 6_cox.R but restricting the exposed group to patients whose
-# LONGEST single antibiotic-class course was >=30 days. The unexposed (no antibiotic) comparison
-# group is kept as-is, so the exposure contrast is "no antibiotics" vs "long (>=30 day) single
-# antibiotic course". Writes its own COX_LONGEST* output files so it never overwrites 6_cox.R
-# or the cumulative-dose variant (11_cox_long_only.R, which writes COX_LONG*).
+# Experimental variable = the NUMBER OF ANTIBIOTIC COURSES a patient received, binned 1 / 2 / 3+,
+# with "None" (no antibiotic) as the reference. A "course" is one unique structured prescription
+# date in the treatment window (same-day prescriptions = one course); see count_abx_courses_by_date
+# in postprocess_records.py and n.abx.courses in 1_cleanup.R. Every exposed patient has >=1
+# structured Rx, so there is no "unknown" bin. Mirrors the dose-response scripts (9/10_cox).
 
 ################################################################################
 ## 1. clear all
@@ -20,25 +20,38 @@ rm(list = ls(all.names = TRUE))
 source('/home/mtoles/acne/stats/1_cleanup.R')
 
 ################################################################################
-## 3. data prep
+## 3. data prep — bin number of antibiotic courses
+##
+## Reference = "None" (no antibiotic exposure, Any.Abx == "No"). Exposed patients are binned
+## by n.abx.courses (# of unique structured Rx dates, built in 1_cleanup.R) into 1 / 2 / 3+.
+## Every Any.Abx == "Yes" patient has at least one structured prescription, so there is no
+## "unknown" bin -- guarded by the stopifnot below.
 ################################################################################
 
-## Longest-single-course-only restriction: keep every unexposed (no antibiotic) patient as the
-## comparison group and, among exposed patients, keep only those whose LONGEST single antibiotic-
-## class course was >=30 days (Abx.Duration.Max, the MAX across classes in 1_cleanup.R). Exposed
-## patients whose longest course was <30 days -- or with unknown/uncaptured duration
-## (Abx.Duration.Max NA) -- are dropped so the contrast is "no antibiotics" vs "long (>=30 day)
-## single antibiotic course". Applied BEFORE droplevels so any factor levels emptied by the
-## filter are removed.
+## Guard: no exposed patient should have 0 counted courses (would signal a missing structured Rx).
+stopifnot(all(final$n.abx.courses[final$Any.Abx == "Yes"] >= 1))
+
 final.cox <- final %>%
-  filter(Any.Abx == "No" | (!is.na(Abx.Duration.Max) & Abx.Duration.Max >= 30)) %>%
+  mutate(
+    Abx.Courses = case_when(
+      Any.Abx == "No"     ~ "None",
+      n.abx.courses == 1  ~ "1",
+      n.abx.courses == 2  ~ "2",
+      n.abx.courses >= 3  ~ "3+"),
+    Abx.Courses = factor(Abx.Courses,
+                         levels = c("None", "1", "2", "3+"))
+  ) %>%
+  ## Drop empty factor levels so all-zero dummy columns don't enter the models
   mutate(across(where(is.factor), droplevels))
+
+## Distribution of the course bins (sanity check)
+cat("Abx.Courses distribution:\n")
+print(table(final.cox$Abx.Courses, useNA = "ifany"))
 
 ## Fully adjusted covariate set (adj.vars) is defined in 1_cleanup.R
 
-## Helper: run unadj / fully-adj Cox and return tidy tibble. (No age-adjusted model: the cohort
-## is matched on age, so age is balanced by design and is not a covariate -- see adj.vars in
-## 1_cleanup.R, which also excludes the other matching variables sex/race/bmi/smoking/alcohol.)
+## Helper: run unadj / fully-adj Cox and return tidy tibble. (No age-adjusted model: age is a
+## matching variable, balanced by design and excluded from every Cox model -- see adj.vars.)
 run.cox <- function(exposure, label) {
 
   f.unadj <- as.formula(paste0("Surv(follow.time, surv.event) ~ ", exposure))
@@ -58,25 +71,8 @@ run.cox <- function(exposure, label) {
 }
 
 ################################################################################
-## 4. Cox — any antibiotic exposure
+## 4. Cox — dose-response on number of antibiotic courses
 ################################################################################
 
-cox.any <- run.cox("Any.Abx", "Any Antibiotic (longest >=30d)")
-write_csv(cox.any, file.path(output, "COX_LONGEST1_any_cancer.csv"))
-
-################################################################################
-## 5. Cox — number of antibiotic classes
-################################################################################
-
-cox.cls <- run.cox("Abx.Classes", "ABX Classes (longest >=30d)")
-write_csv(cox.cls, file.path(output, "COX_LONGEST2_abx_classes.csv"))
-
-################################################################################
-## 6. Cox — individual antibiotic classes (all five simultaneously)
-################################################################################
-
-ind.vars <- paste(c("Abx.Penicillin", "Abx.Macrolide", "Abx.Cephalosporin",
-                     "Abx.Tetracycline", "Abx.TmpSmx"), collapse = " + ")
-
-cox.ind <- run.cox(ind.vars, "Individual ABX Classes (longest >=30d)")
-write_csv(cox.ind, file.path(output, "COX_LONGEST3_individual_abx.csv"))
+cox.courses <- run.cox("Abx.Courses", "Number of ABX Courses")
+write_csv(cox.courses, file.path(output, "COX7_abx_course_count.csv"))

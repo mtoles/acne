@@ -132,21 +132,17 @@ write_csv(cox.types, file.path(output, "COX4_cancer_types.csv"))
 ################################################################################
 ## 6. Benjamini-Hochberg correction across cancer types
 ##
-## Multiple-testing family: the fully-adjusted Any.Abx="Yes" exposure p-value, one per
-## cancer type modelled above (m = number of types). Rank the p-values ascending, compare
-## each to its BH critical value (rank/m)*Q, then apply the step-up rule: reject every
-## hypothesis up to the LARGEST rank whose p-value is <= its critical value. `bh.significant`
-## reflects that step-up, not a naive per-row p <= threshold comparison.
+## Multiple-testing family: the fully-adjusted Any.Abx="Yes" exposure p-value, one per cancer
+## type modelled above. p.adjust(method = "BH") applies the Benjamini-Hochberg step-up and
+## returns adjusted p-values (q-values); a type is significant when its q-value <= Q.
 ################################################################################
 
 cox.types.bh <- bind_rows(lapply(results, `[[`, "bh")) %>%
   arrange(p.value) %>%
   mutate(
-    rank         = row_number(),
-    m            = n(),
-    bh.crit      = rank / m * BH.Q,          # (i/m)*Q -- the BH critical value
-    bh.significant = rank <= { passes <- p.value <= bh.crit
-                               if (any(passes)) max(rank[passes]) else 0L }
+    rank           = row_number(),
+    p.adjusted     = p.adjust(p.value, method = "BH"),   # BH q-value
+    bh.significant = p.adjusted <= BH.Q
   )
 
 cat(sprintf("\nBenjamini-Hochberg (fully-adjusted Any.Abx, Q = %.2f, m = %d types):\n",

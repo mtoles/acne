@@ -254,6 +254,23 @@ def pool_abx_duration_numeric(records):
     return "0"
 
 
+def count_abx_courses_by_date(records):
+    """Number of antibiotic COURSES = number of UNIQUE structured prescription dates.
+
+    Each STRUCTURED_DATA `antibiotics` record with prediction "Yes" is a dated prescription from
+    the structured medication table; every such record carries a real Rx date, so distinct
+    (normalized) dates are distinct courses. Prescriptions sharing a date -- even different drugs
+    -- count as ONE course (one prescribing event). Note-based keyword mentions (no reliable Rx
+    date) are ignored. abx records are already restricted to the 2-year treatment window upstream.
+    Returns an int (0 for patients with no structured antibiotic prescription).
+    """
+    dates = {rec["_parsed_date"] for rec in records
+             if rec.get("keyword") == "STRUCTURED_DATA"
+             and rec["prediction"] == "Yes"
+             and pd.notna(rec["_parsed_date"])}
+    return len(dates)
+
+
 def _group_by_period_and_keyword(feature_records, rec_key_fn=None):
     """Group records into {period: {keyword: [records]}}.
 
@@ -336,6 +353,11 @@ def pool_patient_records(records, index_date):
                     preds = [r["prediction"] for r in kw_recs]
                     col_name = f"{feature_name}__{period}__{kw}".replace(" ", "_")
                     result[col_name] = pool_any_yes(preds)
+            # Antibiotic course count: # of unique structured Rx dates across all classes
+            # (same-day prescriptions = one course). See count_abx_courses_by_date.
+            if feature_name == "antibiotics":
+                result["antibiotic_course_count__treatment__pooled"] = \
+                    count_abx_courses_by_date(feature_records)
                     # Add medication descriptions for antibiotics
                     # if feature_name == "antibiotics":
                     #     meds = sorted({r["Medication_Description"] for r in kw_recs if r.get("Medication_Description")})
