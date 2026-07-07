@@ -1,0 +1,253 @@
+{"code": "002.0", "code_type": "ICD9", "description": "salmonella typhi", "disease_type": "Infection history"}
+{"code": "010", "code_type": "ICD9", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "011", "code_type": "ICD9", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "012", "code_type": "ICD9", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "013", "code_type": "ICD9", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "014", "code_type": "ICD9", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "015", "code_type": "ICD9", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "016", "code_type": "ICD9", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "017", "code_type": "ICD9", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "018", "code_type": "ICD9", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "041.86", "code_type": "ICD9", "description": "helicobacter pylori", "disease_type": "Infection history"}
+{"code": "042", "code_type": "ICD9", "description": "HIV (human immunodeficiency virus)", "disease_type": "Infection history"}
+{"code": "043", "code_type": "ICD9", "description": "HIV", "disease_type": "Immunosuppressed"}
+{"code": "044", "code_type": "ICD9", "description": "HIV", "disease_type": "Immunosuppressed"}
+{"code": "058.89", "code_type": "ICD9", "description": "HHV-8 (Kaposi's sarcoma-associated herpesvirus)", "disease_type": "Infection history"}
+{"code": "070.2", "code_type": "ICD9", "description": "HBV (Hepatitis B virus)", "disease_type": "Infection history"}
+{"code": "070.3", "code_type": "ICD9", "description": "HBV (Hepatitis B virus)", "disease_type": "Infection history"}
+{"code": "070.41", "code_type": "ICD9", "description": "HCV (Hepatitis C virus)", "disease_type": "Infection history"}
+{"code": "070.44", "code_type": "ICD9", "description": "HCV (Hepatitis C virus)", "disease_type": "Infection history"}
+{"code": "070.51", "code_type": "ICD9", "description": "HCV (Hepatitis C virus)", "disease_type": "Infection history"}
+{"code": "070.54", "code_type": "ICD9", "description": "HCV (Hepatitis C virus)", "disease_type": "Infection history"}
+{"code": "070.7", "code_type": "ICD9", "description": "HCV (Hepatitis C virus)", "disease_type": "Infection history"}
+{"code": "075", "code_type": "ICD9", "description": "EBV (Epstein\u2013Barr virus)", "disease_type": "Infection history"}
+{"code": "078.1", "code_type": "ICD9", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "079.4", "code_type": "ICD9", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "079.51", "code_type": "ICD9", "description": "HTLV-1 (Human T-lymphotropic virus 1)", "disease_type": "Infection history"}
+{"code": "079.98", "code_type": "ICD9", "description": "chlamydia trachomatis", "disease_type": "Infection history"}
+{"code": "099.41", "code_type": "ICD9", "description": "chlamydia trachomatis", "disease_type": "Infection history"}
+{"code": "117.3", "code_type": "ICD9", "description": "aspergillus", "disease_type": "Infection history"}
+{"code": "120.0", "code_type": "ICD9", "description": "schistosoma hematobium", "disease_type": "Infection history"}
+{"code": "121.0", "code_type": "ICD9", "description": "opisthorchis viverrini", "disease_type": "Infection history"}
+{"code": "136.1", "code_type": "ICD9", "description": "Beh\u00e7et's disease", "disease_type": "Autoimmune"}
+{"code": "176", "code_type": "ICD9", "description": "HHV-8 (Kaposi's sarcoma-associated herpesvirus)", "disease_type": "Infection history"}
+{"code": "200", "code_type": "ICD9", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "201", "code_type": "ICD9", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "202.0", "code_type": "ICD9", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "202.1", "code_type": "ICD9", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "202.2", "code_type": "ICD9", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "202.4", "code_type": "ICD9", "description": "Leukemia", "disease_type": "Immunosuppressed"}
+{"code": "202.7", "code_type": "ICD9", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "202.8", "code_type": "ICD9", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "204", "code_type": "ICD9", "description": "Leukemia", "disease_type": "Immunosuppressed"}
+{"code": "205", "code_type": "ICD9", "description": "Leukemia", "disease_type": "Immunosuppressed"}
+{"code": "206", "code_type": "ICD9", "description": "Leukemia", "disease_type": "Immunosuppressed"}
+{"code": "207", "code_type": "ICD9", "description": "Leukemia", "disease_type": "Immunosuppressed"}
+{"code": "208", "code_type": "ICD9", "description": "Leukemia", "disease_type": "Immunosuppressed"}
+{"code": "242.00", "code_type": "ICD9", "description": "Graves' disease", "disease_type": "Autoimmune"}
+{"code": "245.2", "code_type": "ICD9", "description": "Hashimoto's thyroiditis", "disease_type": "Autoimmune"}
+{"code": "250.00", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.01", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.02", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.03", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.10", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.11", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.12", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.13 250.21", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.20", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.22", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.23", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.30", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.31", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.32", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.33", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.40", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.41", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.42", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.43", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.50", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.51", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.52", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.53", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.60", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.61", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.62", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.63", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.70", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.71", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.72", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.73", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.80", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.81", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.82", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.83", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.90", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.91", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "250.92", "code_type": "ICD9", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "250.93", "code_type": "ICD9", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "255.41", "code_type": "ICD9", "description": "Autoimmune adrenalitis (Addison disease)", "disease_type": "Autoimmune"}
+{"code": "256.4", "code_type": "ICD9", "description": "polycystic ovarian syndrome", "disease_type": "Comorbid"}
+{"code": "270.2", "code_type": "ICD9", "description": "albinism", "disease_type": "Comorbid"}
+{"code": "281.0", "code_type": "ICD9", "description": "Pernicious anemia", "disease_type": "Autoimmune"}
+{"code": "340", "code_type": "ICD9", "description": "Multiple sclerosis", "disease_type": "Autoimmune"}
+{"code": "358.0", "code_type": "ICD9", "description": "Myasthenia gravis", "disease_type": "Autoimmune"}
+{"code": "446.21", "code_type": "ICD9", "description": "Goodpasture syndrome", "disease_type": "Autoimmune"}
+{"code": "555", "code_type": "ICD9", "description": "crohns disease", "disease_type": "Comorbid"}
+{"code": "556", "code_type": "ICD9", "description": "ulcerative colitis", "disease_type": "Comorbid"}
+{"code": "571.42", "code_type": "ICD9", "description": "Autoimmune hepatitis", "disease_type": "Autoimmune"}
+{"code": "571.6", "code_type": "ICD9", "description": "Primary biliary cirrhosis (Primary biliary cholangitis)", "disease_type": "Autoimmune"}
+{"code": "577.1", "code_type": "ICD9", "description": "chronic pancreatitis", "disease_type": "Comorbid"}
+{"code": "579.0", "code_type": "ICD9", "description": "Celiac disease", "disease_type": "Autoimmune"}
+{"code": "584", "code_type": "ICD9", "description": "kidney disease (acute, chronic, unspecified)", "disease_type": "Comorbid"}
+{"code": "585", "code_type": "ICD9", "description": "kidney disease (acute, chronic, unspecified)", "disease_type": "Comorbid"}
+{"code": "586", "code_type": "ICD9", "description": "kidney disease (acute, chronic, unspecified)", "disease_type": "Comorbid"}
+{"code": "590", "code_type": "ICD9", "description": "pyelonephritis", "disease_type": "Infection history"}
+{"code": "592.0", "code_type": "ICD9", "description": "kidney stones", "disease_type": "Comorbid"}
+{"code": "595", "code_type": "ICD9", "description": "cystitis", "disease_type": "Infection history"}
+{"code": "597", "code_type": "ICD9", "description": "urethritis", "disease_type": "Infection history"}
+{"code": "599.0", "code_type": "ICD9", "description": "any", "disease_type": "Infection history"}
+{"code": "621", "code_type": "ICD9", "description": "endometrial polyps", "disease_type": "Comorbid"}
+{"code": "692.71", "code_type": "ICD9", "description": "Sunburn (first-degree)", "disease_type": "None"}
+{"code": "692.76", "code_type": "ICD9", "description": "blistering (second- or third-degree)", "disease_type": "Sunburn"}
+{"code": "692.77", "code_type": "ICD9", "description": "blistering (second- or third-degree)", "disease_type": "Sunburn"}
+{"code": "692.82", "code_type": "ICD9", "description": "Radiodermatitis", "disease_type": "None"}
+{"code": "695.3", "code_type": "ICD9", "description": "rosacea", "disease_type": "Comorbid"}
+{"code": "696.1", "code_type": "ICD9", "description": "psoriasis", "disease_type": "Comorbid"}
+{"code": "697.0", "code_type": "ICD9", "description": "lichen planus", "disease_type": "Comorbid"}
+{"code": "704.01", "code_type": "ICD9", "description": "alopecia areata", "disease_type": "Comorbid"}
+{"code": "705.83", "code_type": "ICD9", "description": "hidradenitis suppurativa", "disease_type": "Comorbid"}
+{"code": "707.1", "code_type": "ICD9", "description": "chronic skin ulcer (excluding pressure ulcer)", "disease_type": "Comorbid"}
+{"code": "707.8", "code_type": "ICD9", "description": "chronic skin ulcer (excluding pressure ulcer)", "disease_type": "Comorbid"}
+{"code": "707.9", "code_type": "ICD9", "description": "chronic skin ulcer (excluding pressure ulcer)", "disease_type": "Comorbid"}
+{"code": "709.01", "code_type": "ICD9", "description": "Vitiligo", "disease_type": "Autoimmune"}
+{"code": "710.0", "code_type": "ICD9", "description": "Systemic lupus erythematosus (SLE)", "disease_type": "Autoimmune"}
+{"code": "710.1", "code_type": "ICD9", "description": "Systemic sclerosis (Scleroderma)", "disease_type": "Autoimmune"}
+{"code": "710.2", "code_type": "ICD9", "description": "Sj\u00f6gren's syndrome (Sicca syndrome)", "disease_type": "Autoimmune"}
+{"code": "714.0", "code_type": "ICD9", "description": "Rheumatoid arthritis (seropositive)", "disease_type": "Autoimmune"}
+{"code": "714.1", "code_type": "ICD9", "description": "Rheumatoid arthritis (seropositive)", "disease_type": "Autoimmune"}
+{"code": "714.2", "code_type": "ICD9", "description": "Rheumatoid arthritis (seropositive)", "disease_type": "Autoimmune"}
+{"code": "720.0", "code_type": "ICD9", "description": "Ankylosing spondylitis", "disease_type": "Autoimmune"}
+{"code": "725", "code_type": "ICD9", "description": "Polymyalgia rheumatica", "disease_type": "Autoimmune"}
+{"code": "793.82", "code_type": "ICD9", "description": "dense breast tissue", "disease_type": "Comorbid"}
+{"code": "795.09", "code_type": "ICD9", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "795.19", "code_type": "ICD9", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "796.05", "code_type": "ICD9", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "796.15", "code_type": "ICD9", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "796.75", "code_type": "ICD9", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "796.79", "code_type": "ICD9", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "940", "code_type": "ICD9", "description": "burns", "disease_type": "Comorbid"}
+{"code": "941", "code_type": "ICD9", "description": "burns", "disease_type": "Comorbid"}
+{"code": "942", "code_type": "ICD9", "description": "burns", "disease_type": "Comorbid"}
+{"code": "943", "code_type": "ICD9", "description": "burns", "disease_type": "Comorbid"}
+{"code": "944", "code_type": "ICD9", "description": "burns", "disease_type": "Comorbid"}
+{"code": "945", "code_type": "ICD9", "description": "burns", "disease_type": "Comorbid"}
+{"code": "946", "code_type": "ICD9", "description": "burns", "disease_type": "Comorbid"}
+{"code": "948", "code_type": "ICD9", "description": "burns", "disease_type": "Comorbid"}
+{"code": "A01.0", "code_type": "ICD10", "description": "salmonella typhi", "disease_type": "Infection history"}
+{"code": "A15", "code_type": "ICD10", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "A16", "code_type": "ICD10", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "A17", "code_type": "ICD10", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "A18", "code_type": "ICD10", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "A19", "code_type": "ICD10", "description": "mycobacterium tuberculosis", "disease_type": "Infection history"}
+{"code": "A56", "code_type": "ICD10", "description": "chlamydia trachomatis", "disease_type": "Infection history"}
+{"code": "A74", "code_type": "ICD10", "description": "chlamydia trachomatis", "disease_type": "Infection history"}
+{"code": "B07", "code_type": "ICD10", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "B10.89", "code_type": "ICD10", "description": "HHV-8 (Kaposi's sarcoma-associated herpesvirus)", "disease_type": "Infection history"}
+{"code": "B16", "code_type": "ICD10", "description": "HBV (Hepatitis B virus)", "disease_type": "Infection history"}
+{"code": "B18.0", "code_type": "ICD10", "description": "HBV (Hepatitis B virus)", "disease_type": "Infection history"}
+{"code": "B18.1", "code_type": "ICD10", "description": "HBV (Hepatitis B virus)", "disease_type": "Infection history"}
+{"code": "B18.2", "code_type": "ICD10", "description": "HCV (Hepatitis C virus)", "disease_type": "Infection history"}
+{"code": "B20", "code_type": "ICD10", "description": "HIV (human immunodeficiency virus)", "disease_type": "Infection history"}
+{"code": "B27", "code_type": "ICD10", "description": "EBV (Epstein\u2013Barr virus)", "disease_type": "Infection history"}
+{"code": "B44", "code_type": "ICD10", "description": "aspergillus", "disease_type": "Infection history"}
+{"code": "B65.0", "code_type": "ICD10", "description": "schistosoma hematobium", "disease_type": "Infection history"}
+{"code": "B66.0", "code_type": "ICD10", "description": "opisthorchis viverrini", "disease_type": "Infection history"}
+{"code": "B96.81", "code_type": "ICD10", "description": "helicobacter pylori", "disease_type": "Infection history"}
+{"code": "B97.33", "code_type": "ICD10", "description": "HTLV-1 (Human T-lymphotropic virus 1)", "disease_type": "Infection history"}
+{"code": "B97.7", "code_type": "ICD10", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "C46", "code_type": "ICD10", "description": "HHV-8 (Kaposi's sarcoma-associated herpesvirus)", "disease_type": "Infection history"}
+{"code": "D51.0", "code_type": "ICD10", "description": "Pernicious anemia", "disease_type": "Autoimmune"}
+{"code": "E05.00", "code_type": "ICD10", "description": "Graves' disease", "disease_type": "Autoimmune"}
+{"code": "E06.3", "code_type": "ICD10", "description": "Hashimoto's thyroiditis", "disease_type": "Autoimmune"}
+{"code": "E10", "code_type": "ICD10", "description": "Type 1 diabetes", "disease_type": "Autoimmune"}
+{"code": "E11", "code_type": "ICD10", "description": "type 2 diabetes mellitus", "disease_type": "Comorbid"}
+{"code": "E27.1", "code_type": "ICD10", "description": "Autoimmune adrenalitis (Addison disease)", "disease_type": "Autoimmune"}
+{"code": "E28.2", "code_type": "ICD10", "description": "polycystic ovarian syndrome", "disease_type": "Comorbid"}
+{"code": "E70.30", "code_type": "ICD10", "description": "albinism", "disease_type": "Comorbid"}
+{"code": "E926.2", "code_type": "ICD9", "description": "Exposure to tanning bed and other manmade visible or UV light", "disease_type": "None"}
+{"code": "G35", "code_type": "ICD10", "description": "Multiple sclerosis", "disease_type": "Autoimmune"}
+{"code": "G61.0", "code_type": "ICD10", "description": "Guillain-Barr\u00e9 syndrome", "disease_type": "Autoimmune"}
+{"code": "G70.0", "code_type": "ICD10", "description": "Myasthenia gravis", "disease_type": "Autoimmune"}
+{"code": "K50", "code_type": "ICD10", "description": "crohns disease", "disease_type": "Comorbid"}
+{"code": "K51", "code_type": "ICD10", "description": "ulcerative colitis", "disease_type": "Comorbid"}
+{"code": "K74.3", "code_type": "ICD10", "description": "Primary biliary cirrhosis (Primary biliary cholangitis)", "disease_type": "Autoimmune"}
+{"code": "K75.4", "code_type": "ICD10", "description": "Autoimmune hepatitis", "disease_type": "Autoimmune"}
+{"code": "K86.0", "code_type": "ICD10", "description": "chronic pancreatitis", "disease_type": "Comorbid"}
+{"code": "K86.1", "code_type": "ICD10", "description": "chronic pancreatitis", "disease_type": "Comorbid"}
+{"code": "K90.0", "code_type": "ICD10", "description": "Celiac disease", "disease_type": "Autoimmune"}
+{"code": "L20", "code_type": "ICD10", "description": "eczema", "disease_type": "Comorbid"}
+{"code": "L40", "code_type": "ICD10", "description": "psoriasis", "disease_type": "Comorbid"}
+{"code": "L43", "code_type": "ICD10", "description": "lichen planus", "disease_type": "Comorbid"}
+{"code": "L55.0", "code_type": "ICD10", "description": "Sunburn (first-degree)", "disease_type": "None"}
+{"code": "L55.1", "code_type": "ICD10", "description": "blistering (second- or third-degree)", "disease_type": "Sunburn"}
+{"code": "L55.2", "code_type": "ICD10", "description": "blistering (second- or third-degree)", "disease_type": "Sunburn"}
+{"code": "L55.9", "code_type": "ICD10", "description": "Sunburn (first-degree)", "disease_type": "None"}
+{"code": "L58", "code_type": "ICD10", "description": "Radiodermatitis", "disease_type": "None"}
+{"code": "L63", "code_type": "ICD10", "description": "alopecia areata", "disease_type": "Comorbid"}
+{"code": "L71", "code_type": "ICD10", "description": "rosacea", "disease_type": "Comorbid"}
+{"code": "L73.2", "code_type": "ICD10", "description": "hidradenitis suppurativa", "disease_type": "Comorbid"}
+{"code": "L80", "code_type": "ICD10", "description": "Vitiligo", "disease_type": "Autoimmune"}
+{"code": "L98.4", "code_type": "ICD10", "description": "chronic skin ulcer (excluding pressure ulcer)", "disease_type": "Comorbid"}
+{"code": "M05", "code_type": "ICD10", "description": "Rheumatoid arthritis (seropositive)", "disease_type": "Autoimmune"}
+{"code": "M31.0", "code_type": "ICD10", "description": "Goodpasture syndrome", "disease_type": "Autoimmune"}
+{"code": "M32", "code_type": "ICD10", "description": "Systemic lupus erythematosus (SLE)", "disease_type": "Autoimmune"}
+{"code": "M34", "code_type": "ICD10", "description": "Systemic sclerosis (Scleroderma)", "disease_type": "Autoimmune"}
+{"code": "M35.0", "code_type": "ICD10", "description": "Sj\u00f6gren's syndrome (Sicca syndrome)", "disease_type": "Autoimmune"}
+{"code": "M35.2", "code_type": "ICD10", "description": "Beh\u00e7et's disease", "disease_type": "Autoimmune"}
+{"code": "M35.3", "code_type": "ICD10", "description": "Polymyalgia rheumatica", "disease_type": "Autoimmune"}
+{"code": "M45", "code_type": "ICD10", "description": "Ankylosing spondylitis", "disease_type": "Autoimmune"}
+{"code": "N10", "code_type": "ICD10", "description": "pyelonephritis", "disease_type": "Infection history"}
+{"code": "N17", "code_type": "ICD10", "description": "kidney disease (acute, chronic, unspecified)", "disease_type": "Comorbid"}
+{"code": "N18", "code_type": "ICD10", "description": "kidney disease (acute, chronic, unspecified)", "disease_type": "Comorbid"}
+{"code": "N19", "code_type": "ICD10", "description": "kidney disease (acute, chronic, unspecified)", "disease_type": "Comorbid"}
+{"code": "N20.0", "code_type": "ICD10", "description": "kidney stones", "disease_type": "Comorbid"}
+{"code": "N30", "code_type": "ICD10", "description": "cystitis", "disease_type": "Infection history"}
+{"code": "N34", "code_type": "ICD10", "description": "urethritis", "disease_type": "Infection history"}
+{"code": "N39.0", "code_type": "ICD10", "description": "any", "disease_type": "Infection history"}
+{"code": "N84.0", "code_type": "ICD10", "description": "endometrial polyps", "disease_type": "Comorbid"}
+{"code": "R85.81", "code_type": "ICD10", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "R85.82", "code_type": "ICD10", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "R87.81", "code_type": "ICD10", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "R87.82", "code_type": "ICD10", "description": "HPV (Human papillomavirus)", "disease_type": "Infection history"}
+{"code": "R92.30", "code_type": "ICD10", "description": "dense breast tissue", "disease_type": "Comorbid"}
+{"code": "T20", "code_type": "ICD10", "description": "burns", "disease_type": "Comorbid"}
+{"code": "T21", "code_type": "ICD10", "description": "burns", "disease_type": "Comorbid"}
+{"code": "T22", "code_type": "ICD10", "description": "burns", "disease_type": "Comorbid"}
+{"code": "T23", "code_type": "ICD10", "description": "burns", "disease_type": "Comorbid"}
+{"code": "T24", "code_type": "ICD10", "description": "burns", "disease_type": "Comorbid"}
+{"code": "T25", "code_type": "ICD10", "description": "burns", "disease_type": "Comorbid"}
+{"code": "T30", "code_type": "ICD10", "description": "burns", "disease_type": "Comorbid"}
+{"code": "T31", "code_type": "ICD10", "description": "burns", "disease_type": "Comorbid"}
+{"code": "U07.1", "code_type": "ICD10", "description": "COVID-19", "disease_type": "Infection history"}
+{"code": "V08", "code_type": "ICD9", "description": "HIV (human immunodeficiency virus)", "disease_type": "Infection history"}
+{"code": "V12.72", "code_type": "ICD9", "description": "colonic polyps (adenomatous and serrated)", "disease_type": "Comorbid"}
+{"code": "W89", "code_type": "ICD10", "description": "Exposure to tanning bed and other manmade visible or UV light", "disease_type": "None"}
+{"code": "Z21", "code_type": "ICD10", "description": "HIV (human immunodeficiency virus)", "disease_type": "Infection history"}
+{"code": "Z22.6", "code_type": "ICD10", "description": "HTLV-1 (Human T-lymphotropic virus 1)", "disease_type": "Infection history"}
+{"code": "Z83.710", "code_type": "ICD10", "description": "colonic polyps (adenomatous and serrated)", "disease_type": "Comorbid"}
+{"code": "Z87.440", "code_type": "ICD10", "description": "any", "disease_type": "Infection history"}
+{"code": "279", "code_type": "ICD9", "description": "Immunodeficiency", "disease_type": "Immunosuppressed"}
+{"code": "C81", "code_type": "ICD10", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "C82", "code_type": "ICD10", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "C83", "code_type": "ICD10", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "C84", "code_type": "ICD10", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "C85", "code_type": "ICD10", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "C86", "code_type": "ICD10", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "C87", "code_type": "ICD10", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "C88", "code_type": "ICD10", "description": "Lymphoma", "disease_type": "Immunosuppressed"}
+{"code": "C91", "code_type": "ICD10", "description": "Leukemia", "disease_type": "Immunosuppressed"}
+{"code": "C92", "code_type": "ICD10", "description": "Leukemia", "disease_type": "Immunosuppressed"}
+{"code": "C93", "code_type": "ICD10", "description": "Leukemia", "disease_type": "Immunosuppressed"}
+{"code": "C94", "code_type": "ICD10", "description": "Leukemia", "disease_type": "Immunosuppressed"}
+{"code": "C95", "code_type": "ICD10", "description": "Leukemia", "disease_type": "Immunosuppressed"}
+{"code": "D84", "code_type": "ICD10", "description": "Immunodeficiency", "disease_type": "Immunosuppressed"}
