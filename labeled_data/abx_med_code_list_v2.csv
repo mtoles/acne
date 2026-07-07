@@ -1,0 +1,940 @@
+Medication,Code_Type,Code,include_james,include_dorsa,include_consensus,include_james 2,Unnamed: 7,include_final
+Bismuth Subcit K 140 mg-Metronidazole 125 mg-Tetracycline 125 mg Cap,EPIC-MED,81479,0,1,False,1.0,,1
+Lansoprazoleamoxillin and clarithromycin combination - LMR 3354,LMR,3354,0,1,False,1.0,,1
+Trimethoprim polymyxin b sulfate - LMR 2746,LMR,2746,0,0,True,0.0,,0
+Amoxicillin-Clarithromycin-Lansoprazole 500 mg-500 mg-30 mg Combo Pack,EPIC-MED,22299,0,1,False,1.0,,1
+Co-trimoxazole tab bact,MGH_CC,723620,0,1,False,1.0,,1
+Minocin-oncall,ONCALL,DSFY2-1,1,1,True,1.0,minocycline,1
+Doxycycline hyclate 100mg vial 1 ea vial,BWH_CC,941168,1,0,False,0.0,,0
+ace,EPIC-PRC,47560289,0,0,True,0.0,injection,0
+Doxycycline hyclate 100mg vial 1 ea vial,BWH_CC,952894,1,0,False,0.0,,0
+Pylera (bismuth/metronidazole/tetracycline) - LMR 7408,LMR,7408,0,1,False,1.0,,1
+Azithromycin 500mg vial 10 ea vial,BWH_CC,943571,1,0,False,0.0,,0
+Helidac (metronidazole/tetracycline/bismuth combo pack) - LMR 5794,LMR,5794,0,1,False,1.0,,1
+Sulfamethoxazole w/tmp 10ml vi,MGH_CC,1417,0,0,True,0.0,vial,0
+Azithromycin 500mg vial 10 ea,BWH_CC,943349,1,0,False,0.0,,0
+Lansoprazoleamoxillin and clarithromycin combination - LMR 3354,PAML-LMR,3354,0,1,False,1.0,,1
+Septra 400mg-80mg tablet,BWH_CC,903155,0,1,False,1.0,,1
+Azithromycin 500mg vial 1 ea vial,BWH_CC,946658,1,0,False,0.0,,0
+Amoxapine 50 mg Tablet,EPIC-MED,449,1,0,False,0.0,,0
+Septra Ds Oral,EPIC-MED,146932,0,1,False,1.0,,1
+Oxytetracycline - LMR 2463,LMR,2463,0,1,False,1.0,,1
+Doxycycline (sclerosing) - LMR 3017,LMR,3017,?,0,False,0.0,ok,0
+Sulfamethoxazole-Trimethoprim Desensitization Oral Susp 4-0.8 mg/ml Cmpd BWH,EPIC-MED,701529,0,0,True,0.0,desensitization for allergies (low dose),0
+Sulfamethoxazole-Trimethoprim Desensitization Oral Susp 0.4-0.08 mg/ml Cmpd BWH,EPIC-MED,701530,0,0,True,0.0,desensitization for allergies (low dose),0
+Pylera (bismuth/metronidazole/tetracycline) - LMR 7408,PAML-LMR,7408,0,1,False,1.0,,1
+Minocin 100 mg Capsule,EPIC-MED,5108,1,1,True,,,1
+Sarecycline 100 mg tablet,EPIC-MED,200340,1,1,True,,,1
+Minocin Oral,EPIC-MED,141332,1,1,True,,,1
+Doxylamine succinate oral,EPIC-MED,135135,1,1,True,,,0
+Doxylamine succinate - LMR 1689,PAML-LMR,1689,1,1,True,,,0
+Sarecycline 60 mg tablet,EPIC-MED,200339,1,1,True,,,1
+Polymyxin B Sulf-Trimethoprim Opht,EPIC-MED,178965,0,0,True,,,0
+Trimethoprim/ polymyxin b for lvad dressing - LMR 7865,PAML-LMR,7865,0,0,True,,,0
+Trimethoprim polymyxin b sulfate - LMR 2746,PAML-LMR,2746,0,0,True,,,0
+Polymyxin b-trimethoprim 10000 u-1 mg/ml solution,BWH_CC,912290,0,0,True,,,0
+Polymyxin B Sul-Trimethoprim Opht,EPIC-MED,144825,0,0,True,,,0
+"Doryx 50 mg Tablet,Delayed Release",EPIC-MED,183354,1,1,True,,,1
+"Doryx 200 mg Tablet,Delayed Release",EPIC-MED,168604,1,1,True,,,1
+Cephalexin monohydrate monohydrate 500mg capsule,BWH_CC,901624,1,1,True,,,1
+Acetaminophen 325mg tablet 100 ea blist pack,BWH_CC,942106,0,0,True,,,0
+Trimethobenzamide hcl/b-caine 200mg supp.rect 50 ea box,BWH_CC,942058,0,0,True,,,0
+Acetaminophen 500mg tablet 100 ea blist pack,BWH_CC,942549,0,0,True,,,0
+Acetaminophen 325mg tablet 100 ea blist pack,BWH_CC,947049,0,0,True,,,0
+Acetaminophen 325mg tablet 750 ea blist pack,BWH_CC,947093,0,0,True,,,0
+Tamoxifen 10mg tablet u/d,BWH_CC,901047,0,0,True,,,0
+Hydrocodone bit/acetaminophen 5 -500mg tablet 500 ea bottle,BWH_CC,941922,0,0,True,,,0
+Hydrocodone bit/acetaminophen 5 -500mg tablet 100 ea blist pack,BWH_CC,941326,0,0,True,,,0
+Amoxicillin trihydrate 500mg capsule 100 ea blist pack,BWH_CC,942656,1,1,True,,,1
+Doxycycline hyclate 100mg powder for injection,BWH_CC,910528,0,0,True,,,0
+Acetaminophen 325 mg/10.1,BWH_CC,940951,0,0,True,,,0
+Sulfamethoxazole-trimethoprim 800mg-160mg tablet,BWH_CC,910129,1,1,True,,,1
+Acetaminophen 650mg suppository,BWH_CC,902822,0,0,True,,,0
+Acetaminophen 325 mg Tablet,EPIC-MED,101,0,0,True,,,0
+"Injection, acetaminophen, 10 mg",HCPCS,J0131,0,0,True,,,0
+"Acetaminophen 1,000 mg/100 ml (10 mg/ml) Intravenous Solution",EPIC-MED,108021,0,0,True,,,0
+Acetaminophen 325 mg/10.15 ml Oral Solution,EPIC-MED,126009,0,0,True,,,0
+Acetaminophen 500 mg Tablet,EPIC-MED,102,0,0,True,,,0
+Cephalexin 500 mg Capsule,EPIC-MED,9500,1,1,True,,,1
+Amoxicillin 500 mg Capsule,EPIC-MED,451,1,1,True,,,1
+Acetaminophen 650 mg Rectal Suppository,EPIC-MED,105,0,0,True,,,0
+Hydrocodone 5 mg-Acetaminophen 325 mg Tablet,EPIC-MED,34505,0,0,True,,,0
+Butalbital-Acetaminophen-Caffeine 50 mg-325 mg-40 mg Tablet,EPIC-MED,8958,0,0,True,,,0
+Oxycodone-Acetaminophen 10 mg-325 mg Tablet,EPIC-MED,31864,0,0,True,,,0
+Amoxicillin 875 mg-Potassium Clavulanate 125 mg Tablet,EPIC-MED,33228,0,0,True,,,0
+Doxycycline Hyclate 100 mg Tablet,EPIC-MED,2625,1,1,True,,,1
+Minoxidil 5 % Topical Solution,EPIC-MED,22250,0,0,True,,,0
+Doxycycline Hyclate 100 mg Capsule,EPIC-MED,2623,1,1,True,,,1
+Amoxicillin 250 mg Capsule,EPIC-MED,450,1,1,True,,,1
+Azithromycin 250 mg Tablet,EPIC-MED,20943,1,1,True,,,1
+Aminophylline 250 mg/10 ml Intravenous Solution,EPIC-MED,407,0,0,True,,,0
+Acetaminophen 300 mg-Codeine 30 mg Tablet,EPIC-MED,14087,0,0,True,,,0
+Butalbital-Acetaminophen-Caffeine 50 mg-300 mg-40 mg Capsule,EPIC-MED,104993,0,0,True,,,0
+Acetaminophen 650 mg/20.3 ml Oral Solution,EPIC-MED,126010,0,0,True,,,0
+Sulfamethoxazole 800 mg-Trimethoprim 160 mg Tablet,EPIC-MED,7555,1,1,True,,,1
+Hydrocortisone-Pramoxine 2.5 %-1 % Rectal Cream,EPIC-MED,28848,0,0,True,,,0
+Sulfamethoxazole 400 mg-Trimethoprim 80 mg Tablet,EPIC-MED,7557,1,1,True,,,1
+Amoxicillin 500 mg-Potassium Clavulanate 125 mg Tablet,EPIC-MED,33227,0,0,True,,,0
+Butalbital-Acetaminophen-Caffeine 50 mg-325 mg-40 mg Capsule,EPIC-MED,8957,0,0,True,,,0
+Amino Acids-Protein Hydrolysate 15 Gram-60 Kcal/30 ml Oral Liquid Pack,EPIC-MED,159894,0,0,True,,,0
+Oxycodone-Acetaminophen 5 mg-325 mg Tablet,EPIC-MED,5940,0,0,True,,,0
+Tamoxifen 20 mg Tablet,EPIC-MED,11498,0,0,True,,,0
+Doxycycline Monohydrate 100 mg Capsule,EPIC-MED,9900,1,1,True,,,1
+Aspirin-Acetaminophen-Caffeine 250 mg-250 mg-65 mg Tablet,EPIC-MED,9158,0,0,True,,,0
+"Polymyxin B Sulfate 10,000 Unit-Trimethoprim 1 mg/ml Eye Drops",EPIC-MED,117171,0,0,True,,,0
+"Acetaminophen Er 650 mg Tablet,Extended Release",EPIC-MED,13410,0,0,True,,,0
+Minocycline 100 mg Capsule,EPIC-MED,5110,1,1,True,,,1
+Cephalexin 250 mg Capsule,EPIC-MED,9499,1,1,True,,,1
+Acetaminophen 325 mg Rectal Suppository,EPIC-MED,104,0,0,True,,,0
+Butalbital 50 mg-Acetaminophen 325 mg-Caffeine 40 mg-Codeine 30 mg Cap,EPIC-MED,30350,0,0,True,,,0
+Acetaminophen 160 mg/5 ml Oral Suspension,EPIC-MED,93073,0,0,True,,,0
+Cephalexin 500 mg Tablet,EPIC-MED,9504,1,1,True,,,1
+Azithromycin 1 % Eye Drops,EPIC-MED,81880,0,0,True,,,0
+Tetracycline 500 mg Capsule,EPIC-MED,7797,1,1,True,,,1
+Acetaminophen 325 mg/10.15 ml Oral Suspension,EPIC-MED,88504,0,0,True,,,0
+Amoxicillin 875 mg Tablet,EPIC-MED,23458,1,1,True,,,1
+Azithromycin 500 mg Tablet,EPIC-MED,17482,1,1,True,,,1
+Amoxicillin 250 mg-Potassium Clavulanate 125 mg Tablet,EPIC-MED,22992,0,0,True,,,0
+Amoxicillin 500 mg Tablet,EPIC-MED,17456,1,1,True,,,1
+Doxycycline Hyclate 50 mg Capsule,EPIC-MED,2624,1,1,True,,,1
+Phenylephrine-Dm-Acetaminophen 5 mg-10 mg-325 mg Capsule,EPIC-MED,42185,0,0,True,,,0
+Acetaminophen 80 mg Rectal Suppository,EPIC-MED,8946,0,0,True,,,0
+Acetaminophen 500 mg Capsule,EPIC-MED,98,0,0,True,,,0
+Minocycline 50 mg Capsule,EPIC-MED,5111,1,1,True,,,1
+Azithromycin  IVPB 500 mg Vialmate (250 ml) Rx,EPIC-MED,4004082635,0,0,True,,,0
+Doxycycline  IVPB 100 mg Vialmate (250 ml) Rx,EPIC-MED,4004082636,0,0,True,,,0
+Azithromycin  IVPB 500 mg (250 ml),EPIC-MED,4004081148,0,0,True,,,0
+Minocycline Oral,EPIC-MED,141336,1,1,True,,,1
+Minoxidil 2.5 mg Tablet,EPIC-MED,5115,0,0,True,,,0
+Doxycycline Monohydrate 100 mg Tablet,EPIC-MED,21818,1,1,True,,,1
+Hydrocodone 10 mg-Acetaminophen 325 mg Tablet,EPIC-MED,28384,0,0,True,,,0
+Hydrocodone 7.5 mg-Acetaminophen 325 mg Tablet,EPIC-MED,34544,0,0,True,,,0
+Lidocaine 23% W Tetracaine 7% Topical Ointment,EPIC-MED,707856,0,0,True,,,0
+Acetaminophen 650mg suppository,MGH_CC,700300,0,0,True,,,0
+Acetaminophen 325mg tab u,MGH_CC,700360,0,0,True,,,0
+Zithromax 250mg tablet,MGH_CC,709110,1,1,True,,,1
+Trimox 500mg capsule,MGH_CC,706210,1,1,True,,,1
+Acetaminophen inh syr 10 m,MGH_CC,705000,0,0,True,,,0
+Cephalexin monohydrate monohydrate 250mg capsule,MGH_CC,721670,1,1,True,,,1
+Acetaminophen-propoxyphene napsylate napsylate 650mg-100mg tablet,MGH_CC,854260,0,0,True,,,0
+Aminocaproic acid 250 mg/ml solution,MGH_CC,704320,0,0,True,,,0
+Acetaminophen 325mg tablet,MGH_CC,3600,0,0,True,,,0
+Acetaminophen 160 mg/5ml 20.3 ml,MGH_CC,50000,0,0,True,,,0
+Oxycodone/acetaminophen tab,MGH_CC,455000,0,0,True,,,0
+Azithromycin 250mg tablet,MGH_CC,91100,1,1,True,,,1
+Trimethoprim 100mg tablet,MGH_CC,978600,1,1,True,,,1
+Sulfamethoxazole/tmp ss tab,MGH_CC,236200,1,1,True,,,1
+Acetaminophen/hydrocod 500/5,MGH_CC,771100,0,0,True,,,0
+Sulfamethoxazole w/tmp ds tab,MGH_CC,236100,1,1,True,,,1
+Cephalexin 500mg capsule,MGH_CC,216900,1,1,True,,,1
+Acetaminophen-hydrocodone bitartrate 500mg-5mg tablet,MGH_CC,777110,0,0,True,,,0
+Cephalexin monohydrate monohydrate 500mg capsule,MGH_CC,721690,1,1,True,,,1
+Azithromycin 500mg iv,MGH_CC,701120,0,0,True,,,0
+Tamoxifen cit tab,MGH_CC,890060,0,0,True,,,0
+Sulfamethoxazole-trimethoprim 800mg-160mg tablet,MGH_CC,723610,1,1,True,,,1
+Percocet 10 mg/325mg (oxycodone 10 mg/acetaminophen 325 mg) - LMR 4922,LMR,4922,0,0,True,,,0
+Trimethoprim sulfamethoxazole (bactrim ds) - LMR 1271,LMR,1271,1,1,True,,,1
+Azithromycin 250mg pack (z-pak) - LMR 4494,LMR,4494,1,1,True,,,1
+Doxycycline monohydrate - LMR 5514,LMR,5514,1,1,True,,,1
+Doxycycline hyclate - LMR 256,LMR,256,1,1,True,,,1
+Aminophylline - LMR 39,LMR,39,0,0,True,,,0
+Cephalexin (keflex) - LMR 873,LMR,873,1,1,True,,,1
+Amoxicillin/clav.acid 875/125 (augmentin 875/125)- lmr 2713,LMR,2713,0,0,True,,,0
+Minocycline (minocin) - LMR 1188,LMR,1188,1,1,True,,,1
+Amoxicillin (amoxil amox) - LMR 43,LMR,43,1,1,True,,,1
+Acetaminophen elixir - LMR 6,LMR,6,0,0,True,,,0
+Acetaminophen w/codeine 30mg (tylenol #3)- lmr 8,LMR,8,0,0,True,,,0
+Tetracycline hcl - LMR 730,LMR,730,1,1,True,,,1
+Azithromycin (azithromax zithromax z-pack) - LMR 909,LMR,909,1,1,True,,,1
+Amox./clav.acid 250/125 (augmentin) - LMR 44,LMR,44,0,0,True,,,0
+Amox./clav.acid 500/125 (augmentin 500/125)- lmr 1086,LMR,1086,0,0,True,,,0
+Tamoxifen - LMR 720,LMR,720,0,0,True,,,0
+Acetaminophen w/ codeine 60mg - LMR 2071,LMR,2071,0,0,True,,,0
+Acetaminophen (tylenol) - LMR 4,LMR,4,0,0,True,,,0
+Azithromycin 500mg pack - LMR 4495,LMR,4495,1,1,True,,,1
+Trimethoprim - LMR 769,LMR,769,1,1,True,,,1
+Aminocaproic acid - LMR 37,LMR,37,0,0,True,,,0
+Pramoxine + hydrocortisone 2.5% - LMR 2423,LMR,2423,0,0,True,,,0
+Oxycodone 2.5 mg/acetaminophen 325mg - LMR 3371,LMR,3371,0,0,True,,,0
+Azasite (azithromycin 1 mgml ophthalmic solution) - LMR 6448,LMR,6448,0,0,True,,,0
+Tetrahydrozoline hcl - LMR 2136,LMR,2136,0,0,True,,,0
+Acetaminophen (tylenol arthritis) - LMR 5838,LMR,5838,0,0,True,,,0
+Oxycodone 10 mg/acetaminophen 650mg - LMR 3374,LMR,3374,0,0,True,,,0
+Acetaminophen w/ codeine 15mg - LMR 2070,LMR,2070,0,0,True,,,0
+Bactrim - LMR 771,LMR,771,1,1,True,,,1
+"Injection, acetaminophen (hikma) not therapeutically equivalent to j0131, 10 mg",HCPCS,J0137,0,0,True,,,0
+Azithtomycin 500mg inj,HCPCS,J0456,0,0,True,,,0
+Azithromycin 500 mg Intravenous Solution,EPIC-MED,21063,0,0,True,,,0
+"Aminolevulinic acid HCL for topical administration, 20%, single unit dosage from (354 mg)",HCPCS,J7308,0,0,True,,,0
+Bactrim ds-oncall,ONCALL,DSPJ1-3,1,1,True,,,1
+Z pak-oncall,ONCALL,DSBB2-2,1,1,True,,,1
+Amoxicillin-oncall,ONCALL,DSHR3,1,1,True,,,1
+Zithromax-oncall,ONCALL,DSBB2-1,1,1,True,,,1
+Minocycline-oncall,ONCALL,DSFY2,1,1,True,,,1
+Doxycycline-oncall,ONCALL,DSFD6,1,1,True,,,1
+Keflex-oncall,ONCALL,DSKV2-1,1,1,True,,,1
+Azithromycin-oncall,ONCALL,DSBB2,1,1,True,,,1
+Tetracycline-oncall,ONCALL,DSEK1,1,1,True,,,1
+Trimethoprim sulfamethoxazole combination (bactrim ds) tablets-oncall,ONCALL,DSPJ1-3T,1,1,True,,,1
+Acetaminophen and hydrocodone-oncall,ONCALL,WSGJ8,0,0,True,,,0
+Tmp smz ds-oncall,ONCALL,DSPJ1-7,1,1,True,,,1
+Trimethoprim-oncall,ONCALL,DSTN2,1,1,True,,,1
+Cephalexin-oncall,ONCALL,DSKV2,1,1,True,,,1
+Tamoxifen-oncall,ONCALL,CSAP8,0,0,True,,,0
+Oxycodone and acetaminophen-oncall,ONCALL,WSNW2,0,0,True,,,0
+Bactrim-oncall,ONCALL,DSPJ1-1,1,1,True,,,1
+Acetaminophen w/codeine 30mg (tylenol #3)- lmr 8,PAML-LMR,8,0,0,True,,,0
+Percocet 10 mg/325mg (oxycodone 10 mg/acetaminophen 325 mg) - LMR 4922,PAML-LMR,4922,0,0,True,,,0
+Acetaminophen (tylenol) - LMR 4,PAML-LMR,4,0,0,True,,,0
+Azithromycin (azithromax zithromax z-pack) - LMR 909,PAML-LMR,909,1,1,True,,,1
+Acetaminophen w/ codeine 60mg - LMR 2071,PAML-LMR,2071,0,0,True,,,0
+Cephalexin (keflex) - LMR 873,PAML-LMR,873,1,1,True,,,1
+Trimethoprim - LMR 769,PAML-LMR,769,1,1,True,,,1
+Trimethoprim sulfamethoxazole single strength (bactrim ss) - LMR 1272,PAML-LMR,1272,1,1,True,,,1
+Doxycycline hyclate - LMR 256,PAML-LMR,256,1,1,True,,,1
+Trimethoprim sulfamethoxazole (bactrim ds) - LMR 1271,PAML-LMR,1271,1,1,True,,,1
+Amox./clav.acid 500/125 (augmentin 500/125)- lmr 1086,PAML-LMR,1086,0,0,True,,,0
+Zithromax 250mg tablet,BWH_CC,909754,1,1,True,,,1
+Acetaminophen 500mg tablet 150 ea packet,BWH_CC,943398,0,0,True,,,0
+Cephalexin monohydrate 250mg capsule 100 ea blist pack,BWH_CC,941357,1,1,True,,,1
+Doxycycline hyclate hyclate 100mg capsule,BWH_CC,907270,1,1,True,,,1
+Azithromycin 250mg tablet 100 ea blist pack,BWH_CC,947148,1,1,True,,,1
+Doxycycline Hyclate 20 mg Tablet,EPIC-MED,30579,1,1,True,,,1
+Hydrocodone 5 mg-Acetaminophen 500 mg Tablet,EPIC-MED,14966,0,0,True,,,0
+Azithromycin Oral,EPIC-MED,130157,1,1,True,,,1
+Acetaminophen Oral,EPIC-MED,128327,0,0,True,,,0
+Unisom (Doxylamine) 25 mg Tablet,EPIC-MED,8363,0,0,True,,,0
+Acetaminophen 160 mg/5 ml Oral Elixir,EPIC-MED,1579,0,0,True,,,0
+Doxycycline Monohydrate 50 mg Capsule,EPIC-MED,9901,1,1,True,,,1
+Minocycline 100 mg Tablet,EPIC-MED,5112,1,1,True,,,1
+Doxylamine Succinate 25 mg Tablet,EPIC-MED,14847,0,0,True,,,0
+Osm_aminocaproic acid infusion in ns 60 mg/ml (250 ml) MGH,EPIC-MED,7002133,0,0,True,,,0
+Azithromycin ivpb 250 ml ahfm mvh_nsm,EPIC-MED,6004080350,0,0,True,,,0
+Doxycycline ivpb 100 ml ahfm NSM,EPIC-MED,6004080440,0,0,True,,,0
+Azithromycin ivpb in ns 500 mg (250 ml) cmpd nsm_cdh_bwh,EPIC-MED,702407,0,0,True,,,0
+Tamoxifen 10 mg Tablet,EPIC-MED,7711,0,0,True,,,0
+Acetaminophen 500 mg/50 ml (10 mg/ml) intravenous solution,EPIC-MED,207006,0,0,True,,,0
+Minocycline hcl cap 50,MGH_CC,825420,1,1,True,,,1
+Hydrocodone 10mg - acetaminophen 500mg - LMR 8195,LMR,8195,0,0,True,,,0
+Doxylamine succinate - LMR 1689,LMR,1689,0,0,True,,,0
+Vicodin hp (hydrocodone/ acetaminophen 10 mg/660 mg) - LMR 5043,LMR,5043,0,0,True,,,0
+Hydrocodone/ acetaminophen 10 mg/325mg - LMR 5900,LMR,5900,0,0,True,,,0
+Pramoxine hcl 1% - LMR 631,LMR,631,0,0,True,,,0
+Doxycycline (dental) hyclate - LMR 5189,LMR,5189,1,1,True,,,1
+"Injection, acetaminophen (fresenius kabi) not therapeutically equivalent to j0131, 10 mg",HCPCS,J0134,0,0,True,,,0
+"Injection, acetaminophen (b braun) not therapeutically equivalent to j0131, 10 mg",HCPCS,J0136,0,0,True,,,0
+Bactrim ds-oncall,ONCALL,DSNA4-1,1,1,True,,,1
+Acetaminophen-oncall,ONCALL,WSHL1,0,0,True,,,0
+Tamoxifen - LMR 720,PAML-LMR,720,0,0,True,,,0
+Acetaminophen elixir - LMR 6,PAML-LMR,6,0,0,True,,,0
+"Injection, trimethobenzamide hcl, up to 200 mg",HCPCS,J3250,0,0,True,,,0
+Cephalexin 500mg capsule,BWH_CC,940150,1,1,True,,,1
+Aminophylline 25 mg/ml solution,BWH_CC,906505,0,0,True,,,0
+"Injection, aminophyllin, Up To 250 Mg",HCPCS,J0280,0,0,True,,,0
+Sulfamethoxazole-trimethoprim 200mg-40 mg/5ml suspension,BWH_CC,910268,1,1,True,,,1
+Doxycycline hyclate 100mg capsule 100 ea bottle,BWH_CC,941695,1,1,True,,,1
+Aminocaproic Acid Infusion In Ns 60 mg/ml (250 ml) Cmpd BWH,EPIC-MED,700538,0,0,True,,,0
+Tetracaine Hcl (Pf) 0.5 % Eye Drops,EPIC-MED,126779,0,0,True,,,0
+Isometheptene-Dichloralphen-Acetaminophen 65 mg-100 mg-325 mg Capsule,EPIC-MED,4018,0,0,True,,,0
+"Doxycycline Hyclate 100 mg Tablet,Delayed Release",EPIC-MED,42106,1,1,True,,,1
+Pramoxine 1 % Lotion,EPIC-MED,11099,0,0,True,,,0
+Aminolevulinic Acid Hcl 20 % Topical Solution,EPIC-MED,29588,0,0,True,,,0
+Hydrocortisone-Pramoxine 1 %-1 % Rectal Cream,EPIC-MED,28847,0,0,True,,,0
+Aminocaproic acid 250 mg/ml topical solution MGH,EPIC-MED,701616,0,0,True,,,0
+Doxycycline Hyclate Oral,EPIC-MED,135124,1,1,True,,,1
+Azithromycin  IVPB 500 mg (250 ml) Adv,EPIC-MED,4004081149,0,0,True,,,0
+Cephalexin 250 mg/5 ml Oral Suspension,EPIC-MED,9502,1,1,True,,,1
+Doxycycline Monohydrate Oral,EPIC-MED,135126,1,1,True,,,1
+Amoxicillin 400 mg/5 ml Oral Suspension,EPIC-MED,25246,1,1,True,,,1
+Acetaminophen (10 Mg/Ml) Ivpb,EPIC-MED,709118,0,0,True,,,0
+Amoxicillin 250 mg Chewable Tablet,EPIC-MED,452,1,1,True,,,1
+Acetaminophen/hydrocod 325 mg,MGH_CC,1713,0,0,True,,,0
+Doxycycline (rosacea) monohydrate sr - LMR 7061,LMR,7061,1,1,True,,,1
+Amoxicillin extended release - LMR 6388,LMR,6388,1,1,True,,,1
+Acetaminophen - LMR 5,LMR,5,0,0,True,,,0
+Tramadol hcl + acetaminophen (ultracet) - LMR 3954,LMR,3954,0,0,True,,,0
+Trimethoprim sulfamethoxazole single strength (bactrim ss) - LMR 1272,LMR,1272,1,1,True,,,1
+Acetaminophen extra strength (tylenol extra strength) - LMR 7,LMR,7,0,0,True,,,0
+Colace liquid (ceruminolytic) (docusate sodium liquid (ceruminolytic)) - LMR 5317,LMR,5317,0,0,True,,,0
+Pramoxine + hydrocortisone 1% - LMR 2420,LMR,2420,0,0,True,,,0
+Amoxicillin/clavulanic acid er 1000 mg/62.5mg - LMR 4157,LMR,4157,0,0,True,,,0
+Percocet 10 mg/325mg (oxycodone 10 mg/acetaminophen 325 mg) - LMR 5220,LMR,5220,0,0,True,,,0
+Zithromax z pak-oncall,ONCALL,DSBB2-3,1,1,True,,,1
+Amoxicillin and clavulanic acid-oncall,ONCALL,DSGL3,0,0,True,,,0
+Acetaminophen extra strength (tylenol extra strength) - LMR 7,PAML-LMR,7,0,0,True,,,0
+Tramadol hcl + acetaminophen (ultracet) - LMR 3954,PAML-LMR,3954,0,0,True,,,0
+Amoxicillin/clav.acid 875/125 (augmentin 875/125)- lmr 2713,PAML-LMR,2713,0,0,True,,,0
+Amoxicillin 250mg capsule,BWH_CC,907767,1,1,True,,,1
+Sulfamethoxazole-trimethoprim 400mg-80mg tablet,BWH_CC,907764,1,1,True,,,1
+Doxycycline hyclate 100mg powder for injection,BWH_CC,907691,0,0,True,,,0
+"Doxycycline Monohydrate 40 mg Capsule,Immediate & Delay Release",EPIC-MED,76670,1,1,True,,,1
+Aminocaproic Acid Infusion Syringe 12.5 G/50 ml (250 mg/ml) (Central),EPIC-MED,700772,0,0,True,,,0
+Trimethobenzamide 100 mg/ml Intramuscular Solution,EPIC-MED,8178,0,0,True,,,0
+Acetaminophen 300 mg-Codeine 15 mg Tablet,EPIC-MED,19474,0,0,True,,,0
+Hydrocortisone-Pramoxine 1 %-1 % Rectal Foam,EPIC-MED,28849,0,0,True,,,0
+Doxycycline Hyclate (Bulk) Misc,EPIC-MED,135122,1,1,True,,,1
+Acetaminophen-codeine phosphate 300mg-30mg tablet,MGH_CC,700420,0,0,True,,,0
+Acetaminophen susp,MGH_CC,703620,0,0,True,,,0
+Amoxicillin 250mg capsule,MGH_CC,706150,1,1,True,,,1
+Acetaminophen drops,MGH_CC,703610,0,0,True,,,0
+Acetaminophen/cod #3 tablet,MGH_CC,4200,0,0,True,,,0
+Doxycycline hyclate 100mg powder for injection,MGH_CC,735060,0,0,True,,,0
+Doxycycline monohydrate - LMR 5945,LMR,5945,1,1,True,,,1
+Trimethoprim sulfamethoxazole combination-oncall,ONCALL,DSPJ1,1,1,True,,,1
+Minocycline 50 mg Tablet,EPIC-MED,5113,1,1,True,,,1
+Acetaminophen-Caffeine 500 mg-65 mg Tablet,EPIC-MED,116224,0,0,True,,,0
+Minoxidil 2 % Topical Solution,EPIC-MED,10613,0,0,True,,,0
+Azithromycin 200 mg/5 ml Oral Suspension,EPIC-MED,15797,1,1,True,,,1
+Amoxicillin 250 mg/5 ml Oral Suspension,EPIC-MED,454,1,1,True,,,1
+Acetaminophen 160 mg/5 ml Oral Liquid,EPIC-MED,100,0,0,True,,,0
+Acetaminophen 160 mg/5 ml (5 ml) Oral Suspension,EPIC-MED,8943,0,0,True,,,0
+Magnesium Amino Acid Chelate 27 mg Tablet,EPIC-MED,122963,0,0,True,,,0
+Amoxicillin 125 mg/5 ml Oral Suspension,EPIC-MED,453,1,1,True,,,1
+"Doxylamine-Pyridoxine 10 mg-10 mg Tablet,Delayed Release",EPIC-MED,159710,0,0,True,,,0
+Doxycycline Monohydrate 50 mg Tablet,EPIC-MED,30842,1,1,True,,,1
+Acetaminophen 120 mg/1.2ml oral,MGH_CC,1343,0,0,True,,,0
+Childrens tylenol 160 mg/5ml oral liquid (acetaminophen 160 mg/5ml oral liquid) - LMR 4827,LMR,4827,0,0,True,,,0
+Propoxyphene nap/acetaminophen 50/325 - LMR 4203,LMR,4203,0,0,True,,,0
+Acetaminophen w/codeine 12 mg/5 mls - LMR 2407,LMR,2407,0,0,True,,,0
+Augmentin 400 mg/57mg (5 ml) (amoxicillin/clav. susp 400 mg/57mg (5 ml)) - LMR 4862,LMR,4862,0,0,True,,,0
+Doxycycline calcium syrup - LMR 6872,LMR,6872,1,1,True,,,1
+Acetaminophen 160mg 5ml sol,MGH_CC,208,0,0,True,,,0
+Bactrim - LMR 771,PAML-LMR,771,1,1,True,,,1
+Zithromax 250mg tablet,BWH_CC,908026,1,1,True,,,1
+Doxycycline Hyclate 100 mg Intravenous Powder For Solution,EPIC-MED,2622,0,0,True,,,0
+Butalbital-Acetaminophen 50 mg-325 mg Tablet,EPIC-MED,8955,0,0,True,,,0
+Trimethoprim 100 mg Tablet,EPIC-MED,8182,1,1,True,,,1
+Azithromycin 100 mg/5 ml Oral Suspension,EPIC-MED,15796,1,1,True,,,1
+Tramadol 37.5 mg-Acetaminophen 325 mg Tablet,EPIC-MED,31288,0,0,True,,,0
+Doxycycline  IVPB 100 ml,EPIC-MED,4004082347,0,0,True,,,0
+Amoxicillin 250 mg-Potassium Clavulanate 62.5 mg/5 ml Oral Suspension,EPIC-MED,9080,0,0,True,,,0
+Doxycycline  IVPB 100 mg (100 ml) Mbp,EPIC-MED,4004081178,0,0,True,,,0
+Zithromax suspension (azithromycin suspension) - LMR 4892,LMR,4892,1,1,True,,,1
+Tetracaine hydrochloride ophthalmic 0.5% solution,BWH_CC,900632,0,0,True,,,0
+Aminocaproic acid 250 mg/ml solution,BWH_CC,908897,0,0,True,,,0
+Sulfamethoxazole/trimethoprim 800 -160mg tablet 100 ea blist pack,BWH_CC,950338,1,1,True,,,1
+"Amoxicillin-Potassium Clavulanate 1,000 mg-62.5 mg Tablet,Ext.Rel 12hr",EPIC-MED,33862,0,0,True,,,0
+Doxylamine-Pe-Dm-Acetaminophen 6.25 mg-5 mg-10 mg-325mg/15ml Oral Liqd,EPIC-MED,77082,0,0,True,,,0
+Acetaminophen 300 mg-Codeine 60 mg Tablet,EPIC-MED,8950,0,0,True,,,0
+Acetaminophen 325 mg capsule,EPIC-MED,189877,0,0,True,,,0
+Doxylamine-Dm-Acetaminophen 6.25 mg-15 mg-325 mg Capsule,EPIC-MED,42186,0,0,True,,,0
+Butalbital-Acetaminophen-Caffeine 50 mg-325 mg-40 mg/15 ml Oral Soln,EPIC-MED,35685,0,0,True,,,0
+Azithromycin 1 Gram Oral Packet,EPIC-MED,15284,1,1,True,,,1
+"Rotavirus vaccine, tetravalent, live, for oral use",CPT,90680,0,0,True,,,0
+Trimethoprim/sulfamethoxazole suspension - LMR 1256,LMR,1256,1,1,True,,,1
+Amoxicillin/clav.susp 250 mg/62.5mg (5 ml) - LMR 1105,LMR,1105,0,0,True,,,0
+Acetaminophen 60 mg/0.6ml drop 0.6ml oral syringe,BWH_CC,941966,0,0,True,,,0
+Azithromycin 250mg tablet 50 ea blist pack,BWH_CC,946138,1,1,True,,,1
+Tetracaine hydrochloride ophthalmic 0.5% solution,BWH_CC,903018,0,0,True,,,0
+Doxycycline hyclate 100mg capsule 500 ea bottle,BWH_CC,945528,1,1,True,,,1
+Zithromax iv 500mg powder for injection,BWH_CC,911478,0,0,True,,,0
+Doxycycline hyclate 100 mg tablet to-go (MGH cdh),EPIC-MED,707536,1,1,True,,,1
+Tetrahydrozoline 0.05 %-Zinc 0.25 % Eye Drops,EPIC-MED,11523,0,0,True,,,0
+Lidocaine-Epinephrine-Tetracaine Topical Soln Cmpd NWH_MGH,EPIC-MED,700821,0,0,True,,,0
+Minoxidil 5 % Topical Foam,EPIC-MED,77279,0,0,True,,,0
+Minoxidil tab 2 < 5mg u,MGH_CC,825560,0,0,True,,,0
+Acetaminophen 100 mgml 1ml ora,MGH_CC,980,0,0,True,,,0
+Doxycycline hyclate hyclate 100mg tablet,MGH_CC,735120,1,1,True,,,1
+Minoxidil - LMR 501,LMR,501,0,0,True,,,0
+Pramoxine + hydrocortisone 2.5% - LMR 2421,LMR,2421,0,0,True,,,0
+Minoxidil-oncall,ONCALL,MTAR2,0,0,True,,,0
+Oxycodone 2.5 mg/acetaminophen 325mg - LMR 3371,PAML-LMR,3371,0,0,True,,,0
+Minoxidil - LMR 501,PAML-LMR,501,0,0,True,,,0
+Azithromycin 250mg pack (z-pak) - LMR 4494,PAML-LMR,4494,1,1,True,,,1
+Amoxicillin trihydrate 250mg capsule 100 ea blist pack,BWH_CC,942632,1,1,True,,,1
+Butalb/acetaminophen/caffeine 325 -40 -50mg tablet 100 ea blist pack,BWH_CC,947882,0,0,True,,,0
+Cephalexin 250mg capsule,MGH_CC,216700,1,1,True,,,1
+Doxycycline 100mg tablet,MGH_CC,351200,1,1,True,,,1
+Acetaminophen 650mg suppos,MGH_CC,3000,0,0,True,,,0
+Trimox 250 mg/5ml powder for reconstitution,MGH_CC,706300,1,1,True,,,1
+Minocycline (minocin) - LMR 1188,PAML-LMR,1188,1,1,True,,,1
+Acetaminophen 325mg tablet 100 ea blist pack,BWH_CC,942737,0,0,True,,,0
+Hydrocodone 5 mg-Acetaminophen 300 mg Tablet,EPIC-MED,70449,0,0,True,,,0
+Mapap (Acetaminophen) 325 mg Tablet,EPIC-MED,4755,0,0,True,,,0
+Keflex Oral,EPIC-MED,139329,1,1,True,,,1
+Pramoxine-camphor-zinc acetate lotion,EPIC-MED,9884,0,0,True,,,0
+Acetaminophen-Codeine Oral,EPIC-MED,128337,0,0,True,,,0
+Hydrocodone 7.5 mg-Acetaminophen 300 mg Tablet,EPIC-MED,70832,0,0,True,,,0
+Hydrocodone-Acetaminophen 10 mg-300 mg/15 ml Oral Solution,EPIC-MED,106642,0,0,True,,,0
+Doxycycline hyclate - LMR 255,LMR,255,1,1,True,,,1
+Tetracaine 0.5% - LMR 3224,LMR,3224,0,0,True,,,0
+Aminocaproic Acid 250 mg/ml (25 %) Oral Solution,EPIC-MED,9062,0,0,True,,,0
+Azithromycin ivpb 250 ml fdfm nsm,EPIC-MED,4004080009,0,0,True,,,0
+Pramoxine 1 % Topical Foam,EPIC-MED,19749,0,0,True,,,0
+Acetaminophen 120 mg Rectal Suppository,EPIC-MED,103,0,0,True,,,0
+Sulfamethoxazole-Trimethoprim  IVPB In 500 ml,EPIC-MED,4004082095,0,0,True,,,0
+Acetaminophen 160 mg/5 ml (5 ml) Oral Solution,EPIC-MED,126008,0,0,True,,,0
+Acetaminophen w codeine e,MGH_CC,708460,0,0,True,,,0
+Amoxicillin/clav.susp 200 mg/28.5mg (5 ml) - LMR 3426,LMR,3426,0,0,True,,,0
+Augmentin es-600 (amoxicillinclav. susp 600mg 42.9mg (5 ml)) - LMR 4868,LMR,4868,0,0,True,,,0
+"Injection, sulfamethoxazole",HCPCS,S0039,0,0,True,,,0
+Sulfamethoxazole 400 mg-Trimethoprim 80 mg/5 ml Intravenous Solution,EPIC-MED,7556,0,0,True,,,0
+"Lidocaine 4 %-Epinephrine Bitart 1:1,000-Tetracaine 0.5 % Topical Soln",EPIC-MED,161070,0,0,True,,,0
+Amoxicillin 125 mg-Potassium Clavulanate 31.25 mg/5 ml Oral Susp,EPIC-MED,9079,0,0,True,,,0
+Amoxicillin 400 mg-Potassium Clavulanate 57 mg/5 ml Oral Suspension,EPIC-MED,33230,0,0,True,,,0
+Acetaminophen 120mg suppository,MGH_CC,700210,0,0,True,,,0
+Cephalexin monohydrate 250 mg/5ml powder for reconstitution,MGH_CC,721720,1,1,True,,,1
+Trimethoprim and sulfamethoxazole double strength-oncall,ONCALL,DSNA4,1,1,True,,,1
+Doxycycline capsules-oncall,ONCALL,DSFD6-V,1,1,True,,,1
+Acetaminophen 120 mg-Codeine 12 mg/5 ml Oral Solution,EPIC-MED,116259,0,0,True,,,0
+Aminocaproic Acid 500 mg Tablet,EPIC-MED,9063,0,0,True,,,0
+Aminocaproic Acid  IVPB 100 ml,EPIC-MED,4004081363,0,0,True,,,0
+Aminocaproic Acid  IVPB 50 ml,EPIC-MED,4004081364,0,0,True,,,0
+Oxycodone-Acetaminophen 5 mg-325 mg/5 ml Oral Solution,EPIC-MED,17847,0,0,True,,,0
+Doxycycline  IVPB 200 mg (250 ml),EPIC-MED,4004081177,0,0,True,,,0
+Tigecycline  IVPB 100 ml,EPIC-MED,4004082294,0,0,True,,,0
+"Injection, tigecycline, 1 mg",HCPCS,J3243,0,0,True,,,0
+Tigecycline 50 mg Intravenous Solution,EPIC-MED,41652,0,0,True,,,0
+Aminocaproic Acid 250 mg/ml Intravenous Solution,EPIC-MED,403,0,0,True,,,0
+Doxycycline injection-oncall,ONCALL,DSEA1,0,0,True,,,0
+Acetaminophen and codeine-oncall,ONCALL,WSGR9,0,0,True,,,0
+Minocycline 4 % topical foam,EPIC-MED,203412,0,0,True,,,0
+Tetracycline 250 mg Capsule,EPIC-MED,7796,1,1,True,,,1
+Lidocaine 4 %-racepinephrine 0.05 %-tetracaine 0.5 % topical gel,EPIC-MED,195433,0,0,True,,,0
+Azithromycin  IVPB 150 ml,EPIC-MED,4004082079,0,0,True,,,0
+Amoxicillinclav. acid 400mg 57mg chewable - LMR 5894,LMR,5894,0,0,True,,,0
+Amoxicillin/clavulanic acid 400 -57mg - LMR 4234,LMR,4234,0,0,True,,,0
+Sulfamethoxazole/trimetho,BWH_CC,940058,1,1,True,,,1
+Sulfamethoxazole-trimethoprim 400mg-80mg tablet,BWH_CC,907556,1,1,True,,,1
+Acetaminophen-Caffeine-Pyrilamine 500 mg-60 mg-15 mg Tablet,EPIC-MED,20236,0,0,True,,,0
+Amoxicillin 600 mg-Potassium Clavulanate 42.9 mg/5 ml Oral Suspension,EPIC-MED,31177,0,0,True,,,0
+Azithromycin susp 100 mg/5,MGH_CC,701240,1,1,True,,,1
+Hydrocodone/acetaminophen 7.5 mg/500mg - LMR 6725,LMR,6725,0,0,True,,,0
+Amoxicillin/potassium clav 875/125mg tablet 100 ea bottle,BWH_CC,951633,0,0,True,,,0
+Acetaminophen 500mg table,BWH_CC,940265,0,0,True,,,0
+Aminophylline (2.5 mg/ml) 25mg injection 10 ml,BWH_CC,908163,0,0,True,,,0
+Minoxidil 10 mg Tablet,EPIC-MED,5114,0,0,True,,,0
+Sulfamethoxazole-Trimethoprim  IVPB In 250 ml,EPIC-MED,4004081535,0,0,True,,,0
+Oxycodone-Acetaminophen 10 mg-300 mg Tablet,EPIC-MED,76414,0,0,True,,,0
+Tamoxifen Oral,EPIC-MED,148268,0,0,True,,,0
+Doxycycline  IVPB 250 ml,EPIC-MED,4004082348,0,0,True,,,0
+Hydrocortisone-Pramoxine 2.5 %-1 % Topical Cream,EPIC-MED,11104,0,0,True,,,0
+Minoxidil - LMR 2091,LMR,2091,0,0,True,,,0
+Vigamox-oncall,ONCALL,HTBW3-1,0,0,True,,,0
+Acetaminophen and codeine (tylenol with codeine #3 )tablets-oncall,ONCALL,WSGR9-4T,0,0,True,,,0
+Acetaminophen w/codeine 12 mg/5 mls - LMR 2407,PAML-LMR,2407,0,0,True,,,0
+Tetrahydrozoline 0.05 % Eye Drops,EPIC-MED,7800,0,0,True,,,0
+Amoxicillin Oral,EPIC-MED,129372,1,1,True,,,1
+Amoxicillin 200 mg-Potassium Clavulanate 28.5 mg/5 ml Oral Suspension,EPIC-MED,33229,0,0,True,,,0
+Oxycodone-Acetaminophen 7.5 mg-325 mg Tablet,EPIC-MED,31863,0,0,True,,,0
+Sulfamethoxazole-trimethoprim 80mg-16 mg/ml solution,MGH_CC,723510,1,1,True,,,1
+Doxycycline 100 mg/d 5 w 100 ml,MGH_CC,860,1,1,True,,,1
+Hydrocortisone/pramox foam - LMR 2766,LMR,2766,0,0,True,,,0
+Trimethobenzamide hcl - LMR 767,LMR,767,0,0,True,,,0
+Acetaminophen-propoxyphene napsylate napsylate 650mg-100mg tablet,BWH_CC,909867,0,0,True,,,0
+Amino Acids 4.25 % With Lytes And Calcium In D5w Intravenous Solution,EPIC-MED,27947,0,0,True,,,0
+Aminocaproic Acid Infusion 20 mg/ml (250 ml) Fail Safe,EPIC-MED,7004080021,0,0,True,,,0
+Acetaminophen 120 mg-Codeine 12 mg/5 ml Oral Suspension,EPIC-MED,8947,0,0,True,,,0
+Amoxicillin/clav. susp 125 mg/31.25mg (5 ml) - LMR 4865,LMR,4865,0,0,True,,,0
+Magnesium Oxide-Magnesium Amino Acid Chelate 133 mg Tablet,EPIC-MED,125882,0,0,True,,,0
+Lidocaine-Tetracaine 7 %-7 % Topical Cream,EPIC-MED,160752,0,0,True,,,0
+Doxycycline Hyclate 150 mg Tablet,EPIC-MED,175196,1,1,True,,,1
+Minocycline 50mg capsule,MGH_CC,254200,1,1,True,,,1
+Acetaminophen 160 mg Chewable Tablet,EPIC-MED,8941,0,0,True,,,0
+Lidocaine 4%-Epinephrine 0.05%-Tetracaine 0.5% Topical Gel Cmpd BWH,EPIC-MED,700220,0,0,True,,,0
+Sulfamethoxazole-Trimethoprim  IVPB 0.64 mg/ml,EPIC-MED,4004082731,0,0,True,,,0
+Doxycycline Calcium Oral,EPIC-MED,135121,1,1,True,,,1
+Doxycycline 50 mg/5 ml Syrup,EPIC-MED,2621,1,1,True,,,1
+Aminocaproic Acid  IVPB 250 ml,EPIC-MED,4004081362,0,0,True,,,0
+Aminocaproic Acid Infusion 60 mg/ml (250 ml),EPIC-MED,4004081366,0,0,True,,,0
+Aminocaproic Acid Bolus From Infusion 60 mg/ml (Premix),EPIC-MED,700631,0,0,True,,,0
+"Lidocaine 70 mg-Tetracaine 70 mg Patch, Medicated Self-Heating",EPIC-MED,76337,0,0,True,,,0
+Acetaminophen 160 mg/5ml liquid,MGH_CC,707210,0,0,True,,,0
+Sulfamethoxazole 200 mg-Trimethoprim 40 mg/5 ml Oral Suspension,EPIC-MED,22560,1,1,True,,,1
+Zithromax 250 mg Tablet,EPIC-MED,20942,1,1,True,,,1
+Azithromycin ivpb 125 ml ped,EPIC-MED,2004080247,0,0,True,,,0
+Azithromycin syr in ns 2 mg/ml (ped),EPIC-MED,4004082278,1,1,True,,,1
+Acetaminophen 32 mg/ml Oral Syringe  (For Oral Use Only),EPIC-MED,168724,0,0,True,,,0
+Amoxicillin 200 mg/5 ml Oral Suspension,EPIC-MED,25245,1,1,True,,,1
+Azithromycin susp 200 mg/5,MGH_CC,701250,1,1,True,,,1
+Aminophylline inj 2 mg,MGH_CC,704620,0,0,True,,,0
+Acetaminophen 120 mg/3.75ml oral syr,MGH_CC,1896,0,0,True,,,0
+Inj Acetaminophen 10mg HC (MGH),EPIC-PRC,47563374,0,0,True,,,0
+Cotrimox susp 400mg-80 mg/10 ml,MGH_CC,598,1,1,True,,,1
+Acetaminophen 80 mg/2.5ml oral syr,MGH_CC,1898,0,0,True,,,0
+Trimethoprim/sulfamethoxazole suspension - LMR 1256,PAML-LMR,1256,1,1,True,,,1
+Amoxicillin/clav.susp 250 mg/62.5mg (5 ml) - LMR 1105,PAML-LMR,1105,0,0,True,,,0
+Diphenhydramine 25 mg-Acetaminophen 500 mg Tablet,EPIC-MED,18836,0,0,True,,,0
+Doxycycline ivpb 100 mg (100 ml) vtd,EPIC-MED,2004080244,0,0,True,,,0
+Azithromycin  IVPB 250 ml,EPIC-MED,4004082078,0,0,True,,,0
+Hydrocodone/acetaminophen 5 -325mg tablet 100 ea blist pack,BWH_CC,953689,0,0,True,,,0
+Minocycline 75 mg Capsule,EPIC-MED,25373,1,1,True,,,1
+Cephalexin Oral,EPIC-MED,132347,1,1,True,,,1
+"Minocycline Er 90 mg Tablet,Extended Release 24 Hr",EPIC-MED,76450,1,1,True,,,1
+Butalbital-Acetaminophen 50 mg-300 mg Tablet,EPIC-MED,114171,0,0,True,,,0
+Amoxicillin (amoxil amox) - LMR 43,PAML-LMR,43,1,1,True,,,1
+Cephalexin monohydrate 500mg capsule 100 ea bottle,BWH_CC,947487,1,1,True,,,1
+Children's Acetaminophen 160 mg/5 ml Oral Suspension,EPIC-MED,126626,0,0,True,,,0
+Acetaminophen 80 mg Disintegrating Tablet,EPIC-MED,27883,0,0,True,,,0
+Mapap (Acetaminophen) 160 mg/5 ml Oral Liquid,EPIC-MED,125421,0,0,True,,,0
+Acetaminophen Rect,EPIC-MED,128331,0,0,True,,,0
+Zithromax Z-Pak Oral,EPIC-MED,150967,1,1,True,,,1
+"Doxylamine 20 mg-pyridoxine 20 mg tablet,immediate and delayed release",EPIC-MED,197583,0,0,True,,,0
+Acetaminophen 100mg 1ml oral drops - LMR 4828,LMR,4828,0,0,True,,,0
+"Doxycycline Hyclate 50 mg Tablet,Delayed Release",EPIC-MED,183346,1,1,True,,,1
+Amino Acids-Protein Hydrolysate 15 Gram-100 Kcal/30 ml Oral Liquid Pkt,EPIC-MED,160466,0,0,True,,,0
+Lidocaine 4 %-epinephrine 0.18 %-tetracaine 0.5 % topical gel,EPIC-MED,206530,0,0,True,,,0
+Minoxidil 5% - LMR 3422,LMR,3422,0,0,True,,,0
+Trimethobenzamide 300 mg Capsule,EPIC-MED,32311,0,0,True,,,0
+Trimethobenzamide hcl - LMR 767,PAML-LMR,767,0,0,True,,,0
+Minoxidil 5% - LMR 3422,PAML-LMR,3422,0,0,True,,,0
+Acetaminophen 500mg tablet 750 ea blist pack,BWH_CC,951530,0,0,True,,,0
+Phenylephrine-Dm-Acetaminophen 10 mg-20 mg-650 mg Oral Powder Packet,EPIC-MED,94145,0,0,True,,,0
+Pramoxine + hydrocortisone 1% - LMR 2419,LMR,2419,0,0,True,,,0
+Diclegis (doxylamine/pyridoxine delayed release) - LMR 9058,LMR,9058,0,0,True,,,0
+Amoxicillin trihydrate 250mg capsule 100 ea blist pack,BWH_CC,946847,1,1,True,,,1
+Acetaminophen-hydrocodone bitartrate 500mg-5mg tablet,BWH_CC,911153,0,0,True,,,0
+Sodium Tetradecyl Sulfate 1 % (10 mg/ml) Intravenous Solution,EPIC-MED,41787,0,0,True,,,0
+Sodium Tetradecyl Sulfate 3 % (30 mg/ml) Intravenous Solution,EPIC-MED,41793,0,0,True,,,0
+Butalbital acetaminophen and caffeine-oncall,ONCALL,WSHX9,0,0,True,,,0
+Doxycycline hyclate 50 mg tablet,EPIC-MED,191022,1,1,True,,,1
+Tamoxifen 10 mgtab,BWH_CC,914565,0,0,True,,,0
+Oxycodone-Acetaminophen (Percocet 5/325) Combo Tab,EPIC-MED,2004080263,0,0,True,,,0
+Amoxicillin 250 mg/5ml powder for reconstitution,BWH_CC,903513,1,1,True,,,1
+Amoxil 125 mg/5ml powder for reconstitution,BWH_CC,905154,1,1,True,,,1
+Chlorpheniramine 2 mg-Dm 15 mg-Acetaminophen 500 mg Tablet,EPIC-MED,32394,0,0,True,,,0
+Doxycycline Monohydrate 25 mg/5 ml Oral Suspension,EPIC-MED,9902,1,1,True,,,1
+Meclocycline sulfosalicylate - LMR 1728,LMR,1728,0,0,True,,,0
+Tetracycline hcl - LMR 730,PAML-LMR,730,1,1,True,,,1
+Amox tr/potassium clavulanate 875 -125mg tablet 100 ea blist pack,BWH_CC,941783,0,0,True,,,0
+Azithromycin  IVPB 250 mg (250 ml),EPIC-MED,4004081150,0,0,True,,,0
+Amoxicillin 500mg capsule,MGH_CC,62100,1,1,True,,,1
+Oxycodone 5 mg/acetaminophen 500mg - LMR 4923,LMR,4923,0,0,True,,,0
+Bactrim ss-oncall,ONCALL,DSPJ1-8,1,1,True,,,1
+Acetaminophen 500mg tablet 100 ea blist pack,BWH_CC,941537,0,0,True,,,0
+Sulfamethoxazole-trimethoprim 80mg-16 mg/ml solution,BWH_CC,907049,1,1,True,,,1
+Aminocaproic acid 15gm in sodium chloride 0.9% 250ml bag,BWH_CC,946162,0,0,True,,,0
+Azithromycin 250mg tablet 50 ea blist pack,BWH_CC,945387,1,1,True,,,1
+Azithromycin 250 mg tablet to-go mgh_cdh,EPIC-MED,707533,1,1,True,,,1
+Azithromycin  IVPB 250 mg _ MGH (125 ml),EPIC-MED,1004088006,0,0,True,,,0
+Percocet 7.5 mg/325mg (oxycodone 7.5 mg/acetaminophen 325 mg) - LMR 4921,LMR,4921,0,0,True,,,0
+Acetaminophen + pyrilamine - LMR 2521,LMR,2521,0,0,True,,,0
+Sulfamethoxazole/trimethoprim 400mg tablet 100 ea bottle,BWH_CC,945893,1,1,True,,,1
+Amoxicillin 125 mg/5ml suspension 100ml bottle,BWH_CC,908304,1,1,True,,,1
+Aminoglutethimide - LMR 38,LMR,38,0,0,True,,,0
+Hydrocodone/acetaminophen 7.5/500mg per 15ml - LMR 7877,LMR,7877,0,0,True,,,0
+"Minocycline Er 135 mg Tablet,Extended Release 24 Hr",EPIC-MED,76451,1,1,True,,,1
+Aminocaproic acid 5gm vial 20ml vial,BWH_CC,942197,0,0,True,,,0
+Acetaminophen 120 mg-Codeine 12 mg/5 ml (5 ml) Oral Solution,EPIC-MED,160623,0,0,True,,,0
+Augmentin 400 mg/57mg (5 ml) (amoxicillin/clav. susp 400 mg/57mg (5 ml)) - LMR 4862,PAML-LMR,4862,0,0,True,,,0
+Aminophylline 500mg vial 20ml vial,BWH_CC,941564,0,0,True,,,0
+Cephalexin monohydrate 250 mg/5ml powder for reconstitution,BWH_CC,910794,1,1,True,,,1
+Azithromycin 600 mg Tablet,EPIC-MED,17387,1,1,True,,,1
+Sulfamethoxazole/trimethoprim 400 -80mg tablet 100 ea bottle,BWH_CC,943822,1,1,True,,,1
+Butalbital-Acetaminophen-Caffeine 50 mg-500 mg-40 mg Tablet,EPIC-MED,8959,0,0,True,,,0
+Dm-Pe-Acetam/Dm-Acetam-Doxylam 10-5-325mg(D)/15-325-6.25mg Capsules,EPIC-MED,81791,0,0,True,,,0
+Amino Acids 3% With Electrolytes And Glycerin Intravenous,EPIC-MED,9041,0,0,True,,,0
+Hydrocortisone-Pramoxine 1 %-1 % Topical Foam,EPIC-MED,11105,0,0,True,,,0
+Percocet 7.5 mg/325mg (oxycodone 7.5 mg/acetaminophen 325 mg) - LMR 4921,PAML-LMR,4921,0,0,True,,,0
+Amox tr/potassium clavulanate 875 -125mg tablet 100 ea bottle,BWH_CC,940474,0,0,True,,,0
+Amoxicillin trihydrate 250 mg/5ml susp recon 100ml bottle,BWH_CC,940648,1,1,True,,,1
+Zithromax 600mg tablet,BWH_CC,910992,1,1,True,,,1
+Doxycycline  IVPB 150 ml,EPIC-MED,4004082711,0,0,True,,,0
+Doxycycline In D5w  IVPB 1 mg/ml (100 ml) Cmpd MGH,EPIC-MED,701193,0,0,True,,,0
+Amoxicillin capsules-oncall,ONCALL,DSHR3-V,1,1,True,,,1
+Oxycodone 10 mg/acetaminophen 650mg - LMR 3374,PAML-LMR,3374,0,0,True,,,0
+Azithromycin 250mg tablet 50 ea blist pack,BWH_CC,943240,1,1,True,,,1
+Doxycycline Hyclate 100 mg Intravenous Powder 50 mg/ml Dilution (For Intrapleural Injection),EPIC-MED,705070,0,0,True,,,0
+Doxycycline 1 G+lido 1% 20 ml+ Nacl 60 ml Sclerosing Injection,EPIC-MED,4004083567,0,0,True,,,0
+Azithromycin Skin Test 100 mg/ml,EPIC-MED,707003,0,0,True,,,0
+Azithromycin skin test 0.001 mg/ml,EPIC-MED,707004,0,0,True,,,0
+Azithromycin skin test 0.01 mg/ml,EPIC-MED,707005,0,0,True,,,0
+Sulfamethoxazole-Trimethoprim Skin Test 80-16 mg/ml,EPIC-MED,707032,0,0,True,,,0
+Sulfamethoxazole-trimethoprim skin test 0.08-0.016 mg/ml,EPIC-MED,707033,0,0,True,,,0
+Sulfamethoxazole-trimethoprim skin test 0.8-0.16 mg/ml,EPIC-MED,707034,0,0,True,,,0
+Tpn adult amino acid 10% 0 ml-1,MGH_CC,1566,0,0,True,,,0
+Tpn adult amino acid 10% 1601 m,MGH_CC,1568,0,0,True,,,0
+Trimethoprim tab 1,MGH_CC,897860,1,1,True,,,1
+Tetracycline hydrochloride 250mg capsule,MGH_CC,891590,1,1,True,,,1
+Diamox-oncall,ONCALL,HSAX1-1,0,0,True,,,0
+Sodium tetradecyl sulfate 3% vial 2ml vial,BWH_CC,942744,0,0,True,,,0
+Acetaminophen 650 mg/20.3 ml Oral Suspension,EPIC-MED,88505,0,0,True,,,0
+Aminophylline 500 mg/20 ml Intravenous Solution,EPIC-MED,120892,0,0,True,,,0
+Pramoxine + hydrocortisone 2.5% - LMR 2423,PAML-LMR,2423,0,0,True,,,0
+Pramoxine + hydrocortisone 1% - LMR 2419,PAML-LMR,2419,0,0,True,,,0
+Aminophylline 250 mg/10ml vial 10ml vial,BWH_CC,942272,0,0,True,,,0
+"Arthritis Pain Relief (Acetaminophen) Er 650 mg Tablet,Extend Release",EPIC-MED,30383,0,0,True,,,0
+Sleep Aid (Doxylamine) 25 mg Tablet,EPIC-MED,7280,0,0,True,,,0
+Doxycycline monohydrate - LMR 5514,PAML-LMR,5514,1,1,True,,,1
+Amoxicillin/clav. susp 125 mg/31.25mg (5 ml) - LMR 4865,PAML-LMR,4865,0,0,True,,,0
+Amino Acids-Protein Hydrolys Oral,EPIC-MED,129265,0,0,True,,,0
+Minocycline hydrochloride 100mg capsule,BWH_CC,910326,1,1,True,,,1
+Benzocaine-trimethobenzamide adult 2%-200mg suppository,BWH_CC,909332,0,0,True,,,0
+Amoxicillin trihydrate 500mg capsule 100 ea blist pack,BWH_CC,946291,1,1,True,,,1
+Acetaminophen 80 mg Chewable Tablet,EPIC-MED,99,0,0,True,,,0
+Trimethoprim sulfamethoxazole - LMR 770,LMR,770,1,1,True,,,1
+Amino Acids 2.75 % With Lytes And Calcium In D5w Intravenous Solution,EPIC-MED,27946,0,0,True,,,0
+Acetaminophen 325mg suppos,MGH_CC,72700,0,0,True,,,0
+Sulfamethoxazole-trimethoprim 80mg-16 mg/ml solution,MGH_CC,723520,1,1,True,,,1
+Sulfamethoxazole-Trimethoprim  IVPB In 375 ml,EPIC-MED,4004082320,0,0,True,,,0
+Cephalexin 250 mg Tablet,EPIC-MED,9503,1,1,True,,,1
+"Doxycycline Hyclate 75 mg Tablet,Delayed Release",EPIC-MED,42105,1,1,True,,,1
+Tetracaine hydrochloride ophthalmic 0.5% solution,BWH_CC,909875,0,0,True,,,0
+Cephalexin monohydrate monohydrate 500mg capsule,BWH_CC,910387,1,1,True,,,1
+Aminolevulinic Acid Hcl Top HC,EPIC-PRC,63601031,0,0,True,,,0
+Acetaminophen 500 mg/15 ml Oral Liquid,EPIC-MED,24421,0,0,True,,,0
+Mapap (Acetaminophen) 80 mg Chewable Tablet,EPIC-MED,4754,0,0,True,,,0
+Acetaminophen w/ codeine 15mg - LMR 2070,PAML-LMR,2070,0,0,True,,,0
+Tamoxifen citrate 10mg tablet 100 ea blist pack,BWH_CC,945298,0,0,True,,,0
+Amox./clav.acid 250/125 (augmentin) - LMR 44,PAML-LMR,44,0,0,True,,,0
+Hydrocodone 10 mg-Acetaminophen 300 mg Tablet,EPIC-MED,39033,0,0,True,,,0
+Acetaminophen supp 325 mg,MGH_CC,707270,0,0,True,,,0
+Cephalexin 125 mg/5 ml Oral Suspension,EPIC-MED,9501,1,1,True,,,1
+Aminocaproic acid - LMR 1197,LMR,1197,0,0,True,,,0
+Doxycycline (dental) hyclate - LMR 5189,PAML-LMR,5189,1,1,True,,,1
+Acetaminophen - LMR 5,PAML-LMR,5,0,0,True,,,0
+Nighttime Sleep-Aid (Doxylamine) 25 mg Tablet,EPIC-MED,179792,0,0,True,,,0
+Tpn adult amino acid 10% 1101 m,MGH_CC,1567,0,0,True,,,0
+Tpn adult amino acid 15% 1101 m,MGH_CC,1570,0,0,True,,,0
+Tpn adult amino acid 15% 1601 m,MGH_CC,1571,0,0,True,,,0
+Augmentin es-600 (amoxicillinclav. susp 600mg 42.9mg (5 ml)) - LMR 4868,PAML-LMR,4868,0,0,True,,,0
+Azithromycin ivpb 500 mg vtd (250 ml) vtd,EPIC-MED,4004082621,0,0,True,,,0
+Mapap (Acetaminophen) 500 mg/15 ml Oral Liquid,EPIC-MED,100346,0,0,True,,,0
+Aminocaproic acid - LMR 1197,PAML-LMR,1197,0,0,True,,,0
+Pramoxine-Calamine 1 %-8 % Lotion,EPIC-MED,13384,0,0,True,,,0
+Butalbital 50 mg-Acetaminophen 300 mg-Caffeine 40 mg-Codeine 30 mg Cap,EPIC-MED,168794,0,0,True,,,0
+Acetaminophen-codeine phosphate 120mg-12 mg/5ml liquid,BWH_CC,907777,0,0,True,,,0
+Minocycline ivpb (250 ml),EPIC-MED,7004089824,0,0,True,,,0
+"Injection, minocycline hydrochloride, 1 mg",HCPCS,J2265,0,0,True,,,0
+Minocycline 100 mg Intravenous Solution,EPIC-MED,10612,0,0,True,,,0
+Amoxicillin suspension-oncall,ONCALL,DSHR3-Z,1,1,True,,,1
+Oxycodone-Acetaminophen 7.5 mg-500 mg Tablet,EPIC-MED,26637,0,0,True,,,0
+Azithromycin (Bulk) Misc,EPIC-MED,130153,1,1,True,,,1
+Propoxyphene nap/acetaminophen 50/325 - LMR 4203,PAML-LMR,4203,0,0,True,,,0
+Unisom (doxylamine) oral,EPIC-MED,173994,0,0,True,,,0
+Doxycycline  IVPB 100 mg (100 ml),EPIC-MED,4004081176,0,0,True,,,0
+Trimethoprim Oral,EPIC-MED,149152,1,1,True,,,1
+Phenylephrine-Pramoxine-Glycerin-White Pet 0.25 %-1 % Rectal Cream,EPIC-MED,77868,0,0,True,,,0
+Hexaminolevulinate 100 mg intravesical solution,EPIC-MED,106120,0,0,True,,,0
+Azithromycin 100 mg/5ml susp,MGH_CC,12400,1,1,True,,,1
+Minocycline extended release - LMR 7238,LMR,7238,1,1,True,,,1
+Zithromax suspension (azithromycin suspension) - LMR 4892,PAML-LMR,4892,1,1,True,,,1
+Minocycline hcl 100mg capsule 50 ea blist pack,BWH_CC,952574,1,1,True,,,1
+Hydrocodone 10 mg-Acetaminophen 500 mg Tablet,EPIC-MED,20031,0,0,True,,,0
+Pramoxine hcl 222ml lotion 222ml bottle,BWH_CC,955175,0,0,True,,,0
+Hydrocortisone-Pramoxine 1 %-1 % Topical Cream,EPIC-MED,11103,0,0,True,,,0
+Amoxicillin 200 mg-Potassium Clavulanate 28.5 mg Chewable Tablet,EPIC-MED,33225,0,0,True,,,0
+Hydrocodone/ acetaminophen 10 mg/325mg - LMR 5900,PAML-LMR,5900,0,0,True,,,0
+Amox tr/potassium clavulanate 500 -125mg tablet 100 ea bottle,BWH_CC,942115,0,0,True,,,0
+"Doxycycline Hyclate 150 mg Tablet,Delayed Release",EPIC-MED,92077,1,1,True,,,1
+Amoxicillin 400 mg-Potassium Clavulanate 57 mg Chewable Tablet,EPIC-MED,33226,0,0,True,,,0
+Sulfamethoxazole-Trimethoprim  IVPB In 1000 ml,EPIC-MED,4004082096,0,0,True,,,0
+Acetaminophen 80 mg/0.8ml oral,MGH_CC,1342,0,0,True,,,0
+Acetaminophen supp 80 mg,MGH_CC,707100,0,0,True,,,0
+Childrens tylenol 160 mg/5ml oral liquid (acetaminophen 160 mg/5ml oral liquid) - LMR 4827,PAML-LMR,4827,0,0,True,,,0
+Amoxicillin/clav.susp 200 mg/28.5mg (5 ml) - LMR 3426,PAML-LMR,3426,0,0,True,,,0
+Sulfamethoxazole 800 mg-trimethoprim 160 mg tablet ed2pk cmpd cdh,EPIC-MED,7000110,1,1,True,,,1
+Asa-Acetaminophen-Caff-Buffers Oral,EPIC-MED,129783,0,0,True,,,0
+Tetracycline hydrochloride 250mg capsule,BWH_CC,908760,1,1,True,,,1
+Minocycline hcl 100mg capsule 100 ea blist pack,BWH_CC,947565,1,1,True,,,1
+Amoxicillin 500mg capsule 1 ea u/d,BWH_CC,907779,1,1,True,,,1
+Sulfamethoxazole-Trimethoprim  IVPB In 125 ml,EPIC-MED,4004082425,0,0,True,,,0
+Sulfamethoxazole - LMR 1746,LMR,1746,1,1,True,,,1
+Magnesium Oxide-Magnesium Amino Acid Chelate 300 mg Capsule,EPIC-MED,120091,0,0,True,,,0
+Tigecycline 50mg vial 1 ea vial,BWH_CC,948088,0,0,True,,,0
+Childrens acetaminophen 160 mg/5 ml oral liquid,EPIC-MED,203490,0,0,True,,,0
+Pramoxine-Zinc Oxide 1 %-5 % Topical Cream,EPIC-MED,40249,0,0,True,,,0
+Sulfamethoxazole Oral,EPIC-MED,147893,1,1,True,,,1
+Minoxidil - LMR 2091,PAML-LMR,2091,0,0,True,,,0
+Acetaminophen 325mg tablet 100 ea bottle,BWH_CC,946611,0,0,True,,,0
+"Doxycycline Hyclate 200 mg Tablet,Delayed Release",EPIC-MED,168552,1,1,True,,,1
+Acetaminophen-Dm 160 mg-5 mg/5 ml Oral Liquid,EPIC-MED,70680,0,0,True,,,0
+Trimethobenzamide hcl - LMR 768,LMR,768,0,0,True,,,0
+Ndc 00517-9120-25 Aminocarpoic HC (MGH),EPIC-PRC,47562145,0,0,True,,,0
+Sulfamethoxazole-trimethoprim 800/160 mg tablet to-go (mgh cdh),EPIC-MED,707539,1,1,True,,,1
+Trimox 500mg capsule,BWH_CC,908307,1,1,True,,,1
+Phenylephrine-Acetaminophen 5 mg-325 mg Tablet,EPIC-MED,43455,0,0,True,,,0
+Amoxapine - LMR 2017,LMR,2017,0,0,True,,,0
+Acetaminophen 20 mg/0.2ml oral,MGH_CC,1341,0,0,True,,,0
+Tpn adult amino acid 15% 0 ml-1,MGH_CC,1569,0,0,True,,,0
+Hydrocortisone-Pramoxine 1 %-1 % Lotion,EPIC-MED,11106,0,0,True,,,0
+Tetracycline Oral,EPIC-MED,148503,1,1,True,,,1
+"Minocycline Er 65 mg Tablet,Extended Release 24 Hr",EPIC-MED,99507,1,1,True,,,1
+Tamoxifen 10mg tablet,MGH_CC,900600,0,0,True,,,0
+Azithromycin ivpb 500 ml,EPIC-MED,4004082338,0,0,True,,,0
+Amoxicillin trihydrate 250 mg/5ml susp recon 100ml bottle,BWH_CC,943158,1,1,True,,,1
+Bactrim Ds Oral,EPIC-MED,130316,1,1,True,,,1
+Tigecycline 50mg vial,MGH_CC,898990,0,0,True,,,0
+Magnesium Amino Acid Chelate 100 mg Tablet,EPIC-MED,1539,0,0,True,,,0
+Minocycline hydrochloride 50mg capsule,BWH_CC,910348,1,1,True,,,1
+Amox tr/potassium clavulanate 250mg susp recon 150ml bottle,BWH_CC,948602,0,0,True,,,0
+Hydrocodone-Acetaminophen Oral,EPIC-MED,138226,0,0,True,,,0
+Amoxapine 100 mg Tablet,EPIC-MED,446,0,0,True,,,0
+Butalbital-Acetaminophen-Caffeine 50 mg-500 mg-40 mg Capsule,EPIC-MED,17846,0,0,True,,,0
+Amoxapine tab 50mg ase,MGH_CC,706390,0,0,True,,,0
+Amoxapine - LMR 2017,PAML-LMR,2017,0,0,True,,,0
+Azithromycin 250mg tablet 30 ea bottle,BWH_CC,940218,1,1,True,,,1
+Sulfamethoxazole/trimetho,BWH_CC,940287,1,1,True,,,1
+Minocycline hcl 100mg capsule 50 ea bottle,BWH_CC,941508,1,1,True,,,1
+Azasite (azithromycin 1 mgml ophthalmic solution) - LMR 6448,PAML-LMR,6448,0,0,True,,,0
+Amoxicillin 500mg capsule 100 ea bottle,BWH_CC,951476,1,1,True,,,1
+"Neomy-Bacit-Polymyx-Pramoxine 3.5 mg-500 Unit-10,000 Unit/G Top Oint",EPIC-MED,21070,0,0,True,,,0
+Pramoxine hcl 1% - LMR 631,PAML-LMR,631,0,0,True,,,0
+"Minocycline Er 45 mg Tablet,Extended Release 24 Hr",EPIC-MED,76449,1,1,True,,,1
+Doxycycline Hyclate 75 mg Tablet,EPIC-MED,175195,1,1,True,,,1
+Azithromycin 200 mg/5ml susp,MGH_CC,12500,1,1,True,,,1
+Butalbital-Acetaminophen-Caff Oral,EPIC-MED,131448,0,0,True,,,0
+Vibramycin 50 mg/5 ml Syrup,EPIC-MED,8569,0,0,True,,,0
+Tetrahydralazine-Dextran70-Peg400-Povdn 0.05 %-0.1 %-1 %-1 % Eye Drops,EPIC-MED,70260,0,0,True,,,0
+Butamben-Tetracaine-Benzocaine 2 %-2 %-14 % (200 mg/Sec) Topical Spray,EPIC-MED,9328,0,0,True,,,0
+Doxylamine-Dm-Acetaminophen 6.25 mg-15 mg-325 mg/15 ml Oral Liquid,EPIC-MED,108480,0,0,True,,,0
+Doxycycline hyclate 100mg capsule 50 ea bottle,BWH_CC,952160,1,1,True,,,1
+Acetaminophen 100 mg/ml Oral Drops,EPIC-MED,8944,0,0,True,,,0
+Aminocaproic acid,MGH_CC,704290,0,0,True,,,0
+Sulfamethoxazole-Trimethoprim  IVPB 0.8 mg/ml,EPIC-MED,4004082732,0,0,True,,,0
+Minocycline ivpb 100 mg mbp (100 ml),EPIC-MED,4004080511,0,0,True,,,0
+Minocycline ivpb 100 mg (500 ml) vtd,EPIC-MED,4004083749,0,0,True,,,0
+"Omeprazole 10 mg-amox 250 mg-rifabutin 12.5 mg capsule immed,delay rel",EPIC-MED,203706,0,0,True,,,0
+Oxycodone-Acetaminophen (Percocet 10/325) Combo Tab,EPIC-MED,2004080266,0,0,True,,,0
+Amoxil 250 mg/5ml powder for reconstitution,BWH_CC,905657,1,1,True,,,1
+No doz maximum strength 100mg tablet,BWH_CC,905768,0,0,True,,,0
+Trimethobenzamide hcl 300mg capsule 100 ea bottle,BWH_CC,942347,0,0,True,,,0
+Acetaminophen 500 mg/5 ml Oral Liquid,EPIC-MED,14192,0,0,True,,,0
+Butalbital-Acetaminophen 50 mg-650 mg Tablet,EPIC-MED,8956,0,0,True,,,0
+Butalbital-Acetaminophen Oral,EPIC-MED,131447,0,0,True,,,0
+Aminocaproic acid 500mg tablet u/d,BWH_CC,900034,0,0,True,,,0
+Acetaminophen (tylenol arthritis) - LMR 5838,PAML-LMR,5838,0,0,True,,,0
+Doxycycline hyclate hyclate 50mg capsule,BWH_CC,902706,1,1,True,,,1
+Aminophylline - LMR 2028,LMR,2028,0,0,True,,,0
+Pramoxine-Hc-Chloroxylenol 10 mg-10 mg-1 mg/ml Ear Drops,EPIC-MED,116835,0,0,True,,,0
+Aminocaproic acid 500mg tablet 100 ea blist pack,BWH_CC,946675,0,0,True,,,0
+Pramoxine 1 %-Mineral Oil 46.6 %-Zinc 12.5 % Rectal Ointment,EPIC-MED,11100,0,0,True,,,0
+"Neomycin-Polymyxin-Pramoxine 3.5 mg-10,000 Unit-10 mg/Gram Top Cream",EPIC-MED,19880,0,0,True,,,0
+Cephalexin 500mg capsule 100 ea bottle,BWH_CC,952904,1,1,True,,,1
+Pseudoephd-Dm-Gg-Acetaminophen 30 mg-10 mg-100 mg-250 mg Capsule,EPIC-MED,18249,0,0,True,,,0
+Amox tr-k clv 600 -42.9/5ml 12,MGH_CC,1164,0,0,True,,,0
+Bactrim Oral,EPIC-MED,130317,1,1,True,,,1
+Aminolevulinic acid hcl 30 mg/ml oral solution,EPIC-MED,199571,0,0,True,,,0
+"Minocycline Er 80 mg Tablet,Extended Release 24 Hr",EPIC-MED,106267,1,1,True,,,1
+Acetaminophen susp 325 mg/10.1,MGH_CC,1532,0,0,True,,,0
+Vicodin hp (hydrocodone/acetaminophen 10 mg/660 mg) - LMR 5344,LMR,5344,0,0,True,,,0
+Amoxil-oncall,ONCALL,DSHR3-1,1,1,True,,,1
+Vicodin hp (hydrocodone/ acetaminophen 10 mg/660 mg) - LMR 5043,PAML-LMR,5043,0,0,True,,,0
+Cephalexin monohydrate monohydrate 250mg capsule,BWH_CC,901622,1,1,True,,,1
+Hydrocortisone-Pramoxine 2.5 %-1 % (4g) Rectal Cream,EPIC-MED,123415,0,0,True,,,0
+Amoxicillin 250mg capsule,MGH_CC,61500,1,1,True,,,1
+-aminopyridine-lmr - LMR 2160,LMR,2160,0,0,True,,,0
+Aminophylline-oncall,ONCALL,LVAK1,0,0,True,,,0
+Amino acid 7.9% inj 250 ml,MGH_CC,704240,0,0,True,,,0
+Doxycycline 50 mg/5ml 5ml cup,MGH_CC,1120,1,1,True,,,1
+Sulfamethoxazole/trimethoprim 800 -160 mg/ 20ml oral susp 20ml cup,BWH_CC,945831,1,1,True,,,1
+Metronid-Tetracyc-Bis Subsal 250 mg-500 mg-262.4  mg Oral Combo Pack,EPIC-MED,17746,0,0,True,,,0
+Tetracaine 0.5 % Eye Drops,EPIC-MED,7795,0,0,True,,,0
+Let gel (lido/epi/tetracaine) 4%-0.18%-0.5% syringe 3ml syringe,BWH_CC,950016,0,0,True,,,0
+Amoxicillin/clavulanic acid 400 -57mg - LMR 4234,PAML-LMR,4234,0,0,True,,,0
+Amoxicillin trihydrate 125 mg/5ml susp recon 100ml bottle,BWH_CC,942960,1,1,True,,,1
+Ibuprofen 125 mg-acetaminophen 250 mg tablet,EPIC-MED,205264,0,0,True,,,0
+Amox tr/potassium clavulanate 500 -125mg tablet 100 ea blist pack,BWH_CC,944377,0,0,True,,,0
+Omadacycline 150 mg tablet,EPIC-MED,200337,0,0,True,,,0
+Acetaminophen 500mg tablet 100 ea bottle,BWH_CC,945389,0,0,True,,,0
+Acetaminophen (nicu) 28.8mg susp 0.9ml oral syringe,BWH_CC,951852,0,0,True,,,0
+Acetaminophen 120mg suppos,MGH_CC,2100,0,0,True,,,0
+Acetaminophen 325mg tablet 150 ea packet,BWH_CC,943399,0,0,True,,,0
+Acetaminophen 325mg tablet 2 ea blist pack,BWH_CC,941987,0,0,True,,,0
+Acetaminophen 650mg +butalbital 50mg - LMR 2309,LMR,2309,0,0,True,,,0
+Hydrocodone 5 mg-Acetaminophen 500 mg Capsule,EPIC-MED,13040,0,0,True,,,0
+Minoxidil Oral,EPIC-MED,141341,0,0,True,,,0
+Amox tr/potassium clavulanate 500 -125mg tablet 100 ea blist pack,BWH_CC,942815,0,0,True,,,0
+Hydrocortisone 2.5 %-Pramoxine 1 % Lotion,EPIC-MED,11107,0,0,True,,,0
+Hydrocortisone-Pramoxine In Emollient 2.5 %-1 % Topical Cream,EPIC-MED,100830,0,0,True,,,0
+"Acetaminophen 100 mg/ml Oral Drops,Suspension",EPIC-MED,13334,0,0,True,,,0
+Augmentin 250 mg/62.5mg chewable (amoxicillin/clav.acid 250 mg/62.5mg chew) - LMR 4867,LMR,4867,0,0,True,,,0
+Sulfamethoxazole-Trimethoprim Oral,EPIC-MED,147896,1,1,True,,,1
+Trimethoprim sulfamethoxazole - LMR 770,PAML-LMR,770,1,1,True,,,1
+Doxycycline ivpb 100 ml fdfm NSM,EPIC-MED,4004080026,0,0,True,,,0
+Phenylephrine-Acetaminophen-Guaifen 10 mg-650 mg-400 mg/20 ml Oral Liq,EPIC-MED,111458,0,0,True,,,0
+Doxycycline Syr 500 mg/50 ml Sclerosing Agent,EPIC-MED,4004082496,0,0,True,,,0
+Acetaminophen 650mg suppository 1 ea packet,BWH_CC,901007,0,0,True,,,0
+Lidocaine 4%-epinephrine 0.1%-tetracaine 0.5% topical gel cmpd NSM,EPIC-MED,7017044,0,0,True,,,0
+Vigamox Opht,EPIC-MED,150034,0,0,True,,,0
+Azithromycin 500mg pack - LMR 4495,PAML-LMR,4495,1,1,True,,,1
+Hydrocortisone-Pramoxine 2.5 %- 1 % Topical Ointment,EPIC-MED,11109,0,0,True,,,0
+Oxycodone 5 mg/acetaminophen 500mg - LMR 4923,PAML-LMR,4923,0,0,True,,,0
+Amoxicillin/clavulanic acid er 1000 mg/62.5mg - LMR 4157,PAML-LMR,4157,0,0,True,,,0
+Acetaminophen IV syr neo_ped_MGH_MEE_BWH,EPIC-MED,709117,0,0,True,,,0
+Amoxicillin oral susp 2,MGH_CC,706270,1,1,True,,,1
+Doxycycline Monohydrate 75 mg Tablet,EPIC-MED,35072,1,1,True,,,1
+"Minocycline Er 105 mg Tablet,Extended Release 24 Hr",EPIC-MED,106268,1,1,True,,,1
+Sulfamethoxazole/trimethoprim 800 -160 mg/ 20ml oral susp 20ml cup,BWH_CC,950736,1,1,True,,,1
+Hydrocodone/acetaminophen 7.5 mg/500mg - LMR 6725,PAML-LMR,6725,0,0,True,,,0
+Acetaminophen 500mg tablet 100 ea blist pack,BWH_CC,954512,0,0,True,,,0
+Sulfamethoxazole/trimethoprim ds 800 -160mg tablet 100 ea blist pack,BWH_CC,942799,1,1,True,,,1
+Polymyxin b sulfate/tmp eye dr,MGH_CC,978700,0,0,True,,,0
+Oxycodone-Acetaminophen 2.5 mg-325 mg Tablet,EPIC-MED,10815,0,0,True,,,0
+Amoxicillin 400 mg Chewable Tablet,EPIC-MED,25244,1,1,True,,,1
+Deutetrabenazine 12 mg tablet,EPIC-MED,193687,0,0,True,,,0
+Deutetrabenazine 6 mg tablet,EPIC-MED,193685,0,0,True,,,0
+Hydrocodone 7.5 mg-Acetaminophen 750 mg Tablet,EPIC-MED,14965,0,0,True,,,0
+Bactrim-oncall,PAML-ONCALL,DSPJ1-1,1,1,True,,,1
+Augmentin 400 mg/57mg chewable (amoxicillin/clav. acid 400 mg/57mg chewable) - LMR 4864,LMR,4864,0,0,True,,,0
+Trimethoprim sulfamethoxazole combination tablets-oncall,ONCALL,DSPJ1-T,1,1,True,,,1
+Doxylamin-Pse-Dm-Acetaminophen 6.25 mg-30 mg-15mg-500mg/15ml Oral Liqd,EPIC-MED,122955,0,0,True,,,0
+Tetrabenazine 12.5 mg Tablet,EPIC-MED,94563,0,0,True,,,0
+Tetrabenazine 25 mg Tablet,EPIC-MED,92777,0,0,True,,,0
+Doxylamine 6.25 mg-Pe 5 mg-Dm 10 mg-Acetaminophen 325 mg Tablet,EPIC-MED,179595,0,0,True,,,0
+Tetrabenazine - LMR 7075,LMR,7075,0,0,True,,,0
+Bactrim Ds 800 mg-160 mg Tablet,EPIC-MED,871,1,1,True,,,1
+Acetaminophen (Bulk) Misc,EPIC-MED,128324,0,0,True,,,0
+Tetracycline hydrochloride 500mg capsule,MGH_CC,891650,1,1,True,,,1
+Aminocaproic acid 250 mg/ml solution,BWH_CC,908794,0,0,True,,,0
+Diphenhydramine-Pse-Acetaminophen 25 mg-30 mg-500 mg Tablet,EPIC-MED,13211,0,0,True,,,0
+Phenylephrine-Acetaminophen 5 mg-325 mg Capsule,EPIC-MED,77026,0,0,True,,,0
+-aminopyridine-lmr - LMR 2160,PAML-LMR,2160,0,0,True,,,0
+Acetaminophen 20 mg/0.625ml oral syr,MGH_CC,1897,0,0,True,,,0
+Zithromax Z-Pak 250 mg Tablet,EPIC-MED,29849,1,1,True,,,1
+Acetaminophen/butalbital/caffeine 325mg-50mg-40mg tablet,BWH_CC,910709,0,0,True,,,0
+Cephalexin 750 mg Capsule,EPIC-MED,76531,1,1,True,,,1
+Azithromycin ivpb 100 ml ped,EPIC-MED,2004080246,0,0,True,,,0
+Amoxicillin 125 mg Chewable Tablet,EPIC-MED,9076,1,1,True,,,1
+Doxycycline (rosacea) monohydrate sr - LMR 7061,PAML-LMR,7061,1,1,True,,,1
+Doxycycline hyclate 100 mg capsule (pep kit basic) NSM,EPIC-MED,702634,1,1,True,,,1
+"Minocycline Er 115 mg Tablet,Extended Release 24 Hr",EPIC-MED,99508,1,1,True,,,1
+Acetaminophen 325 mg chewable tablet,EPIC-MED,208185,0,0,True,,,0
+"Hydrocortisone 2.5 %-Pramox 1 %-E-Pram#1 1 % Kit,Rectal Cream And Wipe",EPIC-MED,125791,0,0,True,,,0
+Phenylephrine-Dm-Acetaminophen 5 mg-10 mg-325 mg/15 ml Oral Liquid,EPIC-MED,77083,0,0,True,,,0
+Trimox 250mg capsule,BWH_CC,906034,1,1,True,,,1
+Minocycline 1.5 % topical foam,EPIC-MED,205318,0,0,True,,,0
+Hydrocortisone-Pramoxine 1 %-1 % Topical Ointment,EPIC-MED,11108,0,0,True,,,0
+Acetaminophen 325mg +butalbital 50mg - LMR 2308,LMR,2308,0,0,True,,,0
+"Lidocaine 70 mg/tetracaine 70 mg, per patch",HCPCS,C9285,0,0,True,,,0
+Minocycline hydrochloride 100mg capsule,BWH_CC,909299,1,1,True,,,1
+Acetaminophen 80mg suppository,MGH_CC,71000,0,0,True,,,0
+Trimethobenzamide hcl 100mg capsule u/d,BWH_CC,900845,0,0,True,,,0
+Aminocaproic acid,MGH_CC,704440,0,0,True,,,0
+"Instillation, hexaminolevulinate hydrochloride, 100 mg",HCPCS,A9589,0,0,True,,,0
+Hydrocodone 7.5 mg-Acetaminophen 325 mg/15 ml Oral Solution,EPIC-MED,37848,0,0,True,,,0
+Acetaminophen-Pamabrom 500 mg-25 mg Tablet,EPIC-MED,12406,0,0,True,,,0
+Zithromax Oral,EPIC-MED,150965,1,1,True,,,1
+"Acetaminophen 80 mg/0.8 ml Oral Drops,Suspension",EPIC-MED,91166,0,0,True,,,0
+Minocycline  IVPB (500 ml),EPIC-MED,4004081213,0,0,True,,,0
+Cephalexin monohydrate 250mg capsule 100 ea bottle,BWH_CC,947422,1,1,True,,,1
+Acetaminophen + pyrilamine - LMR 2521,PAML-LMR,2521,0,0,True,,,0
+Trimethobenzamide hcl 200mg suppository 10 ea box,BWH_CC,902033,0,0,True,,,0
+Chlorpheniramine-Acetaminophen 2 mg-325 mg Tablet,EPIC-MED,9580,0,0,True,,,0
+Cephalexin susp 25,MGH_CC,721710,1,1,True,,,1
+Aminophylline 25 mg/ml solution,MGH_CC,704590,0,0,True,,,0
+Sleep aid (doxylamine) oral,EPIC-MED,147217,0,0,True,,,0
+Tetrahydrozoline 0.1 % Nasal Drops,EPIC-MED,11522,0,0,True,,,0
+Acetaminophen Extra Strength Oral,EPIC-MED,128325,0,0,True,,,0
+Diclegis (doxylamine/pyridoxine delayed release) - LMR 9058,PAML-LMR,9058,0,0,True,,,0
+Amoxicillinclav. acid 400mg 57mg chewable - LMR 5894,PAML-LMR,5894,0,0,True,,,0
+Azithromycin - LMR 2991,LMR,2991,1,1,True,,,1
+Cephalexin monohydrate monohydrate 250mg capsule,BWH_CC,901621,1,1,True,,,1
+Diamox Sequels Oral,EPIC-MED,134652,0,0,True,,,0
+Para-aminobenzoic acid - LMR 2317,LMR,2317,0,0,True,,,0
+Keflex 500 mg Capsule,EPIC-MED,4206,1,1,True,,,1
+Ibuprofen-acetaminophen oral,EPIC-MED,206025,0,0,True,,,0
+Doxycycline calcium syrup - LMR 6872,PAML-LMR,6872,1,1,True,,,1
+Trimethobenzamide hydrochloride 250mg capsule,BWH_CC,912638,0,0,True,,,0
+Trimethoprim 200mg tablet,BWH_CC,909717,1,1,True,,,1
+Cpm-Phenylephrine-Acetaminophen 2 mg-5 mg-325 mg Tablet,EPIC-MED,9537,0,0,True,,,0
+Doxylamine-Dextromethorphan 6.25 mg-15 mg/15 ml Oral Solution,EPIC-MED,32424,0,0,True,,,0
+Aminocaproic Acid Infusion 48 mg/ml (500 ml),EPIC-MED,4004081367,0,0,True,,,0
+Oxycodone and acetaminophen-oncall,ONCALL,WSNW2-T,0,0,True,,,0
+Acetaminophen 120 mg-Codeine 12 mg/5 ml Elixir,EPIC-MED,14468,0,0,True,,,0
+Acetaminophen 500mg tablet 1000 ea bottle,BWH_CC,944899,0,0,True,,,0
+Hydrocodone 10 mg-Acetaminophen 660 mg Tablet,EPIC-MED,22740,0,0,True,,,0
+Amino Acids-Protein Hydrolysate 15 Gram-100 Kcal/30 ml Oral Liquid,EPIC-MED,125612,0,0,True,,,0
+Tetracaine 0.5 % Viscous Eye Drops,EPIC-MED,124294,0,0,True,,,0
+Benzocaine-trimethobenzamide adult 2%-200mg suppository,BWH_CC,910517,0,0,True,,,0
+Hydrocortisone-Pramoxine 2.5 %-1 % Rectal Lotion,EPIC-MED,28850,0,0,True,,,0
+Acetaminophen 300 mg-Codeine 30 mg/12.5 ml (12.5 ml) Oral Solution,EPIC-MED,160650,0,0,True,,,0
+Tetracycline solution - LMR 4255,LMR,4255,1,1,True,,,1
+Acetaminophen 325mg tablet,BWH_CC,904597,0,0,True,,,0
+Amoxicillin extended release - LMR 6388,PAML-LMR,6388,1,1,True,,,1
+Doxylamine-Phenylephrine-Acetaminophen 6.25 mg-5 mg-325 mg Capsule,EPIC-MED,77027,0,0,True,,,0
+Trimethobenzamide hcl - LMR 768,PAML-LMR,768,0,0,True,,,0
+Hc acetate/pramoxine hcl 1%-1% foam 10gm can,BWH_CC,946652,0,0,True,,,0
+Cephalexin monohydrate 125 mg/5ml powder for reconstitution,BWH_CC,902912,1,1,True,,,1
+Acetaminophen 650mg supp rect 12 ea box,BWH_CC,947563,0,0,True,,,0
+Cephalexin 500 mgcap,BWH_CC,914764,1,1,True,,,1
+Tigecycline - LMR 4928,LMR,4928,0,0,True,,,0
+Hydrocodone 2.5 mg-Acetaminophen 325 mg Tablet,EPIC-MED,128054,0,0,True,,,0
+Zithromax 500 mg Tablet,EPIC-MED,33375,1,1,True,,,1
+Tamoxifen 10 mg/5 ml Oral Solution,EPIC-MED,76986,0,0,True,,,0
+Diamox sequels 500mg capsule extended release,BWH_CC,900020,0,0,True,,,0
+Azithromycin - LMR 2991,PAML-LMR,2991,1,1,True,,,1
+Colace liquid (ceruminolytic) (docusate sodium liquid (ceruminolytic)) - LMR 5317,PAML-LMR,5317,0,0,True,,,0
+Acetaminophen 160 mg Disintegrating Tablet,EPIC-MED,39713,0,0,True,,,0
+Aminocaproic acid bolus from infusion 48 mg/ml,EPIC-MED,701560,0,0,True,,,0
+Augmentin 200 mg/28.5mg chewable (amoxicillin/clav.acid 200 mg/28.5mg chewable) - LMR 4863,LMR,4863,0,0,True,,,0
+Butalbital-Acetaminophen-Caffeine 50 mg-750 mg-40 mg Tablet,EPIC-MED,38456,0,0,True,,,0
+Mapap (Acetaminophen) 500 mg Capsule,EPIC-MED,4753,0,0,True,,,0
+Oxycodone 7.5 mg-Acetaminophen Er 325 mg Tab Extended Rel. Oral Only,EPIC-MED,173168,0,0,True,,,0
+"Minocycline Er 55 mg Tablet,Extended Release 24 Hr",EPIC-MED,106266,1,1,True,,,1
+Oxycodone-Acetaminophen (Percocet 7.5/325) Combo Tab,EPIC-MED,2004080264,0,0,True,,,0
+Augmentin 250 mg/62.5mg chewable (amoxicillin/clav.acid 250 mg/62.5mg chew) - LMR 4867,PAML-LMR,4867,0,0,True,,,0
+Sulfamethoxazole-trimethoprim desensitization oral bwh_mgh,EPIC-MED,701725,1,1,True,,,1
+Doxycycline Monohydrate 150 mg Tablet,EPIC-MED,43209,1,1,True,,,1
+Diphenhydramine-Phenylephrine-Acetaminophen 12.5 mg-5 mg-325 mg Tablet,EPIC-MED,43636,0,0,True,,,0
+Aminophylline tab,MGH_CC,704800,0,0,True,,,0
+Oxycodone and acetaminophen-oncall,PAML-ONCALL,WSNW2,0,0,True,,,0
+Aminocaproic acid 5gm injection 20ml vial,BWH_CC,905243,0,0,True,,,0
+Acetaminophen Extra Strength 500 mg Tablet,EPIC-MED,116125,0,0,True,,,0
+Minocycline 75 mg Tablet,EPIC-MED,35710,1,1,True,,,1
+"Amoxicillin Er 775 mg Tablet,Extended Release 24hr Mphase",EPIC-MED,95678,1,1,True,,,1
+Phenylephrine-Dm-Acetaminophen-Guaifen 5 mg-10 mg-325 mg-200 mg Tablet,EPIC-MED,70655,0,0,True,,,0
+Aminocaproic acid 500mg tablet,MGH_CC,44400,0,0,True,,,0
+Pramoxine-Menthol 1 %-1 % Topical Cream,EPIC-MED,24850,0,0,True,,,0
+Trimethobenzamide hcl 300mg capsule 100 ea bottle,BWH_CC,941370,0,0,True,,,0
+Vigamox 0.5 % Eye Drops,EPIC-MED,35697,0,0,True,,,0
+Minoxidil 2.5mg tablet 1 ea u/d,BWH_CC,903320,0,0,True,,,0
+Minoxidil 10mg tablet,BWH_CC,909186,0,0,True,,,0
+Minoxidil 2.5mg tablet 100 ea blist pack,BWH_CC,945239,0,0,True,,,0
+Tetrabenazine Oral,EPIC-MED,148487,0,0,True,,,0
+Soltamox 10 mg/5 ml Oral Solution,EPIC-MED,77338,0,0,True,,,0
+Tigecycline - LMR 4928,PAML-LMR,4928,0,0,True,,,0
+Diamox 250mg tablet,BWH_CC,901692,0,0,True,,,0
+Acetaminophen PM oral,EPIC-MED,128330,0,0,True,,,0
+Isometheptene 65 mg-Caffeine 20 mg-Acetaminophen 325 mg Tablet,EPIC-MED,172894,0,0,True,,,0
+Amoxil 125 mg/5ml powder for reconstitution,BWH_CC,906047,1,1,True,,,1
+Pseudoephedrine-Acetaminophen 30 mg-500 mg Tablet,EPIC-MED,6718,0,0,True,,,0
+Pramoxine + hydrocortisone 2.5% - LMR 2421,PAML-LMR,2421,0,0,True,,,0
+Amoxicillin oral susp 1,MGH_CC,706330,1,1,True,,,1
+Minoxidil 10mg tablet u/d,BWH_CC,903322,0,0,True,,,0
+"Aminocaproic Acid 1,000 mg Tablet",EPIC-MED,39594,0,0,True,,,0
+Acetaminophen 100mg 1ml oral drops - LMR 4828,PAML-LMR,4828,0,0,True,,,0
+Diamox 250mg tablet,BWH_CC,900019,0,0,True,,,0
+Tetracycline solution - LMR 4255,PAML-LMR,4255,1,1,True,,,1
+Minocycline hcl 100mg tablet 1 ea u/d,BWH_CC,908004,1,1,True,,,1
+Aminocaproic Acid Infusion 20 mg/ml (250 ml),EPIC-MED,4004082331,0,0,True,,,0
+Hydrocodone 10 mg-Acetaminophen 325 mg/15 ml Oral Solution,EPIC-MED,125205,0,0,True,,,0
+Hydrocodone 7.5 mg-Acetaminophen 500 mg/15 ml Oral Solution,EPIC-MED,8951,0,0,True,,,0
+Chlorpheniramine 4 mg-Dm 30 mg-Acetaminophen 650 mg/30 ml Oral Liquid,EPIC-MED,127629,0,0,True,,,0
+Cephalexin 250 mg/5ml 100ml sus,MGH_CC,217200,1,1,True,,,1
+Amino ac-protein hydr-whey 11 gram-40 kcal/45 ml tube feed liquid pack,EPIC-MED,173126,0,0,True,,,0
+Sulfamethoxazole-Trimethoprim  IVPB NWH Fm,EPIC-MED,4004083388,0,0,True,,,0
+Demeclocycline 300 mg Tablet,EPIC-MED,9727,0,0,True,,,0
+Oxycodone-Acetaminophen 2.5 mg-300 mg Tablet,EPIC-MED,76411,0,0,True,,,0
+Chlorpheniramine 2 mg-Pseudoephedrin 30 mg-Acetaminophen 500 mg Tablet,EPIC-MED,9556,0,0,True,,,0
+Nonseminomatous-guc 4,MGH_CC,5613,0,0,True,,,0
+Nonseminomat-guc 5 a,MGH_CC,5616,0,0,True,,,0
+Hydrocodone 2.5 mg-Acetaminophen 500 mg Tablet,EPIC-MED,14962,0,0,True,,,0
+Demeclocycline - LMR 1006,LMR,1006,0,0,True,,,0
+Diphenhyd-Pe-Acetaminophen 12.5 mg-2.5 mg-160 mg/5 ml Oral Suspension,EPIC-MED,77336,0,0,True,,,0
+Asa-Acetaminophen-Caffeine-Buffers 227 mg-194 mg-33 mg Tablet,EPIC-MED,8930,0,0,True,,,0
+Parenteral Amino Acid 15 % Combination No.2 Intravenous Solution,EPIC-MED,9050,0,0,True,,,0
+Deutetrabenazine 9 mg tablet,EPIC-MED,193686,0,0,True,,,0
+Parenteral Amino Acid 10 % Combination No.1 Intravenous Solution,EPIC-MED,124807,0,0,True,,,0
+Oxycodone-Acetaminophen 5 mg-300 mg Tablet,EPIC-MED,76412,0,0,True,,,0
+Diphenhydramine 38 mg-Acetaminophen 500 mg Tablet,EPIC-MED,18837,0,0,True,,,0
+Doxylamin-Pse-Dm-Acetaminophen 7.5 mg-60 mg-30mg-1000mg/30ml Oral Liqd,EPIC-MED,18248,0,0,True,,,0
+Vibramycin Oral,EPIC-MED,149989,0,0,True,,,0
+"Acetaminophen-Dm 1,000 mg-30 mg/30 ml Oral Liquid",EPIC-MED,40239,0,0,True,,,0
+Pramoxine-Calamine 1 %-3 % Lotion,EPIC-MED,159024,0,0,True,,,0
+Pramoxine + hydrocortisone 1% - LMR 2420,PAML-LMR,2420,0,0,True,,,0
+Demeclocycline tab,MGH_CC,730510,0,0,True,,,0
+Hydrocodone 7.5 mg-Acetaminophen 500 mg Tablet,EPIC-MED,14963,0,0,True,,,0
+Pramoxine-Zinc Acetate 1 %-0.1 % Lotion,EPIC-MED,12393,0,0,True,,,0
+Tigecycline  IVPB 50 mg Mbp (100 ml),EPIC-MED,4004081235,0,0,True,,,0
+Doxycycline hyclate 50mg capsule u/d,BWH_CC,902707,1,1,True,,,1
+Tetracycline 3% ointment - LMR 4254,LMR,4254,0,0,True,,,0
+Doxycycline Monohydrate 150 mg Capsule,EPIC-MED,88063,1,1,True,,,1
+Pramoxine 1 % Topical Cream,EPIC-MED,116209,0,0,True,,,0
+Amoxicillin-oncall,PAML-ONCALL,DSHR3,1,1,True,,,1
+Acetaminophen-Pamabrom-Pyrilam 500 mg-25 mg-15 mg Tablet,EPIC-MED,8926,0,0,True,,,0
+Tetrahydrozoline 0.1 % Nasal Spray,EPIC-MED,120369,0,0,True,,,0
+Hydrocodone-Acetaminophen 10 mg-325 mg/15 ml (15 ml) Oral Solution,EPIC-MED,93225,0,0,True,,,0
+Doxylam-Pe-Dm-Acetaminophen-Gg 6.25 mg-5 mg-10 mg-325 mg (Nt) Capsules,EPIC-MED,183453,0,0,True,,,0
+Doxycycline hyclate hyclate 50mg capsule,BWH_CC,908527,1,1,True,,,1
+Lidocaine-epinephrine-tetracaine 40 mg/ml-0.5 mg/ml-5 mg/ml topical syringe,EPIC-MED,707404,0,0,True,,,0
