@@ -13,6 +13,9 @@
 # GPUs 1,2 are free (the 72B occupies the rest). Serves on port 9090.
 VENV=/local/data/mt/acne/.venv
 
+# --host 0.0.0.0 binds all interfaces so other hosts (coffee/tea/communication on
+# the same subnet) can reach it. Without it, some vLLM builds bind 127.0.0.1 and the
+# server is only reachable locally -> remote curls get "connection refused".
 VLLM_ENABLE_V1_MULTIPROCESSING=0 CUDA_VISIBLE_DEVICES=1,2 "$VENV/bin/vllm" serve Qwen/Qwen3-30B-A3B-Instruct-2507 \
     --tensor-parallel 2 --gpu-memory-utilization 0.9 \
-    --enforce-eager --disable-custom-all-reduce --port 9090
+    --enforce-eager --disable-custom-all-reduce --host 0.0.0.0 --port 9090
