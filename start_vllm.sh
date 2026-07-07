@@ -13,9 +13,9 @@
 #     --enforce-eager --disable-custom-all-reduce --port "$VLLM_PORT"
 
 # no max len
-VLLM_ENABLE_V1_MULTIPROCESSING=0 CUDA_VISIBLE_DEVICES=1,2 vllm serve Qwen/Qwen2.5-72B-Instruct-AWQ \
+VLLM_ENABLE_V1_MULTIPROCESSING=0 CUDA_VISIBLE_DEVICES=1,2 vllm serve https://huggingface.co/Qwen/Qwen3.5-27B \
     --tensor-parallel 2 --gpu-memory-utilization 0.9  \
-    --enforce-eager --disable-custom-all-reduce --port 8010
+    --enforce-eager --disable-custom-all-reduce --port 9090
 # #!/bin/bash
 
 # # Check if config.yml exists

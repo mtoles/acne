@@ -122,12 +122,12 @@ OPTIMIZERS = {
     "ours-mf": OursMultiFailureOptimizer,
     "etgpo": ETGPOOptimizer,
     "ampo": AMPOOptimizer,
-    "dspy": None,  # DSPy MIPROv2 uses its own optimization loop, handled separately
-    "gepa": None,  # DSPy GEPA, same DSPy-family path as dspy
+    "mipro": None,  # DSPy MIPROv2 uses its own optimization loop, handled separately
+    "gepa": None,   # DSPy GEPA, same DSPy-family path as mipro
 }
 
 # Optimizers whose internal loop is managed by DSPy (routed through dspy_optimizer.py).
-DSPY_FAMILY = {"dspy", "gepa"}
+DSPY_FAMILY = {"mipro", "gepa"}
 
 
 def load_model_id():
@@ -976,6 +976,7 @@ def process_file_dspy(file_path, data_source, downsample, baseline_prompts,
         feature_name, train_df, val_df, test_df, baseline_prompts[feature_name],
         iterations, n_workers, eval_fn, model_id,
         test_full_df=test_full_df, optimizer_name=optimizer_name,
+        router=model,
     )
 
 
@@ -1145,6 +1146,7 @@ def _run_multichoice_dataset(args, optimizer, is_dspy, target_features, all_resu
                 # Multiple-choice gold is already a letter (A-F); leading-letter
                 # extraction handles the free-form "A. ..." output, so no word map.
                 choice_task=True, choice_word_to_letter=None,
+                router=model,
             )
         else:
             results = _run_optimization_loop(
@@ -1194,6 +1196,7 @@ def _run_binary_dataset(args, optimizer, is_dspy, target_features, all_results, 
                 # Binary gold is the word "Yes"/"No"; map it to the A/B legend the
                 # prompt uses so "A. Yes"-style output matches.
                 choice_task=True, choice_word_to_letter={"yes": "A", "no": "B"},
+                router=model,
             )
         else:
             results = _run_optimization_loop(

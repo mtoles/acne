@@ -1375,6 +1375,55 @@ def _df_to_dspy_examples(chunk_df):
     return examples
 
 
+class RoutedLM(dspy.LM):
+    """dspy.LM that load-balances every call across all vLLM endpoints a shared
+    MrModel already discovered, by delegating endpoint selection to its
+    /metrics-aware MrModel._route().
+
+    Why this design:
+    - No duplicate routing: reuses MrModel's exact load-balancer (server /metrics
+      load + in-flight accounting), so DSPy optimization rollouts and native
+      inference share ONE balancer and jointly spread load across all servers.
+    - No footgun: the endpoints come straight from the MrModel instance, so the
+      DSPy path can never target a different server/port than native inference
+      (previously it hardcoded localhost:$VLLM_PORT and could silently diverge).
+
+    Per call, forward() picks the least-loaded endpoint and passes it as api_base;
+    dspy lists api_base in ignored_args_for_cache_key, so routing does not
+    fragment or corrupt the completion cache.
+
+    Caveat: api_base is handed to litellm directly, bypassing MrModel's
+    VLLM_PROXY client wrapping. That is transparent for local endpoints (never
+    proxied) and any directly-reachable remote; a remote endpoint reachable ONLY
+    via VLLM_PROXY would need that proxy exported for litellm too.
+    """
+
+    def __init__(self, *args, router, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._router = router
+
+    def forward(self, prompt=None, messages=None, **kwargs):
+        with self._router._route() as (base_url, _):
+            return super().forward(prompt=prompt, messages=messages, api_base=base_url, **kwargs)
+
+    async def aforward(self, prompt=None, messages=None, **kwargs):
+        with self._router._route() as (base_url, _):
+            return await super().aforward(prompt=prompt, messages=messages, api_base=base_url, **kwargs)
+
+
+def _make_routed_lm(router, max_tokens, temperature):
+    """Build a RoutedLM over `router`'s (MrModel's) endpoints. Shared by the
+    MIPROv2 and GEPA optimizers so LM setup lives in exactly one place."""
+    return RoutedLM(
+        router=router,
+        model=f"openai/{router.model_id}",
+        api_base=router.base_urls[0],   # placeholder; forward() overrides per call
+        api_key=router.api_key,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+
 class DSPyOptimizer:
     """DSPy MIPROv2-based prompt optimizer.
 
@@ -1382,22 +1431,17 @@ class DSPyOptimizer:
     optimization loop internally. Call optimize() with train/eval DataFrames.
     """
 
-    def __init__(self, model_id, n_workers=50):
-        self.model_id = model_id
+    def __init__(self, router, n_workers=50):
+        self.router = router
+        self.model_id = router.model_id
         self.n_workers = n_workers
         self._configure_lm()
 
     def _configure_lm(self):
-        """Configure DSPy to use the same vLLM endpoint as MrModel."""
-        vllm_port = os.environ.get("VLLM_PORT", "8010")
-        lm = dspy.LM(
-            model=f"openai/{self.model_id}",
-            api_base=f"http://localhost:{vllm_port}/v1",
-            api_key="token-abc123",
-            max_tokens=1024,
-            temperature=0.0,
-        )
-        dspy.configure(lm=lm)
+        """Register a RoutedLM (load-balanced across all of MrModel's endpoints)
+        as DSPy's default LM."""
+        self.lm = _make_routed_lm(self.router, max_tokens=1024, temperature=0.0)
+        dspy.configure(lm=self.lm)
 
     def optimize(self, train_df, eval_df, baseline_prompt, num_trials=10, metric=None):
         """Run MIPROv2 optimization and evaluate.
@@ -1552,33 +1596,21 @@ class GEPAOptimizer:
     (max_metric_calls), which we set for parity with OPRO/ours (see optimize()).
     """
 
-    def __init__(self, model_id, n_workers=50):
-        self.model_id = model_id
+    def __init__(self, router, n_workers=50):
+        self.router = router
+        self.model_id = router.model_id
         self.n_workers = n_workers
         self._configure_lm()
 
     def _configure_lm(self):
-        """Configure the task LM and a higher-temperature reflection LM, both on
-        the same vLLM endpoint as MrModel (fair: GEPA reflects with the same model)."""
-        vllm_port = os.environ.get("VLLM_PORT", "8010")
-        api_base = f"http://localhost:{vllm_port}/v1"
-        self.lm = dspy.LM(
-            model=f"openai/{self.model_id}",
-            api_base=api_base,
-            api_key="token-abc123",
-            max_tokens=1024,
-            temperature=0.0,
-        )
+        """Configure the task LM and a higher-temperature reflection LM, both
+        load-balanced across all of MrModel's endpoints (fair: GEPA reflects with
+        the same model as inference, and both spread across all servers)."""
+        self.lm = _make_routed_lm(self.router, max_tokens=1024, temperature=0.0)
         dspy.configure(lm=self.lm)
         # Reflection proposes full replacement prompts, so it needs room to write
         # and temperature > 0 for diverse candidates.
-        self.reflection_lm = dspy.LM(
-            model=f"openai/{self.model_id}",
-            api_base=api_base,
-            api_key="token-abc123",
-            max_tokens=8192,
-            temperature=1.0,
-        )
+        self.reflection_lm = _make_routed_lm(self.router, max_tokens=8192, temperature=1.0)
 
     def optimize(self, train_df, val_df, baseline_prompt, iterations, is_correct=None):
         """Run GEPA optimization and evaluate.

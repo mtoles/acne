@@ -33,7 +33,8 @@ def run_dspy_optimization(feature_name, train_df, val_df, test_df, baseline_prom
                           test_full_df=None,
                           dspy_train_df=None, dspy_val_df=None, dspy_test_df=None,
                           optimizer_name=None,
-                          choice_task=False, choice_word_to_letter=None):
+                          choice_task=False, choice_word_to_letter=None,
+                          router=None):
     """DSPy-family (MIPROv2 or GEPA) optimization with a final test pass.
 
     Both optimizers run their own internal loop and return an optimized
@@ -43,7 +44,7 @@ def run_dspy_optimization(feature_name, train_df, val_df, test_df, baseline_prom
     (native inference) for a comparable val-acc trajectory. test_df is used
     per-trial for the plotting curve.
 
-    optimizer_name: "dspy" (MIPROv2) or "gepa". GEPA additionally uses val_df as
+    optimizer_name: "mipro" (MIPROv2) or "gepa". GEPA additionally uses val_df as
     its Pareto valset and derives its budget from (train + val) sizes.
 
     choice_task: True for lettered-legend tasks (binary Yes/No, multiple-choice)
@@ -57,8 +58,11 @@ def run_dspy_optimization(feature_name, train_df, val_df, test_df, baseline_prom
     dspy_*_df: DataFrames in DSPy/ACNE column format (chunk, val_unified,
     found_keywords). Pass None to use the corresponding train/val/test_df directly.
     """
-    if optimizer_name not in ("dspy", "gepa"):
-        raise ValueError(f"optimizer_name must be 'dspy' or 'gepa', got {optimizer_name!r}")
+    if optimizer_name not in ("mipro", "gepa"):
+        raise ValueError(f"optimizer_name must be 'mipro' or 'gepa', got {optimizer_name!r}")
+    if router is None:
+        raise ValueError("router (the shared MrModel) is required so DSPy load-balances "
+                         "across the same vLLM endpoints as native inference")
     if test_full_df is None:
         test_full_df = test_df
     opt_label = "GEPA" if optimizer_name == "gepa" else "MIPROv2"
@@ -78,15 +82,15 @@ def run_dspy_optimization(feature_name, train_df, val_df, test_df, baseline_prom
         gepa_is_correct = None      # GEPAOptimizer defaults to strict exact-match
 
     if optimizer_name == "gepa":
-        gepa_optimizer = GEPAOptimizer(model_id=model_id, n_workers=n_workers)
+        gepa_optimizer = GEPAOptimizer(router=router, n_workers=n_workers)
         dspy_result = gepa_optimizer.optimize(
             opt_train_df, opt_val_df,
             baseline_prompt=baseline_prompt,
             iterations=iterations,
             is_correct=gepa_is_correct,
         )
-    elif optimizer_name == "dspy":
-        dspy_optimizer = DSPyOptimizer(model_id=model_id, n_workers=n_workers)
+    elif optimizer_name == "mipro":
+        dspy_optimizer = DSPyOptimizer(router=router, n_workers=n_workers)
         dspy_result = dspy_optimizer.optimize(
             opt_train_df, opt_val_df,
             baseline_prompt=baseline_prompt,
