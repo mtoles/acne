@@ -5,7 +5,9 @@ Each optimizer takes a current prompt and training results, and returns a new pr
 The optimization loop in auto_prompt.py handles evaluation and iteration.
 """
 
+import copy
 import json
+import logging
 import os
 import re
 import random
@@ -16,6 +18,20 @@ import dspy
 from transformers import AutoTokenizer
 
 from models import MODEL_ID
+
+
+# MIPROv2's grounded proposer feeds helper fields (max_depth, tip,
+# previous_instructions) into internal Predict modules whose signatures don't
+# declare them, so dspy logs a "fields not in signature ... will be ignored"
+# WARNING for every proposal call. It's expected dspy-internal behavior, not a
+# bug in our signatures. Drop just that message so real predict warnings still
+# show.
+class _DropIgnoredFieldWarnings(logging.Filter):
+    def filter(self, record):
+        return "fields not in signature" not in record.getMessage()
+
+
+logging.getLogger("dspy.predict.predict").addFilter(_DropIgnoredFieldWarnings())
 
 # Qwen2.5-72B max context = 32768 tokens (vLLM default).
 # Reserve 2048 tokens for output and a small chat-template overhead.
@@ -1401,6 +1417,19 @@ class RoutedLM(dspy.LM):
     def __init__(self, *args, router, **kwargs):
         super().__init__(*args, **kwargs)
         self._router = router
+
+    def __deepcopy__(self, memo):
+        # dspy.LM.copy() (used by MIPROv2's grounded proposer to spawn a
+        # rollout LM) does copy.deepcopy(self). Our _router (MrModel) holds an
+        # HTTP client with a thread lock, which is unpicklable and blows up the
+        # deepcopy with "cannot pickle '_thread.RLock'". Share the router by
+        # reference and deep-copy the rest of the LM state.
+        cls = self.__class__
+        new = cls.__new__(cls)
+        memo[id(self)] = new
+        for k, v in self.__dict__.items():
+            new.__dict__[k] = v if k == "_router" else copy.deepcopy(v, memo)
+        return new
 
     def forward(self, prompt=None, messages=None, **kwargs):
         with self._router._route() as (base_url, _):
